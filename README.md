@@ -6,11 +6,13 @@ Meta-sandbox s živým OOP modelem. Na začátku existuje jediná instance tří
 
 ## Status
 
-IDEA fáze dokončena. Pracujeme na milníku **M1 — statický svět s hodinami**:
-- 3D scéna s jednou kostkou
-- Ovládatelná kamera
-- Globální čítač `TIME` tikající v HUDu
-- Žádné chování, žádná pravidla — jen základ
+Milníky M1–M4 hotové:
+- **M1** — statický svět s hodinami (kostka, kamera, TIME, infotip).
+- **M2** — orientační pomůcky + `CCUBES` (dřív `TERRAIN`) + 3×3 duhová růžice.
+- **M3** — `COMPOSITES` + `TREE` (3D strom z primitivů); jednotný float souřadný systém (DD-12).
+- **M4** — `BALLOON` mimo grid + stínovací systém (shadow map, PCF soft, ShadowMaterial ground plane).
+
+Další plán: **SPRITES** (2D billboard, dialog bubble), **TCUBES** (per-face textury), chování v čase.
 
 ## Stack
 

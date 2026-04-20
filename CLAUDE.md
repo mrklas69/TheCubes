@@ -4,7 +4,7 @@
 TheCubes je meta-sandbox s živým OOP modelem. Na začátku existuje jediná instance `OBJECTS`, rozšiřováním modelu se scéna zaplňuje. Cíl: demonstrovat současné mládeži, že tvorba je zábavnější než konzumace.
 
 ## Status
-Milník **M1 — statický svět s hodinami**. Scéna s jednou kostkou + globální TIME čítač. Žádné chování, žádná pravidla.
+Milníky **M1–M4 hotové**. Scéna obsahuje: středová `CUBES` (šachovnice), 8× `CCUBES` (duhová růžice), `TREE` (COMPOSITES, 3D strom), `BALLOON` (COMPOSITES mimo grid, float pozice), stínovací systém (shadow map, ShadowMaterial ground). Globální `TIME` stále jen „hodiny na stěně".
 
 ## Dokumenty
 - `README.md` — overview
@@ -20,21 +20,25 @@ Milník **M1 — statický svět s hodinami**. Scéna s jednou kostkou + globál
 
 ```
 OBJECTS (ID, NAME, DESCRIPTION)
- └── CUBES (X, Y, Z — diskrétní int grid)    ← default: voxel
-      ├── (SPRITE)      ← plánováno: 2D billboard
-      └── (INVISIBLE)   ← plánováno: nic
+ └── CUBES (X, Y, Z — float, voxel renderer snap-to-grid, DD-12)
+      ├── CCUBES (COLOR)                 ← plochá barva; dřív TERRAIN
+      ├── TCUBES *(plánováno)*            ← per-face textury
+      ├── SPRITES *(plánováno)*           ← 2D billboard ke kameře
+      └── COMPOSITES (3D mesh z primitivů)
+           ├── TREE                       ← kmen + kužely
+           └── BALLOON (COLOR)            ← vak + lana + koš, mimo grid
 ```
 
-`TIME` = globální čítač. V M1 objekty na TIME samy nereagují.
+`TIME` = globální čítač. Objekty na TIME zatím nereagují (DD-04).
 
 ## Key Files
 
 | Vrstva | Soubor | Obsah |
 |--------|--------|-------|
 | Entry | `index.html` | HTML shell, import map pro Three.js, HUD |
-| Model | `src/model.js` | Třídy `OBJECTS`, `CUBES` |
+| Model | `src/model.js` | `OBJECTS`, `CUBES`, `CCUBES`, `COMPOSITES`, `TREE`, `BALLOON` |
 | Model | `src/time.js` | Globální `TIME`, `advanceTime()` |
-| Boot | `src/main.js` | Three.js scéna, kamera, render loop |
+| Boot | `src/main.js` | Three.js scéna, kamera, osvětlení, stíny, `createMeshFor` dispatch, `buildTree`, `buildBalloon`, infotip, render loop |
 
 ## Code Style
 - **Komentáře česky.** Uživatel se JS i Three.js učí — komentáře o trochu podrobnější. Vysvětlovat JS/Three-specifické konstrukce (modulový `import`, třída, `requestAnimationFrame`, perspektivní kamera, materiály…).
