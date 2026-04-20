@@ -169,10 +169,7 @@ export class COMPOSITES extends CUBES {
  */
 export class TREE extends COMPOSITES {
   // Prázdná třída — default strom. Atributy lze doplnit později.
-  //
-  // M7: strom podporuje `ANIMATE = { kind: "tree_sway", ... }` — 3 kužely
-  // koruny se pohupují ve dvou kolmých sinusoidách s různými periodami,
-  // amplituda roste s výškou (špička víc, spodní kužel míň). Kmen statický.
+  // Podporovaný `ANIMATE.kind`: `tree_sway` (viz dispatch v main.js).
 }
 
 /**
@@ -182,15 +179,12 @@ export class TREE extends COMPOSITES {
  * `COLOR` (JS number 0xRRGGBB, stejně jako u CCUBES) — lana a koš mají
  * fixní barvy definované v enginu.
  *
- * M4 demonstruje **jednotný souřadný systém** (DD-12): balón má float
- * pozici typicky mimo celé buňky gridu (např. Y = 4 — vysoko nad scénou),
- * zatímco CCUBES/TCUBES voxely žijí na intech. Obě třídy sdílejí
- * stejný mateřský CUBES, pouze renderer snapuje voxely a ponechá
- * COMPOSITES na floatu.
+ * Jednotný souřadný systém (DD-12): balón má float pozici typicky mimo celé
+ * buňky gridu (např. Y = 4 — vysoko nad scénou), zatímco CCUBES/TCUBES voxely
+ * žijí na intech. Obě třídy sdílejí stejný mateřský CUBES, pouze renderer
+ * snapuje voxely a ponechá COMPOSITES na floatu.
  *
- * M7: balón podporuje `ANIMATE = { kind: "balloon_bob", ... }` — vak se v
- * čase sinusově pohupuje nahoru/dolů, koš pruží nezávisle s jinou periodou,
- * lana se dynamicky přepočítávají. Dispatch animace je v enginu (DD-15).
+ * Podporovaný `ANIMATE.kind`: `balloon_bob` (viz dispatch v main.js).
  */
 export class BALLOON extends COMPOSITES {
   constructor(id, name, x, y, z, color, description = "") {

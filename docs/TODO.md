@@ -81,9 +81,11 @@
 
 ## M8+ — Později
 
+- [x] Generický `rotate` animátor (`ANIMATORS.rotate`, přímá mutace `object3d.rotation`) + krabice `tbox_0001` rotující kolem Y (period 6 s). Ověřuje, že `ANIMATE` pattern funguje napříč třídami, ne jen COMPOSITES.
+- [x] Generický `orbit_stadium` animátor — uzavřená oválná dráha (stadium pattern). `tbox_0002` „Hvězda na vrchu" obíhá kolem výchozí pozice (L=2, R=0.8, period 10 s), heading sleduje tečnu dráhy. Zavedl snapshot `object3d.userData.base` při `registerAnimator` — sdílený kontrakt pro transformační animátory.
 - [ ] Dynamický 3D ocásek SPRITES (mířit na mluvčího i když bublina není přímo nad).
 - [ ] Další COMPOSITES: HOUSE, ROCK, CLOUD (CLOUD by mohl dostat `ANIMATE: { kind: "drift" }`).
-- [ ] Další `kind`y animací: `rotate` (TCUBES krabice), `pulse` (CCUBES světla).
+- [ ] Další `kind`y animací: `pulse` (CCUBES světla emisivně bliká), `drift` (CLOUD letí po ose).
 - [ ] `WCUBES` wireframe varianta *(nápad, možná)*.
 - [ ] `INVISIBLE` potomek CUBES *(možná zbytečné)*.
 - [ ] Nevizuální potomek OBJECTS (např. `TIMER`, `COUNTER`) — až bude přirozená potřeba.

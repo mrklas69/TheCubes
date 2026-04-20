@@ -18,9 +18,12 @@ Canonical terminologie projektu TheCubes.
 
 - **TIME** — globální čítač tiků. Monotonně rostoucí nezáporné celé číslo. Určené pro **diskrétní události** (pravidla, timery — mechanismus zatím nezaveden).
 - **tick** — jedno zvýšení TIME o 1. Tikne jednou za sekundu.
-- **ANIMATE** — atribut `OBJECTS` s receptem plynulého pohybu: `null` (default, statický) nebo objekt `{ kind: "<string>", ...params }`. Engine v render loopu volá `updateAnimations(tSeconds)` s wall-clockem (`performance.now() / 1000`), `switch` nad `anim.kind` dispatchuje na konkrétní per-frame funkci. Viz DD-15. Aktuální `kind`y: `balloon_bob`, `tree_sway`. *(M7.)*
-- **balloon_bob** — `ANIMATE.kind`: vak sinusově pohupuje (period/amplitude), koš nezávisle s fázovým posunem, lana přepnuta přes `updateCylinderBetween` → viditelně mění délku.
-- **tree_sway** — `ANIMATE.kind`: 3 kužely koruny se kývají v XZ rovině jako dvě kolmé sinusoidy s různými periodami (`periodX`, `periodZ`) → eliptický pohyb, ne 1D kyvadlo. Amplituda násobena koeficientem výšky kuželu (špička víc, spodní kužel míň). Kmen statický.
+- **ANIMATE** — atribut `OBJECTS` s receptem plynulého pohybu: `null` (default, statický) nebo objekt `{ kind: "<string>", ...params }`. Engine v render loopu volá `updateAnimations(tSeconds)` s wall-clockem (`performance.now() / 1000`), lookup `ANIMATORS[anim.kind]` dispatchuje na konkrétní per-frame funkci. Viz DD-15. Aktuální `kind`y: `balloon_bob`, `tree_sway`, `rotate`, `orbit_stadium`. *(M7.)*
+- **base** — `object3d.userData.base = { x, y, z }` — snapshot počáteční polohy instance, pořízený při `registerAnimator`. Transformační animátory (`orbit_stadium`, budoucí `drift`) z něj čtou referenční bod (střed dráhy). Nezávislý na `userData.parts` (ten drží díly COMPOSITES).
+- **balloon_bob** — `ANIMATE.kind`: vak sinusově pohupuje (period/amplitude), koš nezávisle s fázovým posunem, lana přepnuta přes `updateCylinderBetween` → viditelně mění délku. Sahá na vnitřní díly v `group.userData.parts`.
+- **tree_sway** — `ANIMATE.kind`: 3 kužely koruny se kývají v XZ rovině jako dvě kolmé sinusoidy s různými periodami (`periodX`, `periodZ`) → eliptický pohyb, ne 1D kyvadlo. Amplituda násobena koeficientem výšky kuželu (špička víc, spodní kužel míň). Kmen statický. Sahá na vnitřní díly v `group.userData.parts`.
+- **rotate** — `ANIMATE.kind`: rovnoměrná rotace celého Object3D kolem zadané osy. Parametry `axis` ("x"/"y"/"z", default "y") a `period` (doba jednoho otočení v sekundách). Generický — mutuje `object3d.rotation` přímo, nevyžaduje `userData.parts`. Funguje napříč třídami (TCUBES, COMPOSITES, …).
+- **orbit_stadium** — `ANIMATE.kind`: uzavřená oválná dráha (atletický ovál = 2 rovné úseky + 2 půlkruhy) v rovině XZ kolem `userData.base`. Parametry `length` (L, rovná část; dlouhá osa X), `radius` (R, poloměr oblouku; krátká osa 2R), `period` (T, doba oběhu). Heading (`rotation.y`) sleduje tečnu dráhy → NORTH strana vždy ukazuje dopředu jako auto na trati.
 
 ## Grafika
 

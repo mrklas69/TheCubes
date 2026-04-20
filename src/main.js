@@ -11,7 +11,7 @@ import { advanceTime } from "./time.js";
 
 // === Renderer ===
 // WebGLRenderer = Three.js komponenta, která překládá scénu na GPU volání.
-// `antialias: true` = plynulejší hrany (mírně dražší, pro M1 OK).
+// `antialias: true` = plynulejší hrany (mírně dražší).
 const canvas = document.getElementById("scene");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -174,10 +174,8 @@ function makeBubbleTexture(text) {
   const ctx = canvas.getContext("2d");
 
   // --- Bublina + ocásek jako JEDNA cesta ---
-  // Dřívější implementace kreslila rect a trojúhelník zvlášť a přes spoj
-  // přejela bílou čarou — tenký tmavý proužek obrysu rectu ale prosvítal
-  // po stranách ocásku. Řešení: obkroužit oba tvary jediným path a udělat
-  // `fill()` + `stroke()` jen jednou → obrys splyne plynule kolem dokola.
+  // Obě části obkroužíme jediným path a uděláme `fill()` + `stroke()` jen
+  // jednou → obrys splyne plynule kolem dokola, bez viditelného spoje.
   const PAD = 6;                   // vnitřní okraj, aby stroke nevyjel z plátna
   const RADIUS = 28;               // radius zaoblení rohů
   const tipX = W / 2;              // špička ocásku — střed plátna
@@ -297,30 +295,25 @@ function faceMaterialFor(val) {
 // je čistě datový, o Three.js neví. Animátor je tedy v `main.js`, ne v třídě.
 const animators = [];
 
-// Registruje pár mesh↔instance k animaci. Voláno z `createMeshFor` pro
-// jakoukoli instanci, která má vyplněný `ANIMATE`.
-function registerAnimator(object3d, instance) {
-  if (!instance.ANIMATE) return;
-  animators.push({ object3d, instance });
-}
+// Plný kruh v radiánech — pojmenovaná konstanta, aby `(TAU * t) / period` šel
+// číst jako „kolik period uplynulo v radiánech". Math.PI * 2 = 2π.
+const TAU = Math.PI * 2;
 
-// Update všech animovaných objektů. `tSeconds` = wall-clock v sekundách
-// (plynulé, ne diskrétní TIME.tick). TIME.tick zůstává pro diskrétní
-// událostní logiku pozdějších milníků.
-function updateAnimations(tSeconds) {
-  for (const { object3d, instance } of animators) {
-    const anim = instance.ANIMATE;
-    if (!anim) continue;
-    switch (anim.kind) {
-      case "balloon_bob":
-        animateBalloonBob(object3d, anim, tSeconds);
-        break;
-      case "tree_sway":
-        animateTreeSway(object3d, anim, tSeconds);
-        break;
-      // Nové kindy přidávat zde — nová větev dispatche, ne nová metoda na třídě.
-    }
-  }
+// Scratch vektory pro animační hot path — reuse místo `new THREE.Vector3()`
+// každý frame. `_up` je default osa Three.js válce (+Y, readonly konstanta);
+// `_dir`, `_a`, `_b` jsou pracovní buffery, spotřebované v rámci jednoho
+// volání a hned přepsané dalším. Pattern „scratch vectors" je standard v
+// Three.js animacích — vyhýbá se GC pressure v 60 FPS smyčce.
+const _up = new THREE.Vector3(0, 1, 0);
+const _dir = new THREE.Vector3();
+const _a = new THREE.Vector3();
+const _b = new THREE.Vector3();
+
+// Fáze harmonické oscilace: převod wall-clock `t` (sekundy) na argument pro
+// `Math.sin`. `period` = doba jednoho kompletního kmitu v sekundách,
+// `offset` = fázový posun v radiánech (π/2 posune sinus na kosinus).
+function oscPhase(t, period, offset = 0) {
+  return (TAU * t) / period + offset;
 }
 
 // Balón se mírně pohupuje nahoru/dolů. Vak a koš oscilují **nezávisle**
@@ -331,21 +324,21 @@ function animateBalloonBob(group, anim, t) {
   const parts = group.userData.parts;
   if (!parts) return;
 
-  // Math.sin přijímá radiány; 2π / period → úhlová rychlost.
-  const bagDy    = anim.bagAmp    * Math.sin((2 * Math.PI * t) / anim.bagPeriod);
-  const basketDy = anim.basketAmp * Math.sin((2 * Math.PI * t) / anim.basketPeriod + Math.PI / 2);
+  const bagDy    = anim.bagAmp    * Math.sin(oscPhase(t, anim.bagPeriod));
+  const basketDy = anim.basketAmp * Math.sin(oscPhase(t, anim.basketPeriod, Math.PI / 2));
 
   parts.bag.position.y    = parts.bagBaseY    + bagDy;
   parts.basket.position.y = parts.basketBaseY + basketDy;
 
-  // Přepočítej 4 lana podle aktuálních Y vaku/koše.
+  // Přepočítej 4 lana podle aktuálních Y vaku/koše. Scratch vektory `_a`,
+  // `_b` reuse-ujeme v každé iteraci — žádná nová alokace per frame.
   const basketRopeY = parts.basket.position.y + parts.ropeBasketOffset;
   const bagRopeY    = parts.bag.position.y    + parts.ropeBagOffset;
   parts.ropes.forEach((ropeMesh, i) => {
     const [cx, cz] = parts.ropeCorners[i];
-    const a = new THREE.Vector3(cx, basketRopeY, cz);
-    const b = new THREE.Vector3(cx * 1.3, bagRopeY, cz * 1.3);
-    updateCylinderBetween(ropeMesh, a, b);
+    _a.set(cx, basketRopeY, cz);
+    _b.set(cx * 1.3, bagRopeY, cz * 1.3);
+    updateCylinderBetween(ropeMesh, _a, _b);
   });
 }
 
@@ -360,14 +353,136 @@ function animateTreeSway(group, anim, t) {
 
   // Dvě nezávislé fáze, jedna pro každou osu. Fázový posun π/3 na Z aby
   // kužely ve chvíli t=0 nezačínaly z nuly v obou osách současně.
-  const phaseX = (2 * Math.PI * t) / anim.periodX;
-  const phaseZ = (2 * Math.PI * t) / anim.periodZ + Math.PI / 3;
+  const phaseX = oscPhase(t, anim.periodX);
+  const phaseZ = oscPhase(t, anim.periodZ, Math.PI / 3);
 
   parts.cones.forEach((cone, i) => {
     const coef = parts.heightCoefs[i];
     cone.position.x = anim.amplitude * coef * Math.sin(phaseX);
     cone.position.z = anim.amplitude * coef * Math.sin(phaseZ);
   });
+}
+
+// Rovnoměrná rotace kolem jedné z os. Na rozdíl od `balloon_bob` / `tree_sway`
+// sahá **přímo na kořenový Object3D** (ne na vnitřní díly v `userData.parts`) —
+// není závislá na typu vizuálu, funguje pro voxel (TCUBES), složeninu
+// (COMPOSITES), sprite i cokoli dalšího. Dokazuje, že pattern `ANIMATE`
+// generalizuje napříč třídami (ne jen COMPOSITES).
+// Parametry: `axis` = "x" | "y" | "z" (default "y"); `period` = doba jednoho
+// plného otočení v sekundách. `oscPhase` vrátí úhel v radiánech (2π × počet
+// uplynulých period) — pro rotaci to je přímo aktuální úhel natočení.
+function animateRotate(object3d, anim, t) {
+  const axis = anim.axis ?? "y";
+  object3d.rotation[axis] = oscPhase(t, anim.period);
+}
+
+// Objekt obíhá uzavřenou oválnou dráhu („stadium" — atletický ovál, 2 rovné
+// úseky + 2 půlkruhové otočky). Parametry:
+//  - `length` (L) = délka rovné části (dlouhá osa)
+//  - `radius` (R) = poloměr půlkruhu na koncích (krátká osa = 2R)
+//  - `period` (T) = doba jednoho oběhu v sekundách
+//
+// Dráha je v rovině XZ (Y se nemění), dlouhá osa je **X**, krátká **Z**.
+// Střed dráhy = původní pozice instance (snapshot `object3d.userData.base`,
+// pořízený při registraci). Obvod = 2L + 2πR; `progress = (t/T) mod 1` dává
+// normalizovanou polohu, vynásobením obvodem získáme `s` (arc-length).
+//
+// Heading (`rotation.y`) = tečna k dráze → NORTH strana kostky (default
+// forward v Three.js je −Z) vždy míří ve směru pohybu. `rotation.y` rotuje
+// CCW při pohledu shora, proto heading = **−a** (opačný smysl než parametr
+// úhlu na kružnici) — jinak by se kostka v zatáčce otáčela „ven" místo „do"
+// směru pohybu.
+function animateOrbitStadium(object3d, anim, t) {
+  const base = object3d.userData.base;
+  if (!base) return;
+  const L = anim.length;
+  const R = anim.radius;
+  const T = anim.period;
+
+  const perimeter = 2 * L + 2 * Math.PI * R;
+  // Dvojité modulo ošetří i záporné `t` — JS `%` vrací záporky pro záporná t.
+  const progress = ((t / T) % 1 + 1) % 1;
+  const s = progress * perimeter;
+
+  // Hranice fází podle arc-length
+  const endStraight1 = L;
+  const endArc1      = L + Math.PI * R;
+  const endStraight2 = 2 * L + Math.PI * R;
+
+  let dx, dz, heading;
+  if (s < endStraight1) {
+    // Rovná 1: Z = +R, X roste z −L/2 do +L/2 → směr pohybu +X.
+    dx = -L / 2 + s;
+    dz = R;
+    heading = -Math.PI / 2;
+  } else if (s < endArc1) {
+    // Půlkruh 1: střed (+L/2, 0), úhel `a` klesá z π/2 do −π/2.
+    const a = Math.PI / 2 - (s - endStraight1) / R;
+    dx = L / 2 + R * Math.cos(a);
+    dz = R * Math.sin(a);
+    heading = -a;
+  } else if (s < endStraight2) {
+    // Rovná 2: Z = −R, X klesá z +L/2 do −L/2 → směr pohybu −X.
+    dx = L / 2 - (s - endArc1);
+    dz = -R;
+    heading = Math.PI / 2;
+  } else {
+    // Půlkruh 2: střed (−L/2, 0), úhel `a` klesá z −π/2 do −3π/2 (wrap na π/2).
+    const a = -Math.PI / 2 - (s - endStraight2) / R;
+    dx = -L / 2 + R * Math.cos(a);
+    dz = R * Math.sin(a);
+    heading = -a;
+  }
+
+  object3d.position.x = base.x + dx;
+  object3d.position.z = base.z + dz;
+  object3d.rotation.y = heading;
+}
+
+// Lookup tabulka `kind` → animátor. Nový druh pohybu = nová větev zde (+
+// samotná funkce výš). Izomorfní s `faceMaterialFor` dispatchem (DD-14).
+// Umožňuje i validaci při registraci — překlep v `ANIMATE.kind` odhalíme
+// boot-time warnem, ne tichým no-op v render loopu.
+const ANIMATORS = {
+  balloon_bob:    animateBalloonBob,
+  tree_sway:      animateTreeSway,
+  rotate:         animateRotate,
+  orbit_stadium:  animateOrbitStadium,
+};
+
+// Registruje pár mesh↔instance k animaci. Voláno z `createMeshFor` pro
+// jakoukoli instanci, která má vyplněný `ANIMATE`. Neznámý `kind` se
+// odmítne (warn) — nemá smysl iterovat přes něj v render loopu.
+//
+// Snapshot `object3d.userData.base` drží referenční (počáteční) polohu —
+// transformační animátory (`orbit_stadium` a budoucí `drift`) z něj čtou
+// střed dráhy. Pozdější změna instance.X/Y/Z by se musela propagovat ručně.
+function registerAnimator(object3d, instance) {
+  const anim = instance.ANIMATE;
+  if (!anim) return;
+  if (!ANIMATORS[anim.kind]) {
+    console.warn(`Neznámý ANIMATE.kind: "${anim.kind}" (instance ${instance.ID})`);
+    return;
+  }
+  object3d.userData.base = {
+    x: object3d.position.x,
+    y: object3d.position.y,
+    z: object3d.position.z,
+  };
+  animators.push({ object3d, instance });
+}
+
+// Update všech animovaných objektů. `tSeconds` = wall-clock v sekundách
+// (plynulé, ne diskrétní TIME.tick). TIME.tick zůstává pro diskrétní
+// událostní logiku pozdějších milníků.
+function updateAnimations(tSeconds) {
+  for (const { object3d, instance } of animators) {
+    const anim = instance.ANIMATE;
+    if (!anim) continue;
+    // `ANIMATORS[anim.kind]` je garantováno vyplněné — registerAnimator
+    // nevpustil nezmapované kindy.
+    ANIMATORS[anim.kind](object3d, anim, tSeconds);
+  }
 }
 
 // === Vizualizační dispatch: instance → Three.js Object3D ===
@@ -489,8 +604,8 @@ function createSpriteFor(instance) {
   if (typeof instance.ASSET === "string") {
     // Text → canvas bubble (s komix ocáskem dolů). Plátno tvoří dvě části:
     // bubble (horních 120/160) a tail (spodních 40/160). Chceme, aby **bubble**
-    // sama měla přibližnou výšku 0.5 (dřívější M5 před přidáním ocásku),
-    // takže celkový sprite je o ocásek vyšší — vypočteno z `bubbleFraction`.
+    // sama měla přibližnou výšku 0.5; celkový sprite je o ocásek vyšší —
+    // vypočteno z `bubbleFraction`.
     const { texture, aspect, bubbleFraction } = makeBubbleTexture(instance.ASSET);
     material = new THREE.SpriteMaterial({ map: texture });
     const BUBBLE_VISUAL_HEIGHT = 0.5;
@@ -554,16 +669,17 @@ function cylinderBetween(a, b, radius, material) {
 
 // Přestaví existující válec mezi body `a` a `b` — použito při tvorbě i
 // při každém frame u animovaných lan. Mutuje `mesh.position`,
-// `mesh.quaternion`, `mesh.scale.y`.
+// `mesh.quaternion`, `mesh.scale.y`. Reuse `_dir` + `_up` scratch vektorů
+// → žádné per-frame alokace.
 function updateCylinderBetween(mesh, a, b) {
-  const direction = new THREE.Vector3().subVectors(b, a);
-  const length = direction.length();
+  _dir.subVectors(b, a);                     // `_dir` = b − a, délka vektoru
+  const length = _dir.length();
   mesh.scale.y = length;                     // jednotková výška × délka
   if (length > 0) {
-    mesh.quaternion.setFromUnitVectors(
-      new THREE.Vector3(0, 1, 0),            // default osa válce
-      direction.clone().normalize(),
-    );
+    // Normalizace in-place — délku už známe, dělíme přímo (ušetří další
+    // Math.sqrt, které by proběhlo v `normalize()`).
+    _dir.divideScalar(length);
+    mesh.quaternion.setFromUnitVectors(_up, _dir);
   }
   mesh.position.copy(a).lerp(b, 0.5);        // střed válce = midpoint
 }
@@ -648,11 +764,13 @@ function buildBalloon(group, instance) {
   // Uchycení hluboko uvnitř koše (Y = 0.1, pod vrškem) a hluboko uvnitř vaku
   // (Y = 1.0, ve spodní třetině koule). Lana pak prostupují stěnami obou
   // objektů — vypadá to jako "lana skrze kůži", ne "lana přilepená zvenku".
-  // Offsety jsou relativní ke středům koše/vaku → při pohupování zůstanou
-  // uchycena „ve" stěnách, ne „na" nich.
+  // Ukládáme **relativní offset** vůči základní Y koše/vaku: při pohupování
+  // se uchycení posune spolu s rodičem a zůstane „ve" stěně.
   const ropeMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a });
-  const ropeBasketOffset = -0.05;   // ropeStartY (0.1) − basketBaseY (0.15)
-  const ropeBagOffset    = -0.3;    // ropeEndY (1.0) − bagBaseY (1.3)
+  const ropeStartY = 0.1;                           // uvnitř koše
+  const ropeEndY   = 1.0;                           // uvnitř vaku
+  const ropeBasketOffset = ropeStartY - basketBaseY; // −0.05
+  const ropeBagOffset    = ropeEndY   - bagBaseY;    // −0.3
   const corners = [
     [ 0.18,  0.18],   // +X, +Z
     [-0.18,  0.18],   // −X, +Z
@@ -660,11 +778,12 @@ function buildBalloon(group, instance) {
     [ 0.18, -0.18],   // +X, −Z
   ];
   // Lana si budeme pamatovat jako pole meshů — animátor je potom za běhu
-  // přepočítá (dynamická délka při pohupování vaku/koše).
+  // přepočítá (dynamická délka při pohupování vaku/koše). Reuse scratch `_a`,
+  // `_b` aby `cylinderBetween` nedostalo per-call alokace.
   const ropes = corners.map(([cx, cz]) => {
-    const from = new THREE.Vector3(cx, basketBaseY + ropeBasketOffset, cz);
-    const to   = new THREE.Vector3(cx * 1.3, bagBaseY + ropeBagOffset, cz * 1.3);
-    const rope = cylinderBetween(from, to, 0.015, ropeMat);
+    _a.set(cx,        ropeStartY, cz);
+    _b.set(cx * 1.3,  ropeEndY,   cz * 1.3);
+    const rope = cylinderBetween(_a, _b, 0.015, ropeMat);
     group.add(rope);
     return rope;
   });
@@ -729,10 +848,10 @@ const tree1 = new TREE(
   3, 0, 0,
   "COMPOSITES — kmen (válec) + 3 kužely koruny.",
 );
-// M7 — strom se kývá ve větru. Dvě nesoudělné periody (3.5 a 2.7 s) dávají
-// elipsovitý pohyb (ne čistý 1D kyvadlo). Amplituda 0.08 m × koeficient
+// Strom se kývá ve větru. Dvě nesoudělné periody (3.5 a 2.7 s) dávají
+// elipsovitý pohyb (ne čisté 1D kyvadlo). Amplituda 0.08 m × koeficient
 // výšky kuželu → špička (~1.6 m) viditelně opisuje malou elipsu, spodní
-// kužel se téměř nehne. Bubble nad stromem zůstává fixní (Q1 statická).
+// kužel se téměř nehne.
 tree1.ANIMATE = {
   kind: "tree_sway",
   periodX: 3.5,
@@ -755,12 +874,11 @@ const balloon1 = new BALLOON(
   0xff6b35,                                  // sytá oranžová pro vak
   "COMPOSITES mimo grid — vak, 4 lana, koš.",
 );
-// M7 — balón dostává recept pohybu: vak se pomalu pohupuje (perioda 4 s,
-// amplituda 0.15 m), koš pruží nezávisle s kratší periodou a menší amplitudou
-// → vizuální dojem „balón plave, koš dohání". Fázový posun π/2 v `basketPeriod`
-// sinusy navzájem desynchronizuje, aby lana viditelně měnila délku.
-// Registrace animátora proběhne v `createMeshFor` — proto se ANIMATE musí
-// nastavit **před** něj.
+// Balón se pomalu pohupuje (vak 4 s / 0.15 m), koš pruží nezávisle s kratší
+// periodou a menší amplitudou → vizuální dojem „balón plave, koš dohání".
+// Fázový posun π/2 na `basketPeriod` desynchronizuje oba sinusy, takže lana
+// viditelně mění délku. `ANIMATE` nastavit **před** `createMeshFor` —
+// registrace animátora proběhne tam.
 balloon1.ANIMATE = {
   kind: "balloon_bob",
   bagPeriod: 4,
@@ -780,6 +898,10 @@ const tbox1 = new TCUBES(
   { TOP: "🌳", BOTTOM: "🪵", NORTH: "📦", SOUTH: "📦", EAST: "📦", WEST: "📦" },
   "TCUBES — emoji per-face. TOP strom, BOTTOM poleno, strany krabice.",
 );
+// Krabice se pomalu otáčí kolem Y (jedno plné otočení za 6 s). Dokazuje, že
+// `ANIMATE` funguje i mimo COMPOSITES — `animateRotate` sahá přímo na
+// `object3d.rotation`, nevyžaduje `userData.parts`.
+tbox1.ANIMATE = { kind: "rotate", axis: "y", period: 6 };
 scene.add(createMeshFor(tbox1));
 
 // Částečně texturovaná kostka — TCUBES (-3, 0, 2). Vyplněný jen TOP (⭐),
@@ -792,6 +914,16 @@ const tbox2 = new TCUBES(
   { TOP: "⭐" },
   "TCUBES — jen TOP vyplněný, ostatní strany fallback na šachovnici.",
 );
+// Kostka obíhá oválnou dráhu kolem své výchozí pozice (stadium: 2 rovné
+// úseky × 2 půlkruhy). L=2, R=0.8 → rozsah X [-4.8, -1.2], Z [1.2, 2.8]
+// (v gridu, neprotíná tbox_0001 na Z=0). Heading plynule sleduje tečnu
+// dráhy → NORTH strana vždy ukazuje dopředu jako auto na trati.
+tbox2.ANIMATE = {
+  kind: "orbit_stadium",
+  length: 2,
+  radius: 0.8,
+  period: 10,
+};
 scene.add(createMeshFor(tbox2));
 
 // Dialog bubble nad stromem — SPRITES (2D billboard, DD-13).
@@ -853,8 +985,12 @@ function formatValue(key, val) {
 function renderTooltip(instance) {
   // instance.constructor.name vrátí např. "CUBES" — použije se jako nadpis
   const header = instance.constructor.name;
-  // Object.entries vytáhne [klíč, hodnota] páry z vlastních atributů instance
+  // Object.entries vytáhne [klíč, hodnota] páry z vlastních atributů instance.
+  // Nevyplněný `ANIMATE` (default null u statických entit) skryjeme — je to
+  // technický default, uživatele ruší. Nevyplněná TEXTURE_* zůstávají (tam je
+  // „—" sémantické: fallback na šachovnici, DD-07).
   const rows = Object.entries(instance)
+    .filter(([key, val]) => !(key === "ANIMATE" && val == null))
     .map(([key, val]) =>
       `<div class="tt-row">
          <span class="tt-key">${escapeHtml(key)}</span>
