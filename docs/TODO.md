@@ -46,10 +46,34 @@
 - [x] Ověřit v prohlížeči: balón visí nad scénou, pozice nesnapovaná na int, infotip ukáže `BALLOON` + `COLOR` jako `#ff6b35`.
 - [x] **Stíny** (bonus M4): `renderer.shadowMap` (PCFSoftShadowMap), `sun.castShadow` + ortho frustum + bias, ShadowMaterial ground plane, shadow flagy v `createMeshFor`. Sníženo `AmbientLight` 0.4 → 0.15 kvůli self-shadow kontrastu.
 
-## M5+ — Později
+## M5 — SPRITES (dialog bubble)
 
-- [ ] **SPRITES** — 2D billboard ke kameře. Dialog bubble / label.
-- [ ] **TCUBES** — per-face textury (TOP/BOTTOM/NORTH/SOUTH/EAST/WEST).
+- [x] `SPRITES extends CUBES` s atributem `ASSET` (default null).
+- [x] `makeBubbleTexture(text)` — canvas 512×160 s zaobleným bílým rectem + komix ocáskem dolů. Vrací `{ texture, aspect, bubbleFraction }`.
+- [x] `createSpriteFor(instance)` — `THREE.Sprite` + `SpriteMaterial`, scale z `bubbleFraction` aby bubble měla vizuální výšku ~0.5.
+- [x] Dispatch v `createMeshFor` → SPRITES větev před CCUBES.
+- [x] Instance `dialog_0001` nad stromem na (3, 2.2, 0) — text „Ahoj! Jsem mluvící strom."
+- [x] DD-14 — dispatch ASSET podle typu (null/string).
+- [x] Ověřit v prohlížeči: bublina se otáčí ke kameře, text čitelný, ocásek míří na strom, infotip ukáže `SPRITES` + `ASSET`.
+
+## M6 — TCUBES (per-face textury)
+
+- [x] `TCUBES extends CUBES` s šesti atributy `TEXTURE_TOP/BOTTOM/NORTH/SOUTH/EAST/WEST` (default null).
+- [x] `makeEmojiTexture(char)` — canvas 128×128 s emoji/textem vycentrovaným.
+- [x] `faceMaterialFor(val)` — dispatch null/number/hex/string → materiál. Izomorfní s SPRITES.
+- [x] `createTCubeFor(instance)` — BoxGeometry s 6 materiály v pořadí [+X,-X,+Y,-Y,+Z,-Z] mapované na EAST/WEST/TOP/BOTTOM/SOUTH/NORTH.
+- [x] Dispatch v `createMeshFor` → TCUBES větev.
+- [x] `formatValue` v infotipu: null → „—", number u COLOR/TEXTURE_* → hex.
+- [x] Instance `tbox_0001` „Krabice s obsahem" (-3, 0, 0) — TOP 🌳, BOTTOM 🪵, 4 strany 📦.
+- [x] Instance `tbox_0002` „Hvězda na vrchu" (-3, 0, 2) — jen TOP ⭐, ostatní fallback šachovnice.
+- [x] DD-14 pokrývá i TCUBES dispatch (sdílený pattern s SPRITES).
+
+## M7+ — Později
+
+- [ ] **Mechanismus reakce na TIME** — pravidla / per-object tick / subscription. Poslední zbývající výhled z IDEAS.
+- [ ] Dynamický 3D ocásek SPRITES (mířit na mluvčího i když bublina není přímo nad).
+- [ ] Další COMPOSITES: HOUSE, ROCK, CLOUD.
+- [ ] `WCUBES` wireframe varianta *(nápad, možná)*.
 - [ ] `INVISIBLE` potomek CUBES *(možná zbytečné)*.
 - [ ] Nevizuální potomek OBJECTS (např. `TIMER`, `COUNTER`) — až bude přirozená potřeba.
-- [ ] Mechanismus, jak objekty reagují na TIME (až to bude potřeba).
+- [ ] CCUBES typizace (ICE/GRASS/SAND) *(možná)*.

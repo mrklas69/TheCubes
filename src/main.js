@@ -6,7 +6,7 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CUBES, CCUBES, COMPOSITES, TREE, BALLOON } from "./model.js";
+import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, BALLOON } from "./model.js";
 import { advanceTime } from "./time.js";
 
 // === Renderer ===
@@ -149,6 +149,159 @@ function makeCheckerboardTexture(cellsPerSide = 8) {
 // Texturu vytvoříme jednou — sdílená instance pro všechny mateřské CUBES.
 const checkerboardTexture = makeCheckerboardTexture();
 
+// === Canvas-generovaná textura pro dialog bubble (SPRITES) ===
+// Vykreslí text do zaobleného bílého obdélníku → vrátí CanvasTexture a poměr
+// stran (width/height) pro správné měřítko spritu v 3D. Poměr vrací proto,
+// aby sprite ve scéně neměl zkreslené proporce (square 1×1 by dialog
+// protáhl nebo zmáčknul).
+//
+// HTML5 canvas API: `fillText` nakreslí text; `textAlign` / `textBaseline`
+// určuje, jak se souřadnice mapují na bounding box textu (center/middle
+// = střed textu leží přesně v (x, y)). `quadraticCurveTo` se v helperu
+// `roundRect` používá pro zaoblení rohů — kvadratická Bézierova křivka
+// se dvěma řídícími body.
+function makeBubbleTexture(text) {
+  const canvas = document.createElement("canvas");
+  // Plátno H=160 = bubble (120 px) + tail (40 px) v poměru 3:1 vertikálně,
+  // celkový poměr stran plátna 3.2:1. Větší plátno = ostřejší text/ocásek,
+  // ale vyšší VRAM. Ocásek je **součástí textury** — směřuje vždy dolů ve
+  // středu (míří na entitu přímo pod bublinou). Dynamický směr by znamenal
+  // mesh ocásek mimo sprite; KISS pro M5.
+  const W = 512, H = 160;
+  const BUBBLE_H = 120;          // horní region s textem
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+
+  // --- Podklad bubliny: zaoblený bílý obdélník s tmavým okrajem ---
+  const PAD = 6;                  // vnitřní okraj, aby stroke nevyjel z plátna
+  const RADIUS = 28;              // radius zaoblení rohů
+  ctx.fillStyle = "#ffffff";
+  ctx.strokeStyle = "#222222";
+  ctx.lineWidth = 4;
+  roundRectPath(ctx, PAD, PAD, W - 2 * PAD, BUBBLE_H - 2 * PAD, RADIUS);
+  ctx.fill();
+  ctx.stroke();
+
+  // --- Ocásek: trojúhelník směřující dolů pod bublinu (komix pointer) ---
+  // Základna trojúhelníku mírně překrývá spodní okraj bubliny, špička sahá
+  // k dolní hraně plátna. Po vykreslení přejedeme bílou čarou přes spoj
+  // base↔bubble — jinak by tam ostal fragment tmavého stroke z obdélníku.
+  const tipX = W / 2;
+  const tipY = H - 6;              // špička ocásku (mírně nad dolní hranou)
+  const baseY = BUBBLE_H - 4;      // základna ocásku (uvnitř obrysu bubliny)
+  const baseHalf = 22;             // polovina šířky základny
+  ctx.beginPath();
+  ctx.moveTo(tipX - baseHalf, baseY);
+  ctx.lineTo(tipX + baseHalf, baseY);
+  ctx.lineTo(tipX, tipY);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // Přebarvi spodní obrys bubliny (v rozsahu základny ocásku) na bílo →
+  // splynou bubble i tail do jednoho tvaru bez viditelné linky.
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(tipX - baseHalf + 3, baseY);
+  ctx.lineTo(tipX + baseHalf - 3, baseY);
+  ctx.stroke();
+
+  // --- Text ---
+  // `system-ui` = systémový sans-serif (SF Pro / Segoe UI / Roboto podle OS).
+  // Velikost v px se vztahuje k canvasu, ne k obrazovce. 34 px na 120 px
+  // výšce (bubble region) → čitelný jednořádkový text s rezervou.
+  ctx.fillStyle = "#111111";
+  ctx.font = "bold 34px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  // Text vycentrovaný uvnitř bubble regionu, ne celého plátna — jinak by
+  // ho ocásek posunul opticky dolů.
+  ctx.fillText(text, W / 2, BUBBLE_H / 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  // SRGB aby barvy (bílá, černá text) seděly s PBR renderem
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return { texture, aspect: W / H, bubbleFraction: BUBBLE_H / H };
+}
+
+// === Canvas-generovaná textura pro TCUBES stranu s textem/emoji ===
+// Vykreslí jediný znak (typicky emoji) na bílý čtverec. Použití: TCUBES s
+// `TEXTURE_TOP = "🌳"` atp. Plátno je čtvercové (128×128), aby textura
+// nezkreslila jednotku voxelu.
+//
+// Fonty pro emoji závisí na OS — `Apple Color Emoji` (macOS/iOS), `Segoe UI
+// Emoji` (Windows), `Noto Color Emoji` (Linux). Browser si vybere první
+// dostupný z fallbacku. Běžný text (např. `"N"`) vykreslí systémový sans.
+function makeEmojiTexture(char) {
+  const canvas = document.createElement("canvas");
+  const size = 128;
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d");
+
+  // Bílé pozadí — kontrastní základ pro tmavé emoji/text
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, size, size);
+
+  // Emoji vycentrované; velikost 88 px na 128 px plátně = vzduch okolo
+  ctx.font = "88px 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', system-ui, sans-serif";
+  ctx.fillStyle = "#111111";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(char, size / 2, size / 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+// === Dispatch: atribut strany TCUBES → Three.js materiál ===
+// Rozhodne podle **typu** hodnoty, jaký materiál pro jednu stranu voxelu
+// vyrobit. Izomorfně s dispatchem `createSpriteFor(ASSET)` — stejný pattern
+// „model drží data, engine interpretuje".
+//
+//  - `null`/`undefined` → fallback šachovnice (DD-07). Stejná sdílená
+//    textura jako u mateřské CUBES — vizuální idiom „strana nevyplněná".
+//  - `number` (0xRRGGBB) → plocha barva celé strany.
+//  - `string` (`"#ff0000"`, `"🌳"`, …) → Three.js `Color` umí parse hex
+//    i named barvy, nebo dispatch na canvas s emoji/textem pro jiné stringy.
+function faceMaterialFor(val) {
+  if (val == null) {
+    return new THREE.MeshStandardMaterial({ map: checkerboardTexture });
+  }
+  if (typeof val === "number") {
+    return new THREE.MeshStandardMaterial({ color: val });
+  }
+  if (typeof val === "string") {
+    // `#rrggbb` → Three.js Color parse (stejné jako number). Test přes regex,
+    // aby např. `"red"` prošlo stejnou cestou (pojmenované CSS barvy).
+    if (/^#[0-9a-f]{3,8}$/i.test(val)) {
+      return new THREE.MeshStandardMaterial({ color: val });
+    }
+    // Jinak canvas s textem / emoji
+    return new THREE.MeshStandardMaterial({ map: makeEmojiTexture(val) });
+  }
+  // Neznámý typ → fallback (defensive; model by neměl dodat nic jiného)
+  return new THREE.MeshStandardMaterial({ map: checkerboardTexture });
+}
+
+// Helper pro `makeBubbleTexture` — nakreslí cestu zaobleného obdélníku
+// (sub-path), ale nekreslí/nevyplňuje. Volající pak provede fill() / stroke().
+// Canvas 2D API nemá built-in roundRect ve starších verzích, proto helper.
+function roundRectPath(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
 // === Vizualizační dispatch: instance → Three.js Object3D ===
 // Podle konkrétní třídy instance rozhodujeme, jaký vizuál sestrojit.
 // `instanceof` testuje řetěz dědičnosti. Pořadí větví je důležité:
@@ -166,6 +319,13 @@ function createMeshFor(instance) {
   if (instance instanceof COMPOSITES) {
     // 3D mesh složený z primitivů. Konkrétní tvar řešíme podle podtřídy.
     object3d = createCompositeFor(instance);
+  } else if (instance instanceof SPRITES) {
+    // 2D billboard — obrázek vždy otočený ke kameře. Nevoxelový potomek,
+    // pozice float bez snap-to-grid.
+    object3d = createSpriteFor(instance);
+  } else if (instance instanceof TCUBES) {
+    // Voxel s per-face texturami (6 různých materiálů). Snap-to-grid.
+    object3d = createTCubeFor(instance);
   } else if (instance instanceof CCUBES) {
     // Voxel s plochou barvou (dříve TERRAIN).
     const geometry = new THREE.BoxGeometry(1, 1, 1);
@@ -187,6 +347,10 @@ function createMeshFor(instance) {
   //     správnou instanci.
   //  2. castShadow + receiveShadow = objekt vrhá stín (blokuje světlo)
   //     a zároveň stín přijímá (jeho povrch může být stínován).
+  //
+  // Pozn. pro SPRITES: Three.js `Sprite` nemá `isMesh` (má `isSprite`) a
+  // stíny stejně nepodporuje — traverze ho přeskočí a to je záměr. Kořenový
+  // userData.instance z řádku výš stačí, raycaster najde sprite přímo.
   object3d.userData.instance = instance;
   object3d.traverse((child) => {
     if (child.isMesh) {
@@ -207,6 +371,73 @@ function snapToGrid(mesh, instance) {
     Math.round(instance.Y),
     Math.round(instance.Z),
   );
+}
+
+// Sestaví voxel s per-face texturami pro TCUBES instanci. BoxGeometry v
+// Three.js přijímá **pole 6 materiálů** (místo jednoho) — pořadí strnule
+// definované engine: [+X, -X, +Y, -Y, +Z, -Z]. Mapujeme ho na projektové
+// světové strany podle DD-13 a Q5 ze sezení 4:
+//  index 0 (+X) = EAST, 1 (-X) = WEST, 2 (+Y) = TOP, 3 (-Y) = BOTTOM,
+//  4 (+Z) = SOUTH (+Z je v Three.js směr „k divákovi"), 5 (-Z) = NORTH.
+//
+// Každá strana prochází dispatchem `faceMaterialFor`, který podle **typu**
+// atributu vrátí barvený nebo textúrovaný materiál, případně fallback
+// šachovnici (DD-07).
+function createTCubeFor(instance) {
+  const materials = [
+    faceMaterialFor(instance.TEXTURE_EAST),    // +X
+    faceMaterialFor(instance.TEXTURE_WEST),    // −X
+    faceMaterialFor(instance.TEXTURE_TOP),     // +Y
+    faceMaterialFor(instance.TEXTURE_BOTTOM),  // −Y
+    faceMaterialFor(instance.TEXTURE_SOUTH),   // +Z
+    faceMaterialFor(instance.TEXTURE_NORTH),   // −Z
+  ];
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), materials);
+  snapToGrid(mesh, instance);
+  return mesh;
+}
+
+// Sestaví 2D billboard pro SPRITES instanci. Vrací `THREE.Sprite` — speciální
+// Three.js objekt, který se sám stará o to, aby byl vždy otočený ke kameře
+// (tzv. billboard). Nepotřebuje per-frame `lookAt(camera)`, projekce se řeší
+// v shaderu. Pozice je float bez snap-to-grid (DD-12).
+//
+// Interpretace atributu `ASSET`:
+//  - `null` / nezadáno → šachovnicový billboard (fallback DD-07).
+//  - `string` → text vykreslený přes `makeBubbleTexture` jako dialog bubble.
+//
+// Měřítko spritu: default `Sprite.scale` je 1×1×1. Pro bubble se poměr stran
+// vypočítá z plátna (aby se text nezkreslil), pro šachovnici drží čtvercový
+// formát. Jednotka délky 3D světa = stejná jako hrana voxelu, takže bubble
+// široká ~2 jednotky působí „úměrně" ke kostkám.
+function createSpriteFor(instance) {
+  let material;
+  let spriteWidth;
+  let spriteHeight;
+
+  if (typeof instance.ASSET === "string") {
+    // Text → canvas bubble (s komix ocáskem dolů). Plátno tvoří dvě části:
+    // bubble (horních 120/160) a tail (spodních 40/160). Chceme, aby **bubble**
+    // sama měla přibližnou výšku 0.5 (dřívější M5 před přidáním ocásku),
+    // takže celkový sprite je o ocásek vyšší — vypočteno z `bubbleFraction`.
+    const { texture, aspect, bubbleFraction } = makeBubbleTexture(instance.ASSET);
+    material = new THREE.SpriteMaterial({ map: texture });
+    const BUBBLE_VISUAL_HEIGHT = 0.5;
+    spriteHeight = BUBBLE_VISUAL_HEIGHT / bubbleFraction;  // ~0.667
+    spriteWidth  = spriteHeight * aspect;                   // zachová poměr plátna
+  } else {
+    // Fallback: šachovnicový billboard (DD-07). Square 1×1, reuse sdílené textury.
+    material = new THREE.SpriteMaterial({ map: checkerboardTexture });
+    spriteWidth = spriteHeight = 1;
+  }
+
+  const sprite = new THREE.Sprite(material);
+  sprite.position.set(instance.X, instance.Y, instance.Z);
+  // `scale` spritu určuje jeho velikost ve světových jednotkách (jako kdyby
+  // kamera byla ortografická — sprite si drží apparent size podle vzdálenosti
+  // v perspektivě). Z-rozměr scale je u spritu ignorován, ale musí být > 0.
+  sprite.scale.set(spriteWidth, spriteHeight, 1);
+  return sprite;
 }
 
 // Sestaví 3D strukturu pro COMPOSITES instanci. Vrací THREE.Group
@@ -405,6 +636,45 @@ const balloon1 = new BALLOON(
 );
 scene.add(createMeshFor(balloon1));
 
+// Krabice s obsahem — TCUBES (per-face textury, DD-13). Pozice (-3, 0, 0)
+// zrcadlově ke stromu. TOP = 🌳 (obsah), BOTTOM = 🪵 (dno), 4 strany = 📦
+// (stejný obsah). Demo plného vyplnění všech 6 stran.
+const tbox1 = new TCUBES(
+  "tbox_0001",
+  "Krabice s obsahem",
+  -3, 0, 0,
+  { TOP: "🌳", BOTTOM: "🪵", NORTH: "📦", SOUTH: "📦", EAST: "📦", WEST: "📦" },
+  "TCUBES — emoji per-face. TOP strom, BOTTOM poleno, strany krabice.",
+);
+scene.add(createMeshFor(tbox1));
+
+// Částečně texturovaná kostka — TCUBES (-3, 0, 2). Vyplněný jen TOP (⭐),
+// zbývající 5 stran null → fallback šachovnice (DD-07). Demo, že nevyplněná
+// strana sedí na stejném vizuálním idiomu jako mateřská CUBES.
+const tbox2 = new TCUBES(
+  "tbox_0002",
+  "Hvězda na vrchu",
+  -3, 0, 2,
+  { TOP: "⭐" },
+  "TCUBES — jen TOP vyplněný, ostatní strany fallback na šachovnici.",
+);
+scene.add(createMeshFor(tbox2));
+
+// Dialog bubble nad stromem — SPRITES (2D billboard, DD-13).
+// Pozice (3, 2.2, 0): X/Z = nad stromem (který je na (3, 0, 0)). Y = 2.2
+// zvoleno tak, aby **špička ocásku** dosáhla cca Y ≈ 1.89 (tip je 0.308
+// pod středem spritu pro BUBBLE_H=120, H=160) — těsně nad špičkou koruny
+// (poslední kužel končí okolo Y ≈ 1.85). Bubble je float pozice, bez
+// snap-to-grid (DD-12 — SPRITES jsou sourozenci COMPOSITES, oba spojité).
+const dialog1 = new SPRITES(
+  "dialog_0001",
+  "Bublina stromu",
+  3, 2.2, 0,
+  "Ahoj! Jsem mluvící strom.",
+  "SPRITES — dialogová bublina nad stromem (canvas-generovaný text + ocásek).",
+);
+scene.add(createMeshFor(dialog1));
+
 // === Infotip (hover panel s atributy instance) ===
 // Viz DD-08. Generický přístup: iteruje vlastní vlastnosti instance a
 // vypíše je jako řádky. Funguje pro libovolnou třídu dědící z OBJECTS.
@@ -423,11 +693,17 @@ function escapeHtml(str) {
 }
 
 // Formátování hodnoty podle klíče — pro většinu atributů se nic nemění,
-// ale COLOR (JS number 0xRRGGBB) převedeme na čitelný hex "#rrggbb".
+// ale barvové atributy (COLOR, TEXTURE_*) převedeme na čitelný hex "#rrggbb",
+// null/undefined zobrazíme jako pomlčku (pro TCUBES = „strana nevyplněná,
+// fallback na šachovnici").
+//
 // `toString(16)` převádí číslo na hex řetězec; `padStart(6, "0")` doplní
 // vedoucí nuly (aby např. 0x00ff00 nedávalo "ff00").
 function formatValue(key, val) {
-  if (key === "COLOR" && typeof val === "number") {
+  // Nullish → pomlčka (izomorfně pro jakýkoli atribut, ne jen TEXTURE_*)
+  if (val == null) return "—";
+  // COLOR na CCUBES/BALLOON; TEXTURE_* na TCUBES. Oba případ: number → hex.
+  if (typeof val === "number" && (key === "COLOR" || key.startsWith("TEXTURE_"))) {
     return "#" + val.toString(16).padStart(6, "0");
   }
   return val;

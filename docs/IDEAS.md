@@ -3,9 +3,9 @@
 Raw nápady. Když dozraje, přesuň do `TODO.md`.
 
 ## Rozšíření modelu
-- **SPRITES** — potomek CUBES s 2D billboard vizualizací (dialog bubble, 2D postava, label). Atribut `ASSET`. *(přejmenováno z `SPRITE` v sez. 3 kvůli konzistenci s OBJECTS/CUBES plural konvencí.)*
+- **SPRITES** — potomek CUBES s 2D billboard vizualizací (dialog bubble, 2D postava, label). Atribut `ASSET`. → DONE (sez. 4, M5): třída + canvas-generovaná dialogová bublina s komix ocáskem + instance `dialog_0001` nad stromem. Dynamický 3D ocásek (mířit na mluvčího z libovolného směru) zatím odložen.
 - **COMPOSITES** — potomek CUBES s 3D mesh z primitivů (strom, balón). → DONE (sez. 3): základní třída + `TREE` (M3) + `BALLOON` (M4, float pozice). Další kandidáti: **HOUSE**, **ROCK**, **CLOUD**.
-- **TCUBES** — potomek CUBES s per-face texturami (TOP/BOTTOM/NORTH/SOUTH/EAST/WEST). Nevyplněná plocha fallback šachovnice. *(M6.)*
+- **TCUBES** — potomek CUBES s per-face texturami (TOP/BOTTOM/NORTH/SOUTH/EAST/WEST). Nevyplněná plocha fallback šachovnice. → DONE (sez. 4, M6): třída + dispatch `faceMaterialFor` (DD-14) + instance `tbox_0001` (emoji krabice) a `tbox_0002` (hvězda + 5× fallback).
 - **WCUBES** *(nápad)* — wireframe varianta mateřské CUBES, pokud bude potřeba odlišný „draft" idiom od šachovnice.
 - **INVISIBLE** — potomek CUBES bez vizualizace (spawn point, marker). *(možná zbytečné — stačí mateřská CUBES s NAME="marker"?)*
 - **CCUBES typizace** — potomek CCUBES s paletou (ICE, GRASS, SAND, …). Historicky navrhováno jako `TERRAIN`; pojem se může vrátit tady, pokud bude potřeba typizovaná rodina.

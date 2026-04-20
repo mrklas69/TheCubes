@@ -73,6 +73,70 @@ export class CCUBES extends CUBES {
 }
 
 /**
+ * TCUBES = Texture Cubes. Voxel s **per-face texturami** — každá ze 6 stran
+ * může mít vlastní obsah. Stejně jako CCUBES je to voxel (pozice snap-to-grid
+ * v rendereru, DD-12); liší se vizuálním módem — plocha barva vs. 6 ploch
+ * s různou texturou. Viz DD-13.
+ *
+ * Atributy `TEXTURE_TOP`, `TEXTURE_BOTTOM`, `TEXTURE_NORTH`, `TEXTURE_SOUTH`,
+ * `TEXTURE_EAST`, `TEXTURE_WEST` — jeden per světovou stranu.
+ *
+ * Formát jednotlivé strany (dispatch v enginu podle typu):
+ *  - `null` / nezadáno → fallback šachovnice (DD-07). Nevyplněná strana
+ *    se zobrazí stejně jako mateřská CUBES.
+ *  - `number` 0xRRGGBB → plocha barva celé strany.
+ *  - `string` začínající `#` (`"#ff0000"`) → plocha barva z hex řetězce.
+ *  - jiný `string` (emoji, text `"🌳"`, `"N"`) → canvas s textem vycentrovaným.
+ *  - (pozdější rozšíření: URL na PNG, recept generátoru, …).
+ *
+ * Mapování světových stran na osy (Three.js, Y-up, +Z = k divákovi):
+ *  TOP = +Y, BOTTOM = −Y, EAST = +X, WEST = −X, SOUTH = +Z, NORTH = −Z.
+ *
+ * Constructor přijímá objekt `{ TOP, BOTTOM, NORTH, SOUTH, EAST, WEST }`.
+ * Chybějící klíče zůstanou `null` → fallback šachovnice. Nullish koalescent
+ * `??` vrátí pravý operand jen pro `null`/`undefined` (ne pro 0 nebo ""),
+ * což je důležité — číslo 0 (černá 0x000000) je validní barva.
+ */
+export class TCUBES extends CUBES {
+  constructor(id, name, x, y, z, textures = {}, description = "") {
+    super(id, name, x, y, z, description);
+    this.TEXTURE_TOP    = textures.TOP    ?? null;
+    this.TEXTURE_BOTTOM = textures.BOTTOM ?? null;
+    this.TEXTURE_NORTH  = textures.NORTH  ?? null;
+    this.TEXTURE_SOUTH  = textures.SOUTH  ?? null;
+    this.TEXTURE_EAST   = textures.EAST   ?? null;
+    this.TEXTURE_WEST   = textures.WEST   ?? null;
+  }
+}
+
+/**
+ * SPRITES = potomek CUBES vizualizovaný jako 2D billboard (obrázek vždy
+ * otočený ke kameře). Sourozenec CCUBES/TCUBES/COMPOSITES — liší se
+ * vizuálním módem, ne polohou. Viz DD-13.
+ *
+ * Atribut `ASSET`:
+ *  - `null` / nezadáno → fallback šachovnicový billboard (idiom DD-07,
+ *    „vizuál není definován").
+ *  - `string` → text vykreslený jako dialogová bublina (canvas-generovaný
+ *    obrázek, engine si z textu vyrobí CanvasTexture).
+ *  - (pozdější rozšíření: URL na PNG, recept pro canvas, …).
+ *
+ * Pozice spojitá (DD-12) — sprite se nesnapuje na grid; 2D billboard dává
+ * smysl i mezi voxely (dialog nad stromem apod.). V M5 stojí na vlastních
+ * absolutních souřadnicích; parent-child vazba (follow parent + offset) je
+ * samostatné téma na pozdější milník.
+ */
+export class SPRITES extends CUBES {
+  constructor(id, name, x, y, z, asset = null, description = "") {
+    super(id, name, x, y, z, description);
+    // ASSET = popis obsahu bubliny. `null` → fallback šachovnice.
+    // Konkrétní interpretaci (string → text bubble, URL → obrázek, …)
+    // řeší engine v `createSpriteFor`. Model zůstává datový (DD-11).
+    this.ASSET = asset;
+  }
+}
+
+/**
  * COMPOSITES = potomek CUBES vizualizovaný jako 3D mesh složený z primitivů
  * (Three.js `Group` obsahující např. válec + kužely pro strom).
  *
