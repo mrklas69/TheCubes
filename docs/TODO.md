@@ -83,9 +83,11 @@
 
 - [x] Generický `rotate` animátor (`ANIMATORS.rotate`, přímá mutace `object3d.rotation`) + krabice `tbox_0001` rotující kolem Y (period 6 s). Ověřuje, že `ANIMATE` pattern funguje napříč třídami, ne jen COMPOSITES.
 - [x] Generický `orbit_stadium` animátor — uzavřená oválná dráha (stadium pattern). `tbox_0002` „Hvězda na vrchu" obíhá kolem výchozí pozice (L=2, R=0.8, period 10 s), heading sleduje tečnu dráhy. Zavedl snapshot `object3d.userData.base` při `registerAnimator` — sdílený kontrakt pro transformační animátory.
+- [x] Generický `pulse` animátor — mutace `material.emissive*` (třetí dimenze `ANIMATE` patternu: díly / transformace / materiál). Červená dlaždice `ccube_0001` pulsuje period 2 s / max 0.9, tyrkysová `ccube_0005` pomaleji (3.5 s / max 0.6, min 0.05) → desynchronizace ukazuje, že animátory běží nezávisle per-instance. Lazy init `emissive` barvy přes `userData.pulseInit`. Tyrkysová navíc sinusově mění `material.opacity` 0.25 → 1.0 (zapíná `transparent=true` lazy v init) → „dýchá".
+- [x] **HOUSE** — statický COMPOSITES (kvádr stěn + jehlanová střecha ConeGeometry 4-segment). Atribut `COLOR` na stěny, střecha fixně rezavě červená. Dokončuje základní COMPOSITES trio (TREE + BALLOON + HOUSE). Instance `house_0001` (0, 0, -3) za růžicí.
+- [x] **CLOUD + drift** — COMPOSITES shluk 5 koulí + nový `drift` animátor (lineární pohyb po jedné ose s wrap-around). Instance `cloud_0001` (0, 4.5, -2), drift po X, speed 0.6 j/s, range 16 (cyklus ≈ 26.7 s). Pátý `ANIMATE.kind` — první ne-periodický (wrap skok na hranici).
 - [ ] Dynamický 3D ocásek SPRITES (mířit na mluvčího i když bublina není přímo nad).
-- [ ] Další COMPOSITES: HOUSE, ROCK, CLOUD (CLOUD by mohl dostat `ANIMATE: { kind: "drift" }`).
-- [ ] Další `kind`y animací: `pulse` (CCUBES světla emisivně bliká), `drift` (CLOUD letí po ose).
+- [ ] Další COMPOSITES: ROCK.
 - [ ] `WCUBES` wireframe varianta *(nápad, možná)*.
 - [ ] `INVISIBLE` potomek CUBES *(možná zbytečné)*.
 - [ ] Nevizuální potomek OBJECTS (např. `TIMER`, `COUNTER`) — až bude přirozená potřeba.

@@ -173,6 +173,40 @@ export class TREE extends COMPOSITES {
 }
 
 /**
+ * HOUSE = konkrétní COMPOSITES reprezentující jednoduchý domek.
+ *
+ * Vizualizace: kvádr stěn + jehlanová střecha (ConeGeometry, 4 segmenty).
+ * Atribut `COLOR` (JS number 0xRRGGBB) barví **stěny**; barva střechy je
+ * fixní v enginu (rezavá červená — typický idiom střešní tašky).
+ *
+ * Bez `ANIMATE` je dům statický — typická dekorace scény (M8). Pohyblivá
+ * varianta (např. `kind: "rotate"` na Y) by fungovala bez úprav.
+ */
+export class HOUSE extends COMPOSITES {
+  constructor(id, name, x, y, z, color, description = "") {
+    super(id, name, x, y, z, description);
+    // Barva stěn jako JS number 0xRRGGBB. Střecha má fixní barvu — pokud
+    // budeme chtít barevnou střechu, přidá se druhý atribut (např. `ROOF`).
+    this.COLOR = color;
+  }
+}
+
+/**
+ * CLOUD = konkrétní COMPOSITES reprezentující mrak.
+ *
+ * Vizualizace: shluk překrývajících se koulí (SphereGeometry) s bílou barvou.
+ * Bez vlastních atributů — barva i tvar jsou v enginu.
+ *
+ * Typicky se umisťuje vysoko nad scénou (Y > 3) s `ANIMATE.kind = "drift"`
+ * (lineární pohyb po vodorovné ose s wrap-around) → „mrak letí po obloze".
+ * Statický mrak je legitimní (bez ANIMATE), je to jen méně živá scéna.
+ */
+export class CLOUD extends COMPOSITES {
+  // Prázdná třída — default mrak. Atributy lze doplnit později (size, hustota).
+  // Podporovaný `ANIMATE.kind`: `drift` (viz dispatch v main.js).
+}
+
+/**
  * BALLOON = konkrétní COMPOSITES reprezentující horkovzdušný balón.
  *
  * Vizualizace: vak (koule) + 4 lana + koš. Vak je barevný podle atributu

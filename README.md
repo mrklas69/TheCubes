@@ -15,7 +15,9 @@ Milníky M1–M7 hotové:
 - **M6** — `TCUBES` (per-face textury, emoji krabice + hvězda s fallbackem na šachovnici); DD-14 dispatch podle typu atributu.
 - **M7** — chování v čase: atribut `ANIMATE` na `OBJECTS` + data-driven dispatch (DD-15). Balón se pohupuje (vak + koš nezávisle, lana se přepočítávají), strom se kývá ve větru.
 
-Další plán: diskrétní události (pravidla/timery reagující na `TIME.tick`), další `kind`y animací, nevizuální potomci OBJECTS.
+Sez. 6 a 7 doplnily další `ANIMATE.kind`y (`rotate`, `orbit_stadium`, `pulse` s volitelným opacity, `drift` lineární s wrap-around) a COMPOSITES (`HOUSE`, `CLOUD`). Tři osy mutace pokryté: díly / transformace / materiál.
+
+Další plán: diskrétní události (pravidla/timery reagující na `TIME.tick`), další COMPOSITES (ROCK), nevizuální potomci OBJECTS.
 
 ## Stack
 

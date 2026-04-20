@@ -6,7 +6,7 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, BALLOON } from "./model.js";
+import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, BALLOON, HOUSE, CLOUD } from "./model.js";
 import { advanceTime } from "./time.js";
 
 // === Renderer ===
@@ -439,6 +439,90 @@ function animateOrbitStadium(object3d, anim, t) {
   object3d.rotation.y = heading;
 }
 
+// Emisivní pulsace — objekt sám ze sebe vyzařuje světlo, které sinusově
+// kolísá mezi `min` a `max`. Třetí dimenze `ANIMATE` patternu: po
+// **transformaci** (`rotate`, `orbit_stadium`) a **dílech** (`balloon_bob`,
+// `tree_sway`) přijde mutace **materiálu**. Funguje na libovolném mesh-u
+// s `MeshStandardMaterial` (CCUBES, BALLOON vak, jednostranné TCUBES plochy…).
+//
+// Parametry:
+//  - `period` — doba jednoho cyklu pulsu (s)
+//  - `min`    — minimum `emissiveIntensity` (default 0 = úplně zhasnuto)
+//  - `max`    — maximum `emissiveIntensity` (default 1.0 = plná síla barvy)
+//  - `color`  — barva self-emise jako JS number 0xRRGGBB; default = `material.color`
+//  - `opacityMin`, `opacityMax` *(volitelné)* — pokud jsou nastavené, objekt
+//    zároveň sinusově mění `material.opacity` v daném rozsahu **ve stejné
+//    fázi** s emissive (max záře = max neprůhlednost, „dýchá"). Pro aktivaci
+//    stačí zadat alespoň jeden — engine si pak zapne `transparent = true`.
+//    Jen jedna z dvojice = druhá dostane default (0 resp. 1.0).
+//
+// Implementace: `emissive` barva se nastaví **jednou** (lazy init přes
+// `userData.pulseInit` flag); per-frame mění jen `emissiveIntensity` (a
+// případně `opacity`). Levné (jedna–dvě float mutace) a izomorfní s tím,
+// jak `animateRotate` mutuje rotaci. Sinus → [−1, 1] přeškálováno na [0, 1]
+// přes (0.5 + 0.5·sin), pak lerp [min, max].
+//
+// Pozn.: stín transparentního objektu Three.js default nestínuje opacitně
+// (závisí na stanardní shadow map bez alpha testu). Pro náš use case
+// (dlaždice na zemi s malým stínem) to není viditelně rušivé.
+function animatePulse(object3d, anim, t) {
+  const mat = object3d.material;
+  // Materiály bez `emissive` (ShadowMaterial, SpriteMaterial, pole materiálů
+  // u TCUBES) → tichý skip. Instance byla registrována (kind je známý), jen
+  // její konkrétní mesh neumí emissive. Validace v registraci by musela znát
+  // interní dispatch, což by bylo těsné spojení — raději defensive tady.
+  if (!mat?.emissive) return;
+  const hasOpacityPulse = anim.opacityMin != null || anim.opacityMax != null;
+  if (!object3d.userData.pulseInit) {
+    const color = anim.color ?? mat.color.getHex();
+    mat.emissive.setHex(color);
+    // `transparent = true` zapne alpha blending — jinak Three.js ignoruje
+    // `material.opacity` (default režim je opaque). Nastavujeme jen pokud
+    // instance opravdu opacity puls chce — nemá smysl za běhu blendovat
+    // plně neprůhlednou dlaždici (vyšší fill cost).
+    if (hasOpacityPulse) mat.transparent = true;
+    object3d.userData.pulseInit = true;
+  }
+  const min = anim.min ?? 0;
+  const max = anim.max ?? 1.0;
+  // Normalizovaný sinus ∈ [0, 1] — sdílený pro emissive i opacity, aby
+  // obě dimenze „dýchaly" synchronně (max záře = max neprůhlednost).
+  const s = 0.5 + 0.5 * Math.sin(oscPhase(t, anim.period));
+  mat.emissiveIntensity = min + (max - min) * s;
+  if (hasOpacityPulse) {
+    const oMin = anim.opacityMin ?? 0;
+    const oMax = anim.opacityMax ?? 1.0;
+    mat.opacity = oMin + (oMax - oMin) * s;
+  }
+}
+
+// Lineární drift po jedné ose s **wrap-around** — když objekt opustí dráhu
+// na jednom konci, vrátí se z druhého. Idiom „mraky po obloze": jednosměrný
+// pohyb s plynulým návratem. Na rozdíl od `orbit_stadium` (uzavřená dráha
+// v rovině) je `drift` 1D a má skok — když objekt projde celý `range`,
+// teleportuje se zpět na start. Pro mrak vysoko nad scénou je skok na okraji
+// viewportu prakticky neviditelný.
+//
+// Parametry:
+//  - `axis`  — "x" | "y" | "z" (default "x")
+//  - `speed` — jednotky za sekundu (default 1.0)
+//  - `range` — šířka pásu (default 16). Pohyb obíhá v intervalu
+//    `[base - range/2, base + range/2]` kolem `userData.base`.
+//
+// Implementace: `phase = (t * speed) mod range` převedené na `[0, range)`
+// (dvojité modulo ošetří záporné `t`). Pozice = `base + phase - range/2` —
+// začínáme u `base − range/2`, pokračujeme přes `base`, končíme u
+// `base + range/2`, pak skok zpět na start.
+function animateDrift(object3d, anim, t) {
+  const base = object3d.userData.base;
+  if (!base) return;
+  const axis = anim.axis ?? "x";
+  const speed = anim.speed ?? 1.0;
+  const range = anim.range ?? 16;
+  const phase = ((t * speed) % range + range) % range;
+  object3d.position[axis] = base[axis] + phase - range / 2;
+}
+
 // Lookup tabulka `kind` → animátor. Nový druh pohybu = nová větev zde (+
 // samotná funkce výš). Izomorfní s `faceMaterialFor` dispatchem (DD-14).
 // Umožňuje i validaci při registraci — překlep v `ANIMATE.kind` odhalíme
@@ -448,6 +532,8 @@ const ANIMATORS = {
   tree_sway:      animateTreeSway,
   rotate:         animateRotate,
   orbit_stadium:  animateOrbitStadium,
+  pulse:          animatePulse,
+  drift:          animateDrift,
 };
 
 // Registruje pár mesh↔instance k animaci. Voláno z `createMeshFor` pro
@@ -640,6 +726,10 @@ function createCompositeFor(instance) {
     buildTree(group);
   } else if (instance instanceof BALLOON) {
     buildBalloon(group, instance);
+  } else if (instance instanceof HOUSE) {
+    buildHouse(group, instance);
+  } else if (instance instanceof CLOUD) {
+    buildCloud(group);
   }
 
   // userData.instance + shadow flagy nastaví až `createMeshFor` jednotně
@@ -802,6 +892,80 @@ function buildBalloon(group, instance) {
   };
 }
 
+// Procedurální domek — kvádr stěn + jehlanová střecha. Lokální souřadnice
+// Group: střed kvádru v Y=0 (jako kostky 1×1×1). Barva stěn z `instance.COLOR`,
+// střecha fixně rezavě červená („pálená taška").
+//
+// Rozměry: stěny 1.2×1.0×1.2 (šířka × výška × hloubka), střecha jehlan
+// 4-segmentový s poloměrem ≈ √2/2 × šířka stěn, výška 0.8. `rotation.y = π/4`
+// natočí jehlan tak, aby jeho 4 hrany protnuly rohy stěn (default orientace
+// by měla hranu uprostřed strany kvádru → vypadalo by zkroucené).
+//
+// Jehlan místo sedlové střechy: `ConeGeometry(r, h, 4)` je 1 primitiv (proti
+// 2 BoxGeometry prismatu) a vypadá pohádkově symetricky z libovolného směru.
+function buildHouse(group, instance) {
+  const wallsMat = new THREE.MeshStandardMaterial({ color: instance.COLOR });
+  const wallsW = 1.2, wallsH = 1.0, wallsD = 1.2;
+  const walls = new THREE.Mesh(
+    new THREE.BoxGeometry(wallsW, wallsH, wallsD),
+    wallsMat,
+  );
+  // Střed stěn na Y=0 (vyčnívají od −0.5 do +0.5, stejně jako kostky) — dům
+  // opticky „sedí" na gridu bez odsazení.
+  walls.position.y = 0;
+  group.add(walls);
+
+  // --- Střecha ---
+  // ConeGeometry(radius, height, radialSegments). 4 segmenty = čtyřboký jehlan.
+  // Poloměr √2/2 × wallsW ≈ 0.849 zajistí, že 4 hrany jehlanu (vzdálené
+  // `radius` od osy) trefí rohy stěn (úhlopříčka čtvercového půdorysu dělená 2
+  // = √2/2 × strana).
+  const roofColor = 0x9b3a2a; // rezavě červená — idiom pálené tašky
+  const roofMat = new THREE.MeshStandardMaterial({ color: roofColor });
+  const roofR = (Math.SQRT2 / 2) * wallsW;
+  const roofH = 0.8;
+  const roof = new THREE.Mesh(
+    new THREE.ConeGeometry(roofR, roofH, 4),
+    roofMat,
+  );
+  // Střecha sedí přesně na vrchu stěn (Y = wallsH/2 = 0.5) + polovina výšky
+  // střechy (0.4) → střed střechy na Y = 0.9.
+  roof.position.y = wallsH / 2 + roofH / 2;
+  // Default ConeGeometry se 4 segmenty má hranu na +X; otočení o π/4 (45°)
+  // kolem Y posune hrany do rohů kvádru — vizuálně „správně" posazená střecha.
+  roof.rotation.y = Math.PI / 4;
+  group.add(roof);
+}
+
+// Procedurální mrak — shluk 5 překrývajících se koulí s bílou barvou.
+// Koule mají různé velikosti a lehce offset pozice, aby výsledek vypadal
+// jako shluk oblačnosti, ne geometrická sestava. Vše v lokálních
+// souřadnicích Group (0,0,0 = střed mraku).
+//
+// KISS: pevná geometrie (žádný RNG), seed-free — mrak vypadá pokaždé stejně.
+// Pokud budeme chtít variabilní mraky, přidá se `seed` atribut do CLOUD.
+function buildCloud(group) {
+  const cloudMat = new THREE.MeshStandardMaterial({ color: 0xf0f0f0 });
+  // Pole [x, y, z, radius] — 5 kusů, centrální největší, okolní menší a
+  // posunuté ven. Proporce 0.9 × 2.0 × 0.9 (šířka × výška × hloubka) dává
+  // horizontálně protažený mrak, jak se sluší.
+  const puffs = [
+    [ 0.0,  0.0,  0.0, 0.45],   // centrální
+    [-0.55, -0.05, 0.05, 0.35],  // levá
+    [ 0.55, -0.05, -0.05, 0.35], // pravá
+    [-0.20, 0.20, 0.10, 0.30],   // levá horní
+    [ 0.25, 0.18, -0.10, 0.30],  // pravá horní
+  ];
+  puffs.forEach(([px, py, pz, r]) => {
+    const puff = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 12, 10),
+      cloudMat,
+    );
+    puff.position.set(px, py, pz);
+    group.add(puff);
+  });
+}
+
 // === Model: 3×3 grid dlaždic v rovině Y=0 + strom ===
 // Centrální buňka (0,0,0) = mateřská CUBES (šachovnice jako default DD-07).
 // Okolních 8 buněk = CCUBES s různými barvami — první potomek demonstrující
@@ -820,12 +984,21 @@ scene.add(createMeshFor(centralCube));
 // 8 CCUBES dlaždic kolem středu. Paleta = výrazná duha po obvodu,
 // počínaje levým horním rohem (z = -1) po směru hodinových ručiček.
 // Každý záznam má { x, z, color, name }; Y je vždy 0 (všechny v jedné rovině).
+// Každý záznam má { x, z, color, name } a volitelně `animate` (recept pro
+// `ANIMATE`). Červená dlaždice pulsuje emisivně (heartbeat-like, period 2 s)
+// jako demo `pulse` animátoru — třetí dimenze `ANIMATE` patternu (mutace
+// materiálu po transformacích a dílech). Tyrkysová pulsuje pomaleji a slabší
+// — desynchronizovaná s červenou (různé periody ukážou, že animátory běží
+// nezávisle per-instance, ne sdílený clock).
 const ccubeDefs = [
-  { x: -1, z: -1, color: 0xff3b30, name: "Červená dlaždice" },
+  { x: -1, z: -1, color: 0xff3b30, name: "Červená dlaždice",
+    animate: { kind: "pulse", period: 2.0, min: 0, max: 0.9 } },
   { x:  0, z: -1, color: 0xff9500, name: "Oranžová dlaždice" },
   { x:  1, z: -1, color: 0xffcc00, name: "Žlutá dlaždice" },
   { x:  1, z:  0, color: 0x34c759, name: "Zelená dlaždice" },
-  { x:  1, z:  1, color: 0x00c7be, name: "Tyrkysová dlaždice" },
+  { x:  1, z:  1, color: 0x00c7be, name: "Tyrkysová dlaždice",
+    animate: { kind: "pulse", period: 3.5, min: 0.05, max: 0.6,
+               opacityMin: 0.25, opacityMax: 1.0 } },
   { x:  0, z:  1, color: 0x007aff, name: "Modrá dlaždice" },
   { x: -1, z:  1, color: 0x7b61ff, name: "Fialová dlaždice" },
   { x: -1, z:  0, color: 0xff2d92, name: "Růžová dlaždice" },
@@ -836,6 +1009,7 @@ const ccubeDefs = [
 ccubeDefs.forEach((def, i) => {
   const id = `ccube_${String(i + 1).padStart(4, "0")}`;
   const instance = new CCUBES(id, def.name, def.x, 0, def.z, def.color);
+  if (def.animate) instance.ANIMATE = def.animate;
   scene.add(createMeshFor(instance));
 });
 
@@ -925,6 +1099,39 @@ tbox2.ANIMATE = {
   period: 10,
 };
 scene.add(createMeshFor(tbox2));
+
+// Domek za růžicí — HOUSE (COMPOSITES). Pozice (0, 0, -3): středově
+// v ose Z, za mateřskou CUBES + severní řadou dlaždic (ty jsou na Z=-1).
+// Stěny bledě béžové (0xe8d4a8, wheat-like), střecha fixně rezavá v enginu.
+// Statický — žádný ANIMATE. Dokončuje základní COMPOSITES trio (TREE +
+// BALLOON + HOUSE).
+const house1 = new HOUSE(
+  "house_0001",
+  "Domek",
+  0, 0, -3,
+  0xe8d4a8,
+  "COMPOSITES — stěny (kvádr) + jehlanová střecha (4-segment cone).",
+);
+scene.add(createMeshFor(house1));
+
+// Mrak vysoko nad scénou — CLOUD (COMPOSITES) s `drift` animací.
+// Pozice base (0, 4.5, -2): nad scénou mírně dozadu. Drift po ose X, speed
+// 0.6 j/s, range 16 → pozice obíhá od -8 do +8. Cyklus 26.7 s; skok
+// wrap-around na hranicích viewportu je v default kamera perspektivě
+// minimálně rušivý. Y a Z zůstávají fixní (mrak letí horizontálně).
+const cloud1 = new CLOUD(
+  "cloud_0001",
+  "Mrak",
+  0, 4.5, -2,
+  "COMPOSITES — shluk 5 koulí. Drift po ose X s wrap-around.",
+);
+cloud1.ANIMATE = {
+  kind: "drift",
+  axis: "x",
+  speed: 0.6,
+  range: 16,
+};
+scene.add(createMeshFor(cloud1));
 
 // Dialog bubble nad stromem — SPRITES (2D billboard, DD-13).
 // Pozice (3, 2.2, 0): X/Z = nad stromem (který je na (3, 0, 0)). Y = 2.2
