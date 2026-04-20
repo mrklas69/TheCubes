@@ -6,13 +6,16 @@ Meta-sandbox s živým OOP modelem. Na začátku existuje jediná instance tří
 
 ## Status
 
-Milníky M1–M4 hotové:
+Milníky M1–M7 hotové:
 - **M1** — statický svět s hodinami (kostka, kamera, TIME, infotip).
 - **M2** — orientační pomůcky + `CCUBES` (dřív `TERRAIN`) + 3×3 duhová růžice.
 - **M3** — `COMPOSITES` + `TREE` (3D strom z primitivů); jednotný float souřadný systém (DD-12).
 - **M4** — `BALLOON` mimo grid + stínovací systém (shadow map, PCF soft, ShadowMaterial ground plane).
+- **M5** — `SPRITES` (dialog bubble nad stromem, canvas-generovaný text s komix ocáskem).
+- **M6** — `TCUBES` (per-face textury, emoji krabice + hvězda s fallbackem na šachovnici); DD-14 dispatch podle typu atributu.
+- **M7** — chování v čase: atribut `ANIMATE` na `OBJECTS` + data-driven dispatch (DD-15). Balón se pohupuje (vak + koš nezávisle, lana se přepočítávají), strom se kývá ve větru.
 
-Další plán: **SPRITES** (2D billboard, dialog bubble), **TCUBES** (per-face textury), chování v čase.
+Další plán: diskrétní události (pravidla/timery reagující na `TIME.tick`), další `kind`y animací, nevizuální potomci OBJECTS.
 
 ## Stack
 

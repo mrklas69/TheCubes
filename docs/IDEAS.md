@@ -12,7 +12,7 @@ Raw nápady. Když dozraje, přesuň do `TODO.md`.
 - **Nevizualizované OBJECTS** — pravidla, recepty, timery, score. Dědí z OBJECTS přímo, ne z CUBES.
 
 ## Chování v čase
-- Až bude „čas něco dělat": jak? Pravidla (PocketStory style), per-object `tick()`, subscription na TIME? Rozhodneme, až to bude opravdu potřeba.
+- Až bude „čas něco dělat": jak? Pravidla (PocketStory style), per-object `tick()`, subscription na TIME? → DONE (sez. 5, M7): data-driven atribut `ANIMATE = { kind, ...params }` na `OBJECTS`, dispatch v enginu (DD-15). První dvě `kind`y: `balloon_bob` a `tree_sway`. Diskrétní události (pravidla/timery) zatím neřešeny — `TIME.tick` zůstává k dispozici, ale mechanismus reakce na něj je samostatné téma.
 
 ## Režimy světa
 - Minecraft-like voxel terén

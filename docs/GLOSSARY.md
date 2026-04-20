@@ -16,8 +16,11 @@ Canonical terminologie projektu TheCubes.
 
 ## Čas
 
-- **TIME** — globální čítač tiků. Monotonně rostoucí nezáporné celé číslo. V M1 objekty na TIME samy nereagují — je to jen „hodiny na stěně".
-- **tick** — jedno zvýšení TIME o 1. V M1 tikne jednou za sekundu.
+- **TIME** — globální čítač tiků. Monotonně rostoucí nezáporné celé číslo. Určené pro **diskrétní události** (pravidla, timery — mechanismus zatím nezaveden).
+- **tick** — jedno zvýšení TIME o 1. Tikne jednou za sekundu.
+- **ANIMATE** — atribut `OBJECTS` s receptem plynulého pohybu: `null` (default, statický) nebo objekt `{ kind: "<string>", ...params }`. Engine v render loopu volá `updateAnimations(tSeconds)` s wall-clockem (`performance.now() / 1000`), `switch` nad `anim.kind` dispatchuje na konkrétní per-frame funkci. Viz DD-15. Aktuální `kind`y: `balloon_bob`, `tree_sway`. *(M7.)*
+- **balloon_bob** — `ANIMATE.kind`: vak sinusově pohupuje (period/amplitude), koš nezávisle s fázovým posunem, lana přepnuta přes `updateCylinderBetween` → viditelně mění délku.
+- **tree_sway** — `ANIMATE.kind`: 3 kužely koruny se kývají v XZ rovině jako dvě kolmé sinusoidy s různými periodami (`periodX`, `periodZ`) → eliptický pohyb, ne 1D kyvadlo. Amplituda násobena koeficientem výšky kuželu (špička víc, spodní kužel míň). Kmen statický.
 
 ## Grafika
 
@@ -41,4 +44,5 @@ Canonical terminologie projektu TheCubes.
 - **M4** — BALLOON (COMPOSITES mimo grid) — demonstruje float pozici v jednotném souřadném systému. *(hotovo sez. 3.)*
 - **M5** — SPRITES (dialog bubble nad stromem, canvas-generovaný text + komix ocásek). *(hotovo sez. 4.)*
 - **M6** — TCUBES (per-face textury, emoji na krabici + fallback šachovnice). DD-14 zafixoval dispatch podle typu atributu sdílený s SPRITES. *(hotovo sez. 4.)*
-- **M7+** — pozdější milníky: chování v čase, dynamický ocásek SPRITES, další COMPOSITES (HOUSE/ROCK/CLOUD), nevizuální potomci OBJECTS.
+- **M7** — Chování v čase: atribut `ANIMATE` na OBJECTS (DD-15), dispatch `balloon_bob` + `tree_sway` v enginu. Balón se pohupuje, koš pruží, lana se přepočítávají; strom se kývá ve větru. *(hotovo sez. 5.)*
+- **M8+** — pozdější milníky: dynamický ocásek SPRITES, další COMPOSITES (HOUSE/ROCK/CLOUD), další `kind`y animací (rotate/pulse/drift), nevizuální potomci OBJECTS.

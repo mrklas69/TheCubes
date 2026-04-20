@@ -4,7 +4,7 @@
 TheCubes je meta-sandbox s živým OOP modelem. Na začátku existuje jediná instance `OBJECTS`, rozšiřováním modelu se scéna zaplňuje. Cíl: demonstrovat současné mládeži, že tvorba je zábavnější než konzumace.
 
 ## Status
-Milníky **M1–M4 hotové**. Scéna obsahuje: středová `CUBES` (šachovnice), 8× `CCUBES` (duhová růžice), `TREE` (COMPOSITES, 3D strom), `BALLOON` (COMPOSITES mimo grid, float pozice), stínovací systém (shadow map, ShadowMaterial ground). Globální `TIME` stále jen „hodiny na stěně".
+Milníky **M1–M7 hotové**. Scéna obsahuje: středovou `CUBES` (šachovnice), 8× `CCUBES` (duhová růžice), `TREE` (kývá se ve větru), `BALLOON` (pohupuje se, koš pruží, lana se přepočítávají), `SPRITES` dialog bubble nad stromem, dvě `TCUBES` krabice, stínovací systém. Chování v čase: atribut `ANIMATE = { kind, ...params }` na `OBJECTS` (DD-15), dispatch v enginu. `TIME.tick` zůstává pro budoucí diskrétní události (pravidla/timery).
 
 ## Dokumenty
 - `README.md` — overview
@@ -19,26 +19,27 @@ Milníky **M1–M4 hotové**. Scéna obsahuje: středová `CUBES` (šachovnice),
 ## Hierarchie modelu
 
 ```
-OBJECTS (ID, NAME, DESCRIPTION)
+OBJECTS (ID, NAME, DESCRIPTION, ANIMATE)
  └── CUBES (X, Y, Z — float, voxel renderer snap-to-grid, DD-12)
       ├── CCUBES (COLOR)                 ← plochá barva; dřív TERRAIN
-      ├── TCUBES *(plánováno)*            ← per-face textury
-      ├── SPRITES *(plánováno)*           ← 2D billboard ke kameře
+      ├── TCUBES (TEXTURE_TOP/BOTTOM/NORTH/SOUTH/EAST/WEST) ← per-face textury
+      ├── SPRITES (ASSET)                 ← 2D billboard ke kameře
       └── COMPOSITES (3D mesh z primitivů)
-           ├── TREE                       ← kmen + kužely
-           └── BALLOON (COLOR)            ← vak + lana + koš, mimo grid
+           ├── TREE                       ← kmen + kužely (tree_sway)
+           └── BALLOON (COLOR)            ← vak + lana + koš, mimo grid (balloon_bob)
 ```
 
-`TIME` = globální čítač. Objekty na TIME zatím nereagují (DD-04).
+`TIME.tick` = globální čítač pro diskrétní události (zatím nepoužito).
+**Plynulé animace** jdou přes atribut `ANIMATE = { kind, ...params }` (DD-15) a wall-clock v render loopu.
 
 ## Key Files
 
 | Vrstva | Soubor | Obsah |
 |--------|--------|-------|
 | Entry | `index.html` | HTML shell, import map pro Three.js, HUD |
-| Model | `src/model.js` | `OBJECTS`, `CUBES`, `CCUBES`, `COMPOSITES`, `TREE`, `BALLOON` |
+| Model | `src/model.js` | `OBJECTS` (+`ANIMATE`), `CUBES`, `CCUBES`, `TCUBES`, `SPRITES`, `COMPOSITES`, `TREE`, `BALLOON` |
 | Model | `src/time.js` | Globální `TIME`, `advanceTime()` |
-| Boot | `src/main.js` | Three.js scéna, kamera, osvětlení, stíny, `createMeshFor` dispatch, `buildTree`, `buildBalloon`, infotip, render loop |
+| Boot | `src/main.js` | Three.js scéna, kamera, osvětlení, stíny, `createMeshFor` dispatch, `buildTree` + `buildBalloon`, **animators registry + `updateAnimations`**, infotip, render loop |
 
 ## Code Style
 - **Komentáře česky.** Uživatel se JS i Three.js učí — komentáře o trochu podrobnější. Vysvětlovat JS/Three-specifické konstrukce (modulový `import`, třída, `requestAnimationFrame`, perspektivní kamera, materiály…).

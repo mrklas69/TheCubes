@@ -20,6 +20,12 @@ export class OBJECTS {
     this.NAME = name;
     // DESCRIPTION = volný popis (může být prázdný; default "")
     this.DESCRIPTION = description;
+    // ANIMATE = recept na chování v čase. `null` = statický objekt (default).
+    // Objekt `{ kind: "<string>", ...params }` = engine dispatch podle `kind`
+    // (izomorfně s DD-14 pattern pro vizuální atributy). Konkrétní interpretace
+    // žije v `src/main.js` (updateAnimations) — model zůstává datový (DD-11).
+    // Viz DD-15.
+    this.ANIMATE = null;
   }
 }
 
@@ -163,6 +169,10 @@ export class COMPOSITES extends CUBES {
  */
 export class TREE extends COMPOSITES {
   // Prázdná třída — default strom. Atributy lze doplnit později.
+  //
+  // M7: strom podporuje `ANIMATE = { kind: "tree_sway", ... }` — 3 kužely
+  // koruny se pohupují ve dvou kolmých sinusoidách s různými periodami,
+  // amplituda roste s výškou (špička víc, spodní kužel míň). Kmen statický.
 }
 
 /**
@@ -178,8 +188,9 @@ export class TREE extends COMPOSITES {
  * stejný mateřský CUBES, pouze renderer snapuje voxely a ponechá
  * COMPOSITES na floatu.
  *
- * V M4 je balón **statický** — pohyb vyžaduje mechanismus reakce na TIME
- * (DD-04), což je samostatné téma.
+ * M7: balón podporuje `ANIMATE = { kind: "balloon_bob", ... }` — vak se v
+ * čase sinusově pohupuje nahoru/dolů, koš pruží nezávisle s jinou periodou,
+ * lana se dynamicky přepočítávají. Dispatch animace je v enginu (DD-15).
  */
 export class BALLOON extends COMPOSITES {
   constructor(id, name, x, y, z, color, description = "") {

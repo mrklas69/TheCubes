@@ -173,38 +173,40 @@ function makeBubbleTexture(text) {
   canvas.height = H;
   const ctx = canvas.getContext("2d");
 
-  // --- Podklad bubliny: zaoblený bílý obdélník s tmavým okrajem ---
-  const PAD = 6;                  // vnitřní okraj, aby stroke nevyjel z plátna
-  const RADIUS = 28;              // radius zaoblení rohů
+  // --- Bublina + ocásek jako JEDNA cesta ---
+  // Dřívější implementace kreslila rect a trojúhelník zvlášť a přes spoj
+  // přejela bílou čarou — tenký tmavý proužek obrysu rectu ale prosvítal
+  // po stranách ocásku. Řešení: obkroužit oba tvary jediným path a udělat
+  // `fill()` + `stroke()` jen jednou → obrys splyne plynule kolem dokola.
+  const PAD = 6;                   // vnitřní okraj, aby stroke nevyjel z plátna
+  const RADIUS = 28;               // radius zaoblení rohů
+  const tipX = W / 2;              // špička ocásku — střed plátna
+  const tipY = H - 6;              // špička mírně nad dolní hranou
+  const baseY = BUBBLE_H - PAD;    // spodní hrana bubliny = základna ocásku
+  const baseHalf = 22;             // polovina šířky základny ocásku
+
+  ctx.beginPath();
+  // Začneme za levým horním rohem, obkroužíme po směru hodinových ručiček.
+  ctx.moveTo(PAD + RADIUS, PAD);
+  ctx.lineTo(W - PAD - RADIUS, PAD);                              // horní hrana
+  ctx.quadraticCurveTo(W - PAD, PAD, W - PAD, PAD + RADIUS);      // pravý horní roh
+  ctx.lineTo(W - PAD, baseY - RADIUS);                             // pravá hrana
+  ctx.quadraticCurveTo(W - PAD, baseY, W - PAD - RADIUS, baseY);   // pravý spodní roh
+  // Pravá část spodní hrany → pravý bok ocásku → špička → levý bok ocásku
+  ctx.lineTo(tipX + baseHalf, baseY);
+  ctx.lineTo(tipX, tipY);
+  ctx.lineTo(tipX - baseHalf, baseY);
+  // Levá část spodní hrany → levý spodní roh → levá hrana → levý horní roh
+  ctx.lineTo(PAD + RADIUS, baseY);
+  ctx.quadraticCurveTo(PAD, baseY, PAD, baseY - RADIUS);
+  ctx.lineTo(PAD, PAD + RADIUS);
+  ctx.quadraticCurveTo(PAD, PAD, PAD + RADIUS, PAD);
+  ctx.closePath();
+
   ctx.fillStyle = "#ffffff";
   ctx.strokeStyle = "#222222";
   ctx.lineWidth = 4;
-  roundRectPath(ctx, PAD, PAD, W - 2 * PAD, BUBBLE_H - 2 * PAD, RADIUS);
   ctx.fill();
-  ctx.stroke();
-
-  // --- Ocásek: trojúhelník směřující dolů pod bublinu (komix pointer) ---
-  // Základna trojúhelníku mírně překrývá spodní okraj bubliny, špička sahá
-  // k dolní hraně plátna. Po vykreslení přejedeme bílou čarou přes spoj
-  // base↔bubble — jinak by tam ostal fragment tmavého stroke z obdélníku.
-  const tipX = W / 2;
-  const tipY = H - 6;              // špička ocásku (mírně nad dolní hranou)
-  const baseY = BUBBLE_H - 4;      // základna ocásku (uvnitř obrysu bubliny)
-  const baseHalf = 22;             // polovina šířky základny
-  ctx.beginPath();
-  ctx.moveTo(tipX - baseHalf, baseY);
-  ctx.lineTo(tipX + baseHalf, baseY);
-  ctx.lineTo(tipX, tipY);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  // Přebarvi spodní obrys bubliny (v rozsahu základny ocásku) na bílo →
-  // splynou bubble i tail do jednoho tvaru bez viditelné linky.
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = 6;
-  ctx.beginPath();
-  ctx.moveTo(tipX - baseHalf + 3, baseY);
-  ctx.lineTo(tipX + baseHalf - 3, baseY);
   ctx.stroke();
 
   // --- Text ---
@@ -285,21 +287,87 @@ function faceMaterialFor(val) {
   return new THREE.MeshStandardMaterial({ map: checkerboardTexture });
 }
 
-// Helper pro `makeBubbleTexture` — nakreslí cestu zaobleného obdélníku
-// (sub-path), ale nekreslí/nevyplňuje. Volající pak provede fill() / stroke().
-// Canvas 2D API nemá built-in roundRect ve starších verzích, proto helper.
-function roundRectPath(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
+// === Animátory: reakce objektů na TIME ===
+// Registry párů `{ object3d, instance }` — render loop přes ně každý frame
+// iteruje a podle `instance.ANIMATE.kind` rozhoduje, jak mesh update-ovat.
+// Izomorfní s dispatchem vizuálních atributů (DD-14) — model drží recept
+// (atribut `ANIMATE`), engine ho interpretuje. Viz DD-15.
+//
+// Proč nesahá model přímo na mesh? DD-11 (model/engine separation) — model
+// je čistě datový, o Three.js neví. Animátor je tedy v `main.js`, ne v třídě.
+const animators = [];
+
+// Registruje pár mesh↔instance k animaci. Voláno z `createMeshFor` pro
+// jakoukoli instanci, která má vyplněný `ANIMATE`.
+function registerAnimator(object3d, instance) {
+  if (!instance.ANIMATE) return;
+  animators.push({ object3d, instance });
+}
+
+// Update všech animovaných objektů. `tSeconds` = wall-clock v sekundách
+// (plynulé, ne diskrétní TIME.tick). TIME.tick zůstává pro diskrétní
+// událostní logiku pozdějších milníků.
+function updateAnimations(tSeconds) {
+  for (const { object3d, instance } of animators) {
+    const anim = instance.ANIMATE;
+    if (!anim) continue;
+    switch (anim.kind) {
+      case "balloon_bob":
+        animateBalloonBob(object3d, anim, tSeconds);
+        break;
+      case "tree_sway":
+        animateTreeSway(object3d, anim, tSeconds);
+        break;
+      // Nové kindy přidávat zde — nová větev dispatche, ne nová metoda na třídě.
+    }
+  }
+}
+
+// Balón se mírně pohupuje nahoru/dolů. Vak a koš oscilují **nezávisle**
+// (různé periody + fázový posun π/2) — koš působí jako „pérující" vůči vaku.
+// Lana se každý frame přepnou mezi aktuálními pozicemi vak/koš (geometrie
+// `cylinderBetween` je unit-height, délka přes `scale.y`).
+function animateBalloonBob(group, anim, t) {
+  const parts = group.userData.parts;
+  if (!parts) return;
+
+  // Math.sin přijímá radiány; 2π / period → úhlová rychlost.
+  const bagDy    = anim.bagAmp    * Math.sin((2 * Math.PI * t) / anim.bagPeriod);
+  const basketDy = anim.basketAmp * Math.sin((2 * Math.PI * t) / anim.basketPeriod + Math.PI / 2);
+
+  parts.bag.position.y    = parts.bagBaseY    + bagDy;
+  parts.basket.position.y = parts.basketBaseY + basketDy;
+
+  // Přepočítej 4 lana podle aktuálních Y vaku/koše.
+  const basketRopeY = parts.basket.position.y + parts.ropeBasketOffset;
+  const bagRopeY    = parts.bag.position.y    + parts.ropeBagOffset;
+  parts.ropes.forEach((ropeMesh, i) => {
+    const [cx, cz] = parts.ropeCorners[i];
+    const a = new THREE.Vector3(cx, basketRopeY, cz);
+    const b = new THREE.Vector3(cx * 1.3, bagRopeY, cz * 1.3);
+    updateCylinderBetween(ropeMesh, a, b);
+  });
+}
+
+// Strom se kývá ve větru. 3 kužely koruny dostanou X/Z offset jako
+// kombinaci dvou sinusů s **různými periodami** (X: periodX, Z: periodZ) —
+// nesoudělné periody dávají iluzi náhodnosti (elipsovitý pohyb), ne čistého
+// kyvadla. Amplituda × koeficient výšky → spodní kužel se pohne míň, špička
+// víc. Kmen zůstává statický (simuluje tuhý kmen s flexibilní korunou).
+function animateTreeSway(group, anim, t) {
+  const parts = group.userData.parts;
+  if (!parts) return;
+
+  // Dvě nezávislé fáze, jedna pro každou osu. Fázový posun π/3 na Z aby
+  // kužely ve chvíli t=0 nezačínaly z nuly v obou osách současně.
+  const phaseX = (2 * Math.PI * t) / anim.periodX;
+  const phaseZ = (2 * Math.PI * t) / anim.periodZ + Math.PI / 3;
+
+  parts.cones.forEach((cone, i) => {
+    const coef = parts.heightCoefs[i];
+    cone.position.x = anim.amplitude * coef * Math.sin(phaseX);
+    cone.position.z = anim.amplitude * coef * Math.sin(phaseZ);
+  });
 }
 
 // === Vizualizační dispatch: instance → Three.js Object3D ===
@@ -359,6 +427,9 @@ function createMeshFor(instance) {
       child.receiveShadow = true;
     }
   });
+  // Pokud má instance vyplněný ANIMATE recept, zaregistruj ji pro per-frame
+  // update v render loopu. Bez ANIMATE (null) = statický objekt → přeskoč.
+  registerAnimator(object3d, instance);
   return object3d;
 }
 
@@ -472,16 +543,29 @@ function createCompositeFor(instance) {
 // `position.copy(a).lerp(b, 0.5)` = nejprve zkopíruj a, pak lineární
 // interpolace k b s parametrem 0.5 → výsledek je přesný midpoint.
 function cylinderBetween(a, b, radius, material) {
+  // Geometrie má **jednotkovou výšku** (height = 1); skutečnou délku zajistí
+  // `scale.y` v `updateCylinderBetween`. Tím lze stejný mesh reuse-ovat pro
+  // animované lana (délka se mění za běhu) i pro statické (nastaví se jednou).
+  const geom = new THREE.CylinderGeometry(radius, radius, 1, 8);
+  const mesh = new THREE.Mesh(geom, material);
+  updateCylinderBetween(mesh, a, b);
+  return mesh;
+}
+
+// Přestaví existující válec mezi body `a` a `b` — použito při tvorbě i
+// při každém frame u animovaných lan. Mutuje `mesh.position`,
+// `mesh.quaternion`, `mesh.scale.y`.
+function updateCylinderBetween(mesh, a, b) {
   const direction = new THREE.Vector3().subVectors(b, a);
   const length = direction.length();
-  const geom = new THREE.CylinderGeometry(radius, radius, length, 8);
-  const mesh = new THREE.Mesh(geom, material);
-  mesh.quaternion.setFromUnitVectors(
-    new THREE.Vector3(0, 1, 0),          // default osa válce (před rotací)
-    direction.clone().normalize(),        // kam chceme, aby mířila
-  );
-  mesh.position.copy(a).lerp(b, 0.5);    // střed válce = midpoint
-  return mesh;
+  mesh.scale.y = length;                     // jednotková výška × délka
+  if (length > 0) {
+    mesh.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),            // default osa válce
+      direction.clone().normalize(),
+    );
+  }
+  mesh.position.copy(a).lerp(b, 0.5);        // střed válce = midpoint
 }
 
 // Procedurální strom z ~5 primitivů. Všechny pozice v lokálních souřadnicích
@@ -517,6 +601,15 @@ function buildTree(group) {
   const cone3 = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.5, 12), coneMat);
   cone3.position.y = -0.5 + 0.9 + 0.35 + 0.45 + 0.4;
   group.add(cone3);
+
+  // Reference na kužely + váhy výšky pro animaci `tree_sway`. Koeficient
+  // roste zdola nahoru — spodní kužel se pohne nejmíň, špička nejvíc,
+  // což simuluje ohybový profil kmene („S-flex"). Kmen je statický, takže
+  // ho neukládáme.
+  group.userData.parts = {
+    cones: [cone1, cone2, cone3],
+    heightCoefs: [0.3, 0.6, 1.0],
+  };
 }
 
 // Procedurální horkovzdušný balón. Lokální coords: spodek koše na Y = 0.
@@ -531,7 +624,8 @@ function buildBalloon(group, instance) {
   const basketMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b });
   const basket = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.4), basketMat);
   // Střed koše = +0.15 (aby spodek ležel na Y = 0 lokálně)
-  basket.position.y = 0.15;
+  const basketBaseY = 0.15;
+  basket.position.y = basketBaseY;
   group.add(basket);
 
   // --- Vak ---
@@ -546,30 +640,47 @@ function buildBalloon(group, instance) {
   // Lehké vertikální protažení pro klasický hruškovitý tvar balónu
   envelope.scale.y = 1.15;
   // Střed vaku Y = 1.3 → spodek vaku na Y ≈ 0.67 (1.3 − 0.55·1.15)
-  envelope.position.y = 1.3;
+  const bagBaseY = 1.3;
+  envelope.position.y = bagBaseY;
   group.add(envelope);
 
   // --- 4 lana ---
   // Uchycení hluboko uvnitř koše (Y = 0.1, pod vrškem) a hluboko uvnitř vaku
   // (Y = 1.0, ve spodní třetině koule). Lana pak prostupují stěnami obou
   // objektů — vypadá to jako "lana skrze kůži", ne "lana přilepená zvenku".
+  // Offsety jsou relativní ke středům koše/vaku → při pohupování zůstanou
+  // uchycena „ve" stěnách, ne „na" nich.
   const ropeMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a });
-  const ropeStartY = 0.1;   // uvnitř koše (spodek koše 0, vršek 0.3)
-  const ropeEndY   = 1.0;   // uvnitř vaku (střed vaku Y=1.3, radius ~0.63)
+  const ropeBasketOffset = -0.05;   // ropeStartY (0.1) − basketBaseY (0.15)
+  const ropeBagOffset    = -0.3;    // ropeEndY (1.0) − bagBaseY (1.3)
   const corners = [
     [ 0.18,  0.18],   // +X, +Z
     [-0.18,  0.18],   // −X, +Z
     [-0.18, -0.18],   // −X, −Z
     [ 0.18, -0.18],   // +X, −Z
   ];
-  corners.forEach(([cx, cz]) => {
-    // Start lana = bod uvnitř koše (přesah 0.2 pod vrškem)
-    const from = new THREE.Vector3(cx, ropeStartY, cz);
-    // Konec lana = bod uvnitř vaku, mírně rozšířený ven (balón je širší
-    // než koš, takže lana se směrem nahoru rozbíhají)
-    const to = new THREE.Vector3(cx * 1.3, ropeEndY, cz * 1.3);
-    group.add(cylinderBetween(from, to, 0.015, ropeMat));
+  // Lana si budeme pamatovat jako pole meshů — animátor je potom za běhu
+  // přepočítá (dynamická délka při pohupování vaku/koše).
+  const ropes = corners.map(([cx, cz]) => {
+    const from = new THREE.Vector3(cx, basketBaseY + ropeBasketOffset, cz);
+    const to   = new THREE.Vector3(cx * 1.3, bagBaseY + ropeBagOffset, cz * 1.3);
+    const rope = cylinderBetween(from, to, 0.015, ropeMat);
+    group.add(rope);
+    return rope;
   });
+
+  // Reference na části uložíme do userData skupiny — `animateBalloonBob` je
+  // za běhu přepočítává (bag Y, basket Y, přepnutí lan).
+  group.userData.parts = {
+    bag: envelope,
+    bagBaseY,
+    basket,
+    basketBaseY,
+    ropes,
+    ropeCorners: corners,
+    ropeBasketOffset,
+    ropeBagOffset,
+  };
 }
 
 // === Model: 3×3 grid dlaždic v rovině Y=0 + strom ===
@@ -618,6 +729,16 @@ const tree1 = new TREE(
   3, 0, 0,
   "COMPOSITES — kmen (válec) + 3 kužely koruny.",
 );
+// M7 — strom se kývá ve větru. Dvě nesoudělné periody (3.5 a 2.7 s) dávají
+// elipsovitý pohyb (ne čistý 1D kyvadlo). Amplituda 0.08 m × koeficient
+// výšky kuželu → špička (~1.6 m) viditelně opisuje malou elipsu, spodní
+// kužel se téměř nehne. Bubble nad stromem zůstává fixní (Q1 statická).
+tree1.ANIMATE = {
+  kind: "tree_sway",
+  periodX: 3.5,
+  periodZ: 2.7,
+  amplitude: 0.08,
+};
 scene.add(createMeshFor(tree1));
 
 // Balón nad scénou — BALLOON (COMPOSITES) na **float** pozici mimo grid.
@@ -634,6 +755,19 @@ const balloon1 = new BALLOON(
   0xff6b35,                                  // sytá oranžová pro vak
   "COMPOSITES mimo grid — vak, 4 lana, koš.",
 );
+// M7 — balón dostává recept pohybu: vak se pomalu pohupuje (perioda 4 s,
+// amplituda 0.15 m), koš pruží nezávisle s kratší periodou a menší amplitudou
+// → vizuální dojem „balón plave, koš dohání". Fázový posun π/2 v `basketPeriod`
+// sinusy navzájem desynchronizuje, aby lana viditelně měnila délku.
+// Registrace animátora proběhne v `createMeshFor` — proto se ANIMATE musí
+// nastavit **před** něj.
+balloon1.ANIMATE = {
+  kind: "balloon_bob",
+  bagPeriod: 4,
+  bagAmp: 0.15,
+  basketPeriod: 1.5,
+  basketAmp: 0.05,
+};
 scene.add(createMeshFor(balloon1));
 
 // Krabice s obsahem — TCUBES (per-face textury, DD-13). Pozice (-3, 0, 0)
@@ -705,6 +839,12 @@ function formatValue(key, val) {
   // COLOR na CCUBES/BALLOON; TEXTURE_* na TCUBES. Oba případ: number → hex.
   if (typeof val === "number" && (key === "COLOR" || key.startsWith("TEXTURE_"))) {
     return "#" + val.toString(16).padStart(6, "0");
+  }
+  // ANIMATE = recept chování (objekt `{ kind, ...params }`). V infotipu
+  // stačí zobrazit samotný `kind` — detailní parametry uživatel uvidí v kódu.
+  // Plná serializace by dala „[object Object]" přes escapeHtml.
+  if (key === "ANIMATE" && typeof val === "object") {
+    return val.kind || "object";
   }
   return val;
 }
@@ -778,6 +918,11 @@ setInterval(advanceTime, 1000);
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
+  // Wall-clock v sekundách — plynulý parametr pro sinusy/rotace v
+  // `updateAnimations`. `performance.now()` vrací ms od spuštění stránky
+  // (high-resolution timer). TIME.tick by dával frame/sekundový counter —
+  // ten je lepší pro diskrétní události, ne pro plynulou animaci.
+  updateAnimations(performance.now() / 1000);
   renderer.render(scene, camera);
 }
 animate();

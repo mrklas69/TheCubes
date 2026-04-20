@@ -68,11 +68,22 @@
 - [x] Instance `tbox_0002` „Hvězda na vrchu" (-3, 0, 2) — jen TOP ⭐, ostatní fallback šachovnice.
 - [x] DD-14 pokrývá i TCUBES dispatch (sdílený pattern s SPRITES).
 
-## M7+ — Později
+## M7 — Chování v čase (ANIMATE dispatch)
 
-- [ ] **Mechanismus reakce na TIME** — pravidla / per-object tick / subscription. Poslední zbývající výhled z IDEAS.
+- [x] DD-15 — atribut `ANIMATE` na `OBJECTS` (default null), data-driven dispatch v enginu (`{ kind, ...params }`).
+- [x] Animators registry v `main.js` (`animators[]`, `registerAnimator`, `updateAnimations`).
+- [x] Wall-clock `performance.now() / 1000` jako parametr animací (plynulý, nezávislý na FPS).
+- [x] `cylinderBetween` refactor na unit-height + `scale.y`; extrahovat `updateCylinderBetween` pro per-frame mutaci.
+- [x] `animateBalloonBob` — vak sinusově pohupuje (amp 0.15, period 4 s), koš nezávisle (amp 0.05, period 1.5 s, fáze π/2), lana přepočítávána každý frame.
+- [x] `animateTreeSway` — 3 kužely koruny se pohupují v eliptickém XZ patternu (dvě nesoudělné periody 3.5 s a 2.7 s, amplituda 0.08 × koeficient výšky). Kmen statický.
+- [x] `formatValue` v infotipu zobrazí `ANIMATE.kind` místo „[object Object]".
+- [x] **Bubble fix:** `makeBubbleTexture` sloučen na jednu cestu (rect + trojúhelník), jediný `fill()` + `stroke()` → žádný černý proužek okraje přes ocásek. Odstraněn helper `roundRectPath`.
+
+## M8+ — Později
+
 - [ ] Dynamický 3D ocásek SPRITES (mířit na mluvčího i když bublina není přímo nad).
-- [ ] Další COMPOSITES: HOUSE, ROCK, CLOUD.
+- [ ] Další COMPOSITES: HOUSE, ROCK, CLOUD (CLOUD by mohl dostat `ANIMATE: { kind: "drift" }`).
+- [ ] Další `kind`y animací: `rotate` (TCUBES krabice), `pulse` (CCUBES světla).
 - [ ] `WCUBES` wireframe varianta *(nápad, možná)*.
 - [ ] `INVISIBLE` potomek CUBES *(možná zbytečné)*.
 - [ ] Nevizuální potomek OBJECTS (např. `TIMER`, `COUNTER`) — až bude přirozená potřeba.
