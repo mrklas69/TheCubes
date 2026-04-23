@@ -6,7 +6,7 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, BALLOON, HOUSE, CLOUD, ROCK, TIMER, COUNTER } from "./model.js";
+import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, BALLOON, HOUSE, CLOUD, ROCK, CHARACTER, TIMER, COUNTER } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
 
 // === Renderer ===
@@ -505,6 +505,283 @@ function animateDrift(object3d, anim, t) {
   object3d.position[axis] = base[axis] + phase - range / 2;
 }
 
+// === Collision systém (2D XZ kruhy) ===
+// Každá kolizní entita má radius v rovině XZ; Y ignorujeme (scéna je
+// prakticky plochá). Pohyblivé entity (wander characters, orbit_stadium)
+// čtou live pozici přes `object3d.position`. Sliding není implementován —
+// pohyb se při zablokování zastaví a stav automat přepne do dalšího stavu
+// (stop & transition, bez zasekávání).
+//
+// Dispatch podle třídy izomorfně s vizuálním dispatchem (DD-11): model je
+// datový, konkrétní radius žije v enginu.
+const collidables = [];
+
+function collisionRadiusFor(instance) {
+  if (instance instanceof CHARACTER) return 0.2;
+  if (instance instanceof TREE)      return 0.35;
+  if (instance instanceof HOUSE)     return 0.85;
+  if (instance instanceof ROCK)      return 0.5;
+  if (instance instanceof CCUBES || instance instanceof TCUBES) return 0.5;
+  if (instance instanceof BALLOON)   return null;  // visí vysoko
+  if (instance instanceof CLOUD)     return null;  // obloha
+  if (instance instanceof SPRITES)   return null;  // 2D billboard
+  if (instance instanceof CUBES)     return 0.5;   // plain voxel (centrální)
+  return null;                                     // TIMER/COUNTER (nevizuální)
+}
+
+function registerCollisionFor(instance, object3d) {
+  const radius = collisionRadiusFor(instance);
+  if (radius === null) return;
+  collidables.push({ instance, object3d, radius });
+}
+
+// Zjistí, zda by pozice (nx, nz) pro `moving` (jeho instance) kolidovala
+// s jiným colliderem. Vlastní instanci z iterace vynechává.
+function isBlocked(moving, nx, nz) {
+  const movingInstance = moving.userData.instance;
+  const movingR = collisionRadiusFor(movingInstance) ?? 0;
+  for (const c of collidables) {
+    if (c.instance === movingInstance) continue;
+    const dx = nx - c.object3d.position.x;
+    const dz = nz - c.object3d.position.z;
+    const combined = movingR + c.radius;
+    if (dx * dx + dz * dz < combined * combined) return true;
+  }
+  return false;
+}
+
+// === Sdílené primitives pro CHARACTER pózy a pohyb ===
+// Používané samostatnými animátory (`walk`, `sit`) i stavovým automatem
+// (`wander`). Každá funkce aplikuje jednu pózu / jeden krok pohybu bez
+// vlastního stavu — stateful kontext patří volajícímu.
+
+// Walk cycle na dílech. `lowerFactor` = kolik extra amplitudy (over upper)
+// dostanou spodní díly. `amp = 0` → loutka bez pohybu (všechny rotace 0).
+function applyWalkCycle(p, t, period, amp, lowerFactor = 0.6) {
+  const swing = amp * Math.sin(oscPhase(t, period));
+  p.leftArm.rotation.x  =  swing;
+  p.rightArm.rotation.x = -swing;
+  p.leftLeg.rotation.x  = -swing;
+  p.rightLeg.rotation.x =  swing;
+  const extra = swing * lowerFactor;
+  p.leftForearm.rotation.x  =  extra;
+  p.rightForearm.rotation.x = -extra;
+  p.leftShin.rotation.x     = -extra;
+  p.rightShin.rotation.x    =  extra;
+}
+
+// Statická sit póza: kyčel +90° vpřed, koleno −90° (holeň svěšená svisle).
+function applySitPose(p) {
+  p.leftLeg.rotation.x   =  Math.PI / 2;
+  p.rightLeg.rotation.x  =  Math.PI / 2;
+  p.leftShin.rotation.x  = -Math.PI / 2;
+  p.rightShin.rotation.x = -Math.PI / 2;
+  p.leftArm.rotation.x      = 0;
+  p.rightArm.rotation.x     = 0;
+  p.leftForearm.rotation.x  = 0;
+  p.rightForearm.rotation.x = 0;
+}
+
+// Leh na zádech — naklon celého groupu −90° kolem X (local +Y hlava → world
+// −Z). Posun skupiny dolů tak, aby záda (local −Z → world −Y po rotaci,
+// ≈0.19 pod group origin) ležela na zemi y=−0.5.
+function applyLiePose(group) {
+  group.rotation.x = -Math.PI / 2;
+  group.position.y = -0.31;
+}
+
+// Work pose — obě ruce švihají dolů/nahoru (sekera, krumpáč). Rozsah upper
+// arm rotace.x: [−π, −π/2] = plný vzpřímený švih přes hlavu dopředu dolů.
+// Stejná animace pro „dolování kamene" i „těžbu stromu" — rozdíl jen v cíli.
+function applyWorkPose(p, t) {
+  const swing = Math.sin(oscPhase(t, 0.6));
+  const angle = -3 * Math.PI / 4 + (Math.PI / 4) * swing;
+  p.leftArm.rotation.x  = angle;
+  p.rightArm.rotation.x = angle;
+  p.leftForearm.rotation.x  = 0;
+  p.rightForearm.rotation.x = 0;
+  p.leftLeg.rotation.x   = 0;
+  p.rightLeg.rotation.x  = 0;
+  p.leftShin.rotation.x  = 0;
+  p.rightShin.rotation.x = 0;
+}
+
+// Reset postavy do default standing pózy. Ponechává XZ pozici a rotation.y
+// (směr pohledu) — ty vlastní stavy (walk, run) si spravují samy.
+function resetCharBase(group) {
+  const p = group.userData.parts;
+  p.leftArm.rotation.x = 0;
+  p.rightArm.rotation.x = 0;
+  p.leftLeg.rotation.x = 0;
+  p.rightLeg.rotation.x = 0;
+  p.leftForearm.rotation.x = 0;
+  p.rightForearm.rotation.x = 0;
+  p.leftShin.rotation.x = 0;
+  p.rightShin.rotation.x = 0;
+  group.rotation.x = 0;
+  group.rotation.z = 0;
+  group.position.y = group.userData.base?.y ?? 0;
+}
+
+// Jeden krok pohybu skupiny k cíli (world x,z). Vrací `true` při dosažení
+// `stopDist` od cíle. Mutuje `group.position.xz` a `group.rotation.y` (facing
+// = směr pohybu; default forward postavy = local −Z).
+function moveTowards(group, tx, tz, speed, dt, stopDist = 0.15) {
+  const dx = tx - group.position.x;
+  const dz = tz - group.position.z;
+  const dist = Math.sqrt(dx * dx + dz * dz);
+  if (dist < stopDist) return true;
+  const step = Math.min(dist - stopDist, speed * dt);
+  const nx = group.position.x + (dx / dist) * step;
+  const nz = group.position.z + (dz / dist) * step;
+  // Kolize: pokud by nová pozice kolidovala, skončit stav (stop & transition).
+  if (isBlocked(group, nx, nz)) return true;
+  group.position.x = nx;
+  group.position.z = nz;
+  group.rotation.y = Math.atan2(-dx, -dz);
+  return false;
+}
+
+// Walk cycle pro CHARACTER — čtyři končetiny kývají kolem ramenního/kyčelního
+// pivotu v antifázi (levá ruka + pravá noha vpřed ↔ pravá ruka + levá noha
+// vpřed). Fyziologicky správné „crossover": při chůzi kompenzuje rotaci pánve
+// rotací ramene protistrany.
+//
+// Spodní díly (forearm, shin) kývají se **stejným znaménkem** jako horní
+// rodič, ale s vlastní *dodatečnou* rotací (`lowerAmpFactor` × upper swing).
+// Protože spodní díl je child horní skupiny, jeho world-space rotace = upper
+// + extra. Default factor 0.6 → world amplituda spodku ≈ 1.6× upper, což
+// dává stylizované „overlapping action": zápěstí dojede dál než loket, pata
+// dál než koleno.
+//
+// Parametry:
+//  - `period` — doba jednoho kroku (s); typicky 0.8–1.2 s pro realistickou chůzi
+//  - `amplitude` — maximum výchylky horního dílu v radiánech; π/6 (~30°)
+//    vypadá jako svižná chůze, π/12 (~15°) pomalá, 0 = loutka bez pohybu.
+//  - `lowerAmpFactor` — kolik extra amplitudy dostanou spodní díly (0 = stejná
+//    jako horní; 0.6 default = o 60 % víc; 1.0 = dvojnásobná).
+//
+// Bez ANIMATE vůbec → CHARACTER visí jako loutka (default rotation.x = 0).
+function animateWalk(group, anim, t) {
+  const parts = group.userData.parts;
+  if (!parts) return;
+  applyWalkCycle(parts, t, anim.period, anim.amplitude ?? 0, anim.lowerAmpFactor ?? 0.6);
+}
+
+// Statický sed. Kyčle ohnuté +90° vpřed (stehna horizontálně v character-forward
+// směru), kolena ohnutá −90° (holeně visí svisle dolů). Spodní díl má vlastní
+// rotaci, která „anuluje" upperovu rotaci kolem X → shin zůstává svislý ve
+// světových souřadnicích. Ruce resetujeme na 0 (default svěšené podél těla) —
+// defensive pro pozdější mode-transition scénáře (sit po walkem by jinak
+// zachoval poslední rotaci paží).
+//
+// Jako první **statický** ANIMATE kind: neřešíme `t`, jen nastavujeme rotace.
+// ANIMATE slot tím formálně pokrývá „mód" (chůze, sed, běh, leh, …) — static
+// i dynamic pod jedním dispatch patternem.
+function animateSit(group) {
+  const p = group.userData.parts;
+  if (!p) return;
+  applySitPose(p);
+}
+
+// Stavový automat „poflakování se" pro CHARACTER. Náhodně střídá stavy
+// (walk/run/stand/sit/lie/work) s délkami 2–8 s (nebo do dosažení cíle
+// u walk/run/work-approach).
+//
+// Parametry v `ANIMATE`:
+//  - `bounds` — max |x|, |z| pro náhodné cíle walk/run (default 3)
+//  - `subjects` — pole instancí (např. [rock1, tree1]) pro work; bez nich
+//    state „work" fallback-uje na stand
+//
+// Per-character state je v `group.userData.wander`: {current, timer, lastT,
+// targetX/Z, subject, substate}. První volání inicializuje a pickne první stav.
+//
+// Mezi stavy: `resetCharBase` nahodí default standing pose (rotation.x=0,
+// výšku na base.y, končetiny na 0). XZ pozice a `rotation.y` (facing)
+// přetrvávají — postava se nerestartuje na výchozí místo každou změnou stavu.
+const WANDER_STATES = ["walk", "stand", "sit", "lie", "run", "work"];
+
+function enterWanderState(group, st, anim, name) {
+  resetCharBase(group);
+  st.current = name;
+  st.substate = null;
+  const bounds = anim.bounds ?? 3;
+  if (name === "stand") {
+    st.timer = 2 + Math.random() * 3;
+  } else if (name === "sit") {
+    applySitPose(group.userData.parts);
+    st.timer = 3 + Math.random() * 3;
+  } else if (name === "lie") {
+    applyLiePose(group);
+    st.timer = 4 + Math.random() * 4;
+  } else if (name === "walk" || name === "run") {
+    st.targetX = (Math.random() - 0.5) * 2 * bounds;
+    st.targetZ = (Math.random() - 0.5) * 2 * bounds;
+    st.timer = 15; // pojistka proti zaseknutí (cíl nedosažitelný)
+  } else if (name === "work") {
+    const subjects = anim.subjects ?? [];
+    if (subjects.length === 0) {
+      st.current = "stand";
+      st.timer = 2;
+      return;
+    }
+    st.subject = subjects[Math.floor(Math.random() * subjects.length)];
+    st.substate = "approach";
+    st.timer = 20;
+  }
+}
+
+function pickNextWanderState(group, st, anim) {
+  const next = WANDER_STATES[Math.floor(Math.random() * WANDER_STATES.length)];
+  enterWanderState(group, st, anim, next);
+}
+
+function animateWander(group, anim, t) {
+  const p = group.userData.parts;
+  if (!p) return;
+  let st = group.userData.wander;
+  if (!st) {
+    st = group.userData.wander = {
+      current: "stand", timer: 0, lastT: t,
+      targetX: 0, targetZ: 0, subject: null, substate: null,
+    };
+    pickNextWanderState(group, st, anim);
+  }
+  const dt = Math.max(0, t - st.lastT);
+  st.lastT = t;
+  st.timer -= dt;
+
+  if (st.current === "walk" || st.current === "run") {
+    const isRun = st.current === "run";
+    const speed  = isRun ? 2.2 : 1.0;
+    const amp    = isRun ? Math.PI / 4 : Math.PI / 6;
+    const period = isRun ? 0.5 : 1.0;
+    if (moveTowards(group, st.targetX, st.targetZ, speed, dt)) {
+      st.timer = 0;
+    } else {
+      applyWalkCycle(p, t, period, amp);
+    }
+  } else if (st.current === "work") {
+    const subj = st.subject;
+    if (!subj) {
+      st.timer = 0;
+    } else if (st.substate === "approach") {
+      if (moveTowards(group, subj.X, subj.Z, 1.0, dt, 1.1)) {
+        st.substate = "perform";
+        st.timer = 3 + Math.random() * 2;
+        resetCharBase(group);
+      } else {
+        applyWalkCycle(p, t, 1.0, Math.PI / 6);
+      }
+    } else {
+      applyWorkPose(p, t);
+    }
+  }
+  // stand/sit/lie: pose nastavená při enteru, per-frame update nepotřeba
+
+  if (st.timer <= 0) pickNextWanderState(group, st, anim);
+}
+
 // Lookup tabulka `kind` → animátor. Nový druh pohybu = nová větev zde (+
 // samotná funkce výš). Izomorfní s `faceMaterialFor` dispatchem (DD-14).
 // Umožňuje i validaci při registraci — překlep v `ANIMATE.kind` odhalíme
@@ -516,6 +793,9 @@ const ANIMATORS = {
   orbit_stadium:  animateOrbitStadium,
   pulse:          animatePulse,
   drift:          animateDrift,
+  walk:           animateWalk,
+  sit:            animateSit,
+  wander:         animateWander,
 };
 
 // Registruje pár mesh↔instance k animaci. Voláno z `createMeshFor` pro
@@ -568,8 +848,6 @@ function updateAnimations(tSeconds) {
 // `{ kind, ...params }`), `bubbleTails` je **engine-interní důsledek** toho,
 // že má SPRITES vyplněný `SPEAKER`. Sdílet jeden slot by znamenalo, že
 // user s vlastním `ANIMATE` (bubbling bubliny atp.) by přišel o ocásek.
-// Pokud přibude třetí per-frame mechanismus (derived behavior), refaktor
-// na obecný `updaters[]` s `{ fn, ctx }` kontraktem — P2+.
 const bubbleTails = [];
 
 // Mapa instance.ID → Three.js Object3D. Plníme v `createMeshFor` a čteme
@@ -577,10 +855,13 @@ const bubbleTails = [];
 // instance.X/Y/Z, protože animátory jako `orbit_stadium` mutují mesh,
 // ne model — DD-15). Tím může ocásek sledovat i pohybující se mluvčí.
 //
-// **Cleanup omezení:** mapa se plní monotonně, žádný `removeInstance`
-// mechanismus. Pro aktuální scénu (statický model, bez spawn/delete) OK.
-// Pro budoucí editor/engine s live-add/remove: přechod na `WeakMap<instance,
-// mesh>` (automatický GC) nebo explicitní `destroyInstance(id)`.
+// **Cleanup TBD (napříč registry):** `meshByInstance`, `animators`,
+// `bubbleTails`, `litEntities`, `tickHandlers` a `edgeOverlays` (v `userData`
+// na mesh rootu) se plní monotonně, žádný `removeInstance` mechanismus zatím
+// neexistuje. Pro statickou scénu OK; pro editor (Příště sez. 9 bod 3) bude
+// potřeba jednotný `destroyInstance(id)` — projde všechny registry a uklidí.
+// Dokud editor není, komentář tady stačí jako připomínka; duplicitní
+// „TODO cleanup" u každého registru není nutná.
 const meshByInstance = new Map();
 
 // Scratch vektor pro cíl ocásku (výstup `resolveSpeakerTarget`).
@@ -739,7 +1020,10 @@ function registerCounter(instance) {
   row.appendChild(valueSpan);
   hud.appendChild(row);
 
-  tickHandlers.push(() => {
+  // Handler signatura `(tick) => void` je uniform s `registerTimer`. COUNTER
+  // sám tick nepotřebuje (inkrementuje každé zavolání), ale kontrakt držíme
+  // jednotný — jakýkoli budoucí tickHandler počítá s `(tick)` parametrem.
+  tickHandlers.push((_tick) => {
     instance.VALUE += instance.INCREMENT;
     valueSpan.textContent = instance.VALUE;
   });
@@ -791,8 +1075,8 @@ function registerBehavior(instance) {
 // engine-derived behavior, ne user recipe.
 const litEntities = [];
 
-const LIT_MAX_EMISSIVE = 1.5;    // HDR — s tone mappingem vypadá jako „září"
-const LIT_MAX_LIGHT    = 10.0;   // PointLight.intensity — dramatické stíny
+const LIT_MAX_EMISSIVE = 2.0;    // HDR — s tone mappingem vypadá jako „září"
+const LIT_MAX_LIGHT    = 30.0;   // PointLight.intensity — dramatické stíny
 const LIT_FADE_RATE    = 5.0;    // exponenciální rate; ~0.5 s do 92 %
 
 function registerLit(instance, envelope, light) {
@@ -886,6 +1170,18 @@ function createMeshFor(instance) {
   // bez SPEAKER (levné — Map put, vlastní spotřeba jen když jiný mesh míří
   // na tuto instanci).
   meshByInstance.set(instance.ID, object3d);
+  // Collision registrace — statické i pohyblivé entity; dispatch podle typu.
+  registerCollisionFor(instance, object3d);
+  // LIT-capable třídy registrujeme pro fade watcher tady (ne uvnitř `buildX`),
+  // aby registrace engine-derived behaviorů držela jedinou úroveň detailu —
+  // stejně jako `registerAnimator` a `meshByInstance.set`. Refy na konkrétní
+  // díly (vak, PointLight) čteme z `group.userData.parts`, které `buildBalloon`
+  // naplnil. Rozšíření na další LIT třídu (STREETLAMP, FIRE_PIT) = jen další
+  // `instanceof` větev zde, ne rozsypané `registerLit` volání v `buildX`.
+  if (instance instanceof BALLOON) {
+    const { bag, light } = object3d.userData.parts;
+    registerLit(instance, bag, light);
+  }
   return object3d;
 }
 
@@ -998,6 +1294,8 @@ function createCompositeFor(instance) {
     buildCloud(group);
   } else if (instance instanceof ROCK) {
     buildRock(group, instance);
+  } else if (instance instanceof CHARACTER) {
+    buildCharacter(group, instance);
   }
 
   // userData.instance + shadow flagy nastaví až `createMeshFor` jednotně
@@ -1129,17 +1427,19 @@ function buildBalloon(group, instance) {
   // Barva laděná k vaku, ale mírně teplejší (žloutnutí směrem k warm white)
   // — čistý orange by zabarvil celou scénu do ohnivé, lehce posunutý
   // k 0xffb060 dává „lantern/ohňový" pocit bez přebarvení.
-  // Intenzita = 0 (watcher ji přepočítá podle LIT); distance 12 j pokryje
-  // scénu 10×10; decay = 2 je fyzikálně korektní kvadratický pokles.
-  // castShadow = true — **druhá shadow mapa** vedle slunce, objekty budou
-  // vrhat další stíny (záměr uživatele). Cube camera pro 6 směrů = 6×
-  // render pass; mapSize 512² drží perf v normě (1024² by byl hezčí, ale
-  // drahý pro efekt, který jen občas svítí).
-  const light = new THREE.PointLight(0xffb060, 0, 12, 2);
+  // Intenzita = 0 (watcher ji přepočítá podle LIT); distance 20 j pokryje
+  // celou scénu s rezervou (pozice balónu (1,3,2), okraj gridu ±5 → ~9 j
+  // nejdelší úhlopříčka, zbytek falloff mezi decay=2); decay 2 je fyzikálně
+  // korektní kvadratický pokles, ale s vyšší max intenzitou (30) lampion
+  // svítí na celou scénu, ne jen bezprostřední okolí.
+  // castShadow = true — **druhá shadow mapa** vedle slunce, objekty vrhají
+  // další stíny (záměr uživatele). Cube camera pro 6 směrů = 6× render pass;
+  // mapSize 1024² dává ostřejší stíny (svítivější lampion víc ukazuje artefakty).
+  const light = new THREE.PointLight(0xffb060, 0, 20, 2);
   light.castShadow = true;
-  light.shadow.mapSize.set(512, 512);
+  light.shadow.mapSize.set(1024, 1024);
   light.shadow.camera.near = 0.1;
-  light.shadow.camera.far  = 15;
+  light.shadow.camera.far  = 20;
   // Mírný bias proti shadow acne / peter-panning (stejný důvod jako u slunce).
   light.shadow.bias       = -0.0005;
   light.shadow.normalBias =  0.02;
@@ -1190,10 +1490,6 @@ function buildBalloon(group, instance) {
     ropeBagOffset,
     light,
   };
-  // Registruj pro LIT fade watcher — watcher per-frame lerpuje emissive +
-  // light.intensity z `instance.LIT` bool. Registrace tady (ne v `createMeshFor`)
-  // je BALLOON-specific: potřebuje konkrétní refy na vak a PointLight.
-  registerLit(instance, envelope, light);
 }
 
 // Procedurální domek — kvádr stěn + jehlanová střecha. Lokální souřadnice
@@ -1310,6 +1606,121 @@ function buildRock(group, instance) {
     rock.rotation.set(0.3 * i, 0.7 * i + 0.2, 0.5 * i - 0.3);
     group.add(rock);
   });
+}
+
+// Procedurální humanoidní postavička („loutka"). Torzo + hlava + 4 dvoudílné
+// končetiny. Každá končetina je samostatná `Group` s pivotem na kořenu ramene
+// nebo kyčle — rotace skupiny kolem osy X rotuje celou končetinu vpřed/vzad
+// (walk cycle). Spodní díl je child skupiny na fixní lokální pozici (bez
+// vlastního pivotu) — následuje rotaci ramene jako rigidní prodloužení.
+// Kulový kloub (loket/koleno) visually zakryje přechod mezi horním a spodním
+// dílem (válce mají lehce větší poloměr dole než nahoře → přirozený zúžený
+// idiom končetin).
+//
+// Lokální souřadnice: origin = střed chodidel na Y=−0.5 (stoji na zemi stejně
+// jako kostky). Torzo + hlava stoupají v +Y, končetiny visí v −Y od ramen/kyčlí.
+// Celková výška ≈ 1.4 j (srovnatelné s voxelem + polovina, ne „titán").
+function buildCharacter(group, instance) {
+  const bodyMat = new THREE.MeshStandardMaterial({ color: instance.COLOR });
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0xf5c88e });
+
+  // --- Torzo ---
+  // CylinderGeometry(radiusTop, radiusBottom, height, radialSegments) s
+  // lehkým zúžením v pase (0.19 → 0.15) → „athletická" silueta, ramena širší
+  // než pas. 16 segmentů = dost hladké, aby se neviděly facety.
+  const torsoH = 0.5;
+  const torsoRadiusTop = 0.19;
+  const torso = new THREE.Mesh(
+    new THREE.CylinderGeometry(torsoRadiusTop, 0.15, torsoH, 16),
+    bodyMat,
+  );
+  // Kyčle ~0.06 nad zemí, torzo spans [0.06, 0.56] lokálně (po odečtení −0.5).
+  const hipsY = -0.5 + 0.56;   // 0.06
+  const torsoCenterY = hipsY + torsoH / 2;
+  torso.position.y = torsoCenterY;
+  group.add(torso);
+
+  // --- Hlava ---
+  const headR = 0.18;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(headR, 16, 12), skinMat);
+  head.position.y = torsoCenterY + torsoH / 2 + headR;
+  group.add(head);
+
+  // --- Pomocný builder končetiny ---
+  // Vrací `{ limb, lower }` — limb je root Group (pivot na rameni/kyčli),
+  // lower je child Group pozicovaný na kloubu (budoucí hinge ohyb). Spodní
+  // válec je uvnitř lower s offsetem −lowerLen/2 (pivot = kloub, visí v −Y).
+  function buildLimb(upperLen, upperR, lowerLen, lowerR, jointR) {
+    const limb = new THREE.Group();
+    // Horní díl: cylinder centrovaný na svém středu, posuneme ho o −upperLen/2
+    // aby jeho vršek seděl v (0,0,0) — pivot rotace na rameni/kyčli.
+    const upper = new THREE.Mesh(
+      new THREE.CylinderGeometry(upperR * 0.9, upperR, upperLen, 8),
+      bodyMat,
+    );
+    upper.position.y = -upperLen / 2;
+    limb.add(upper);
+
+    // Kloub — koule uprostřed (loket/koleno)
+    const jointY = -upperLen;
+    const joint = new THREE.Mesh(new THREE.SphereGeometry(jointR, 10, 8), bodyMat);
+    joint.position.y = jointY;
+    limb.add(joint);
+
+    // Spodní díl — další Group s pivotem na kloubu. Vlastní rotaci zatím
+    // neanimujeme (V1 rigidní prodloužení), ale struktura je připravena na
+    // pozdější hinge ohyb (`lower.rotation.x`).
+    const lower = new THREE.Group();
+    lower.position.y = jointY;
+    const lowerMesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(lowerR * 0.9, lowerR, lowerLen, 8),
+      bodyMat,
+    );
+    lowerMesh.position.y = -lowerLen / 2;
+    lower.add(lowerMesh);
+    limb.add(lower);
+
+    return { limb, lower };
+  }
+
+  // --- Ruce ---
+  // Rameno: horní okraj torza (y = torsoCenterY + torsoH/2 − 0.02 pro lehké
+  // zasunutí do torza), X posun o polovinu šířky torza + poloměr válce.
+  const armUpperLen = 0.22, armLowerLen = 0.22, armJointR = 0.055;
+  const shoulderY = torsoCenterY + torsoH / 2 - 0.03;
+  // Rameno = okraj válce nahoře (torsoRadiusTop) + poloměr paže (malý gap).
+  const shoulderX = torsoRadiusTop + 0.05;
+
+  const { limb: leftArm, lower: leftForearm } =
+    buildLimb(armUpperLen, 0.05, armLowerLen, 0.045, armJointR);
+  leftArm.position.set(-shoulderX, shoulderY, 0);
+  group.add(leftArm);
+
+  const { limb: rightArm, lower: rightForearm } =
+    buildLimb(armUpperLen, 0.05, armLowerLen, 0.045, armJointR);
+  rightArm.position.set(shoulderX, shoulderY, 0);
+  group.add(rightArm);
+
+  // --- Nohy ---
+  const legUpperLen = 0.28, legLowerLen = 0.28, legJointR = 0.07;
+  const hipX = 0.1;
+
+  const { limb: leftLeg, lower: leftShin } =
+    buildLimb(legUpperLen, 0.07, legLowerLen, 0.06, legJointR);
+  leftLeg.position.set(-hipX, hipsY, 0);
+  group.add(leftLeg);
+
+  const { limb: rightLeg, lower: rightShin } =
+    buildLimb(legUpperLen, 0.07, legLowerLen, 0.06, legJointR);
+  rightLeg.position.set(hipX, hipsY, 0);
+  group.add(rightLeg);
+
+  // Reference pro animátor `walk`. `base*Rot` nepotřebujeme (default je 0
+  // a walk mutuje absolutně, ne relativně — bez ANIMATE zůstávají nuly).
+  group.userData.parts = {
+    leftArm, rightArm, leftLeg, rightLeg,
+    leftForearm, rightForearm, leftShin, rightShin,
+  };
 }
 
 // === Model: 3×3 grid dlaždic v rovině Y=0 + strom ===
@@ -1494,6 +1905,55 @@ const rock1 = new ROCK(
 );
 scene.add(createMeshFor(rock1));
 
+// CHARACTER — humanoidní postavička ze dvou-dílových končetin. Dvě instance:
+// `char_0001` (pravá, chodí na místě) s `walk` animátorem, amp π/6 → viditelné
+// kývání končetin; `char_0002` (levá, loutka) bez ANIMATE → visí jako
+// marionetě v klidu. Pozice mezi růžicí a domkem, aby obě byly v záběru default
+// kamery (4,4,4 → 0,0,0).
+// Dvě poflakující se postavy — stavový automat `wander`. Náhodně střídají
+// walk / run / stand / sit / lie / work. „Work" je dvojfázový: approach k
+// `subject` (rock nebo strom) + perform (mávnutí sekerou). Subjects jsou
+// sdílené (dva chodci můžou „těžit" totéž — bez konfliktu, jen vizuální
+// overlap).
+const char1 = new CHARACTER(
+  "char_0001",
+  "Poutník modrý",
+  2, 0, -2,
+  0x4a7cbe,
+  "CHARACTER — poflakuje se (walk/run/stand/sit/lie/work).",
+);
+char1.ANIMATE = { kind: "wander", bounds: 3, subjects: [rock1, tree1] };
+scene.add(createMeshFor(char1));
+
+const char3 = new CHARACTER(
+  "char_0003",
+  "Poutník zelený",
+  -2, 0, 1,
+  0x5a8a4e,
+  "CHARACTER — druhý poflakující se (odlišný seed, samostatný cyklus).",
+);
+char3.ANIMATE = { kind: "wander", bounds: 3, subjects: [rock1, tree1] };
+scene.add(createMeshFor(char3));
+
+// Druhá postava sedí na severním okraji oranžové dlaždice `ccube_0002` (0, 0, -1).
+// Vršek dlaždice = y=0.5; lokální hipsY uvnitř CHARACTER = 0.06 nad originem;
+// takže character.Y = 0.44 umístí kyčle přesně na vršek dlaždice. Severní hrana
+// = z=-1.5. Posun dozadu (dovnitř dlaždice, +Z pro postavu otočenou obličejem
+// na sever = −Z default) o 2/3 délky stehna (legUpperLen = 0.28) → hip v z=
+// −1.5 + 0.187 = −1.313. Tím 2/3 stehna sedí na dlaždici, zbývající 1/3 + celá
+// holeň visí přes severní hranu. Bez Y rotace → postava míří −Z, kamera
+// z (4,4,4) ji vidí z levoboku/záda (diváka zajímá spíš pozice než obličej).
+const SIT_BACK = (2 / 3) * 0.28;
+const char2 = new CHARACTER(
+  "char_0002",
+  "Sedící",
+  0, 0.44, -1.5 + SIT_BACK,
+  0xc25b4a,   // cihlová (oblečení)
+  "CHARACTER — sedí na severním okraji oranžové dlaždice, 2/3 stehna na dlaždici.",
+);
+char2.ANIMATE = { kind: "sit" };
+scene.add(createMeshFor(char2));
+
 // TIMER — první nevizuální potomek OBJECTS ve scéně (DD-17). Každých 5 ticků
 // (= 5 s) toggle-uje `balloon1.LIT`. Kombinuje se s click-to-toggle handlerem
 // — oba mechanismy mění stejný stav, fade watcher propaguje do emissive +
@@ -1572,9 +2032,10 @@ scene.add(createMeshFor(dialog2));
 // s flatShading = všechny facet hrany). `LineSegments` s `LineBasicMaterial`
 // (WebGL limit — tenká 1px linie, na většině driverů se neignoruje linewidth).
 //
-// `depthTest = false` + `renderOrder = 999` → X-ray efekt: hrany vidíš skrz
-// mesh (všech 12 hran voxelu současně, editor-friendly). Alternativa s
-// depthTest=true by skrývala zadní hrany za přední plochou.
+// `depthTest = true` → jen **viditelné** hrany (zadní hrany skryté za plochou
+// se nekreslí). `polygonOffset: true` + negativní factor/units posune hrany
+// mírně k divákovi, aby nekoexistovaly v přesně stejném Z jako mesh plochy
+// (prevence „stípkaného" nebo mizejícího efektu hran sedících přesně na ploše).
 //
 // `raycast = () => {}` no-op → hrany nejsou raycastovatelné → hover detekci
 // (raycaster nad `firstHit`) neruší. Jinak by hover „chytal" vlastní overlay.
@@ -1594,12 +2055,13 @@ function setEdgeHighlight(instance, on) {
       if (!child.isMesh) return;
       const edges = new THREE.EdgesGeometry(child.geometry, 20);
       const material = new THREE.LineBasicMaterial({
-        color: 0xffff00,           // editor-yellow (konvence selekce)
-        depthTest: false,           // X-ray: vidět skrz mesh
-        transparent: true,           // nutné pro depthTest=false správný blend
+        color: 0xffff00,             // editor-yellow (konvence selekce)
+        depthTest: true,             // jen viditelné hrany
+        polygonOffset: true,         // posun vůči ploše (prevence z-fight)
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
       });
       const lines = new THREE.LineSegments(edges, material);
-      lines.renderOrder = 999;                    // draw last → přes vše
       lines.raycast = () => {};                   // ignore v raycast
       lines.visible = false;                      // default off; `on=true` zapne
       child.add(lines);                           // child mesh-u → dědí transform

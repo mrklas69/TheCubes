@@ -4,7 +4,7 @@
 TheCubes je meta-sandbox s živým OOP modelem. Na začátku existuje jediná instance `OBJECTS`, rozšiřováním modelu se scéna zaplňuje. Cíl: demonstrovat současné mládeži, že tvorba je zábavnější než konzumace.
 
 ## Status
-Milníky **M1–M7 hotové**, **M8+ průběžně**. Scéna obsahuje: středovou `CUBES` (šachovnice), 8× `CCUBES` (duhová růžice), `TREE` (kývá se ve větru), `BALLOON` (pohupuje se + **lantern mode** s PointLight/fade), `HOUSE`, `CLOUD` (drift), `ROCK` (statický balvan), dvě `TCUBES` krabice (jedna rotuje, druhá obíhá stadium-dráhu), dvě `SPRITES` bubliny s **dynamickým 3D ocáskem** (SPEAKER tracking), stínovací systém. Plynulé chování: atribut `ANIMATE` (DD-15). Diskrétní: `TIMER` (DD-17) → `ACTION = { kind, target, attr, ... }` a `COUNTER` (VALUE + INCREMENT v HUD) — oba jsou nevizuální potomci OBJECTS, registrovaní přes `registerBehavior(instance)`. Engine-derived watchery (bubble tail DD-16, LIT fade DD-17) reagují per-frame na stav v modelu. Interakce: click na vak balónu toggle `LIT` — konverguje s TIMER na stejný stav.
+Milníky **M1–M7 hotové**, **M8+ průběžně**. Scéna obsahuje: středovou `CUBES` (šachovnice), 8× `CCUBES` (duhová růžice), `TREE` (kývá se ve větru), `BALLOON` (pohupuje se + **lantern mode** s PointLight/fade), `HOUSE`, `CLOUD` (drift), `ROCK` (statický balvan), dvě `TCUBES` krabice (jedna rotuje, druhá obíhá stadium-dráhu), dvě `SPRITES` bubliny s **dynamickým 3D ocáskem** (SPEAKER tracking), tři `CHARACTER` postavičky (dva wander poutníci + jedna sedící na oranžové dlaždici), stínovací systém, **2D kolizní systém** (DD-19: kruhy v XZ, stop & transition). Plynulé chování: atribut `ANIMATE` (DD-15) — rozšířený na **„mode slot"** (DD-18), pokrývá statické pózy (`sit`, `lie`) i dynamické (`walk`) a agregované (`wander` stavový automat: walk/run/stand/sit/lie/work). Diskrétní: `TIMER` (DD-17) → `ACTION = { kind, target, attr, ... }` a `COUNTER` (VALUE + INCREMENT v HUD) — oba jsou nevizuální potomci OBJECTS, registrovaní přes `registerBehavior(instance)`. Engine-derived watchery (bubble tail DD-16, LIT fade DD-17) reagují per-frame na stav v modelu. Interakce: click na vak balónu toggle `LIT` — konverguje s TIMER na stejný stav; hover → edge highlight (jen viditelné hrany).
 
 ## Dokumenty
 - `README.md` — overview
@@ -23,10 +23,14 @@ OBJECTS (ID, NAME, DESCRIPTION, ANIMATE)
  └── CUBES (X, Y, Z — float, voxel renderer snap-to-grid, DD-12)
       ├── CCUBES (COLOR)                 ← plochá barva; dřív TERRAIN
       ├── TCUBES (TEXTURE_TOP/BOTTOM/NORTH/SOUTH/EAST/WEST) ← per-face textury
-      ├── SPRITES (ASSET)                 ← 2D billboard ke kameře
+      ├── SPRITES (ASSET, SPEAKER, SPEAKER_OFFSET_Y) ← 2D billboard ke kameře
       └── COMPOSITES (3D mesh z primitivů)
            ├── TREE                       ← kmen + kužely (tree_sway)
-           └── BALLOON (COLOR)            ← vak + lana + koš, mimo grid (balloon_bob)
+           ├── BALLOON (COLOR, LIT)       ← vak + lana + koš, mimo grid (balloon_bob, lantern)
+           ├── HOUSE (COLOR)              ← stěny + jehlanová střecha
+           ├── CLOUD                      ← shluk koulí (drift)
+           ├── ROCK (COLOR)               ← nízkopoly balvan
+           └── CHARACTER (COLOR)          ← humanoid s dvoudílnými končetinami (walk/sit/lie/wander)
 ```
 
 `TIME.tick` = globální čítač pro diskrétní události (zatím nepoužito).
