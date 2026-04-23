@@ -6,8 +6,8 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, BALLOON, HOUSE, CLOUD } from "./model.js";
-import { advanceTime } from "./time.js";
+import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, BALLOON, HOUSE, CLOUD, ROCK, TIMER, COUNTER } from "./model.js";
+import { TIME, advanceTime } from "./time.js";
 
 // === Renderer ===
 // WebGLRenderer = Three.js komponenta, která překládá scénu na GPU volání.
@@ -162,43 +162,29 @@ const checkerboardTexture = makeCheckerboardTexture();
 // se dvěma řídícími body.
 function makeBubbleTexture(text) {
   const canvas = document.createElement("canvas");
-  // Plátno H=160 = bubble (120 px) + tail (40 px) v poměru 3:1 vertikálně,
-  // celkový poměr stran plátna 3.2:1. Větší plátno = ostřejší text/ocásek,
-  // ale vyšší VRAM. Ocásek je **součástí textury** — směřuje vždy dolů ve
-  // středu (míří na entitu přímo pod bublinou). Dynamický směr by znamenal
-  // mesh ocásek mimo sprite; KISS pro M5.
-  const W = 512, H = 160;
-  const BUBBLE_H = 120;          // horní region s textem
+  // Plátno bez ocásku — ocásek je teď samostatný 3D mesh (dynamický směr,
+  // míří na mluvčího z libovolného úhlu). Plátno je tedy jen zaoblený
+  // obdélník s textem. Poměr 512×150 ≈ 3.4:1 odpovídá předchozímu bubble
+  // regionu, takže velikost textu zůstane podobná.
+  const W = 512, H = 150;
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext("2d");
 
-  // --- Bublina + ocásek jako JEDNA cesta ---
-  // Obě části obkroužíme jediným path a uděláme `fill()` + `stroke()` jen
-  // jednou → obrys splyne plynule kolem dokola, bez viditelného spoje.
+  // --- Zaoblený obdélník jako jeden path + fill + stroke ---
   const PAD = 6;                   // vnitřní okraj, aby stroke nevyjel z plátna
   const RADIUS = 28;               // radius zaoblení rohů
-  const tipX = W / 2;              // špička ocásku — střed plátna
-  const tipY = H - 6;              // špička mírně nad dolní hranou
-  const baseY = BUBBLE_H - PAD;    // spodní hrana bubliny = základna ocásku
-  const baseHalf = 22;             // polovina šířky základny ocásku
 
   ctx.beginPath();
-  // Začneme za levým horním rohem, obkroužíme po směru hodinových ručiček.
   ctx.moveTo(PAD + RADIUS, PAD);
-  ctx.lineTo(W - PAD - RADIUS, PAD);                              // horní hrana
-  ctx.quadraticCurveTo(W - PAD, PAD, W - PAD, PAD + RADIUS);      // pravý horní roh
-  ctx.lineTo(W - PAD, baseY - RADIUS);                             // pravá hrana
-  ctx.quadraticCurveTo(W - PAD, baseY, W - PAD - RADIUS, baseY);   // pravý spodní roh
-  // Pravá část spodní hrany → pravý bok ocásku → špička → levý bok ocásku
-  ctx.lineTo(tipX + baseHalf, baseY);
-  ctx.lineTo(tipX, tipY);
-  ctx.lineTo(tipX - baseHalf, baseY);
-  // Levá část spodní hrany → levý spodní roh → levá hrana → levý horní roh
-  ctx.lineTo(PAD + RADIUS, baseY);
-  ctx.quadraticCurveTo(PAD, baseY, PAD, baseY - RADIUS);
-  ctx.lineTo(PAD, PAD + RADIUS);
-  ctx.quadraticCurveTo(PAD, PAD, PAD + RADIUS, PAD);
+  ctx.lineTo(W - PAD - RADIUS, PAD);                                   // horní hrana
+  ctx.quadraticCurveTo(W - PAD, PAD, W - PAD, PAD + RADIUS);           // pravý horní roh
+  ctx.lineTo(W - PAD, H - PAD - RADIUS);                               // pravá hrana
+  ctx.quadraticCurveTo(W - PAD, H - PAD, W - PAD - RADIUS, H - PAD);   // pravý spodní roh
+  ctx.lineTo(PAD + RADIUS, H - PAD);                                   // spodní hrana
+  ctx.quadraticCurveTo(PAD, H - PAD, PAD, H - PAD - RADIUS);           // levý spodní roh
+  ctx.lineTo(PAD, PAD + RADIUS);                                       // levá hrana
+  ctx.quadraticCurveTo(PAD, PAD, PAD + RADIUS, PAD);                   // levý horní roh
   ctx.closePath();
 
   ctx.fillStyle = "#ffffff";
@@ -208,21 +194,17 @@ function makeBubbleTexture(text) {
   ctx.stroke();
 
   // --- Text ---
-  // `system-ui` = systémový sans-serif (SF Pro / Segoe UI / Roboto podle OS).
-  // Velikost v px se vztahuje k canvasu, ne k obrazovce. 34 px na 120 px
-  // výšce (bubble region) → čitelný jednořádkový text s rezervou.
+  // `system-ui` = systémový sans-serif. 34 px na 150 px výšce → čitelné.
   ctx.fillStyle = "#111111";
   ctx.font = "bold 34px system-ui, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  // Text vycentrovaný uvnitř bubble regionu, ne celého plátna — jinak by
-  // ho ocásek posunul opticky dolů.
-  ctx.fillText(text, W / 2, BUBBLE_H / 2);
+  ctx.fillText(text, W / 2, H / 2);
 
   const texture = new THREE.CanvasTexture(canvas);
   // SRGB aby barvy (bílá, černá text) seděly s PBR renderem
   texture.colorSpace = THREE.SRGBColorSpace;
-  return { texture, aspect: W / H, bubbleFraction: BUBBLE_H / H };
+  return { texture, aspect: W / H };
 }
 
 // === Canvas-generovaná textura pro TCUBES stranu s textem/emoji ===
@@ -571,6 +553,269 @@ function updateAnimations(tSeconds) {
   }
 }
 
+// === Dynamický 3D ocásek pro SPRITES s vyplněným SPEAKER === (DD-16)
+// Ocásek žije jako samostatný mesh (tenký 4-segmentový jehlan) mimo sprite —
+// sprite je billboard (vždy čelem ke kameře), ocásek je 3D a plnohodnotně
+// sleduje mluvčího z jakéhokoli úhlu. Pattern izomorfní s lany balónu:
+//  1. `buildBubbleTail` vyrobí unit-height mesh (scale.y = skutečná délka).
+//  2. Registrace páru `{ sprite, tail, instance, bubbleHalfHeight }` do
+//     `bubbleTails[]` při `createSpriteFor`.
+//  3. Per-frame `updateBubbleTails` přepočítá pozici/orientaci jehlanu
+//     (vedle `updateAnimations` v render loopu).
+//
+// Proč samostatný registry a ne `ANIMATE` (DD-15)? **Rozdílná kategorie:**
+// `ANIMATE` je uživatelský recept chování zapsaný v modelu (DD-15 definuje
+// `{ kind, ...params }`), `bubbleTails` je **engine-interní důsledek** toho,
+// že má SPRITES vyplněný `SPEAKER`. Sdílet jeden slot by znamenalo, že
+// user s vlastním `ANIMATE` (bubbling bubliny atp.) by přišel o ocásek.
+// Pokud přibude třetí per-frame mechanismus (derived behavior), refaktor
+// na obecný `updaters[]` s `{ fn, ctx }` kontraktem — P2+.
+const bubbleTails = [];
+
+// Mapa instance.ID → Three.js Object3D. Plníme v `createMeshFor` a čteme
+// při překladu `SPEAKER` instance na aktuální **world position** (ne jen
+// instance.X/Y/Z, protože animátory jako `orbit_stadium` mutují mesh,
+// ne model — DD-15). Tím může ocásek sledovat i pohybující se mluvčí.
+//
+// **Cleanup omezení:** mapa se plní monotonně, žádný `removeInstance`
+// mechanismus. Pro aktuální scénu (statický model, bez spawn/delete) OK.
+// Pro budoucí editor/engine s live-add/remove: přechod na `WeakMap<instance,
+// mesh>` (automatický GC) nebo explicitní `destroyInstance(id)`.
+const meshByInstance = new Map();
+
+// Scratch vektor pro cíl ocásku (výstup `resolveSpeakerTarget`).
+const _speakerTarget = new THREE.Vector3();
+
+// Převede `SPEAKER` hodnotu na 3D cíl ve world coords. Duck-typing na tvaru
+// hodnoty (DD-16, izomorfně s DD-14 pro vizuální atributy):
+//  - `{ X, Y, Z }` (UPPER case, DD-12) = instance OBJECTS-potomka.
+//    Priorita: pokud je instance v `meshByInstance`, čti **mesh world
+//    position** (dynamické — sleduje `object3d.position`, kterou mění
+//    animátory). Fallback na `instance.X/Y/Z` + offset (defensive, pro
+//    instance zaregistrované mimo standardní flow).
+//    Y offset = `bubbleInstance.SPEAKER_OFFSET_Y` (default 0.5 = vrch
+//    voxelu 1×1×1). Pro větší entity uživatel nastaví ručně.
+//  - `{ x, y, z }` (lower case) = pevný bod v prostoru. Offset ignorován.
+function resolveSpeakerTarget(speaker, offsetY, out) {
+  if (!speaker) return null;
+  if (typeof speaker.X === "number") {
+    const mesh = meshByInstance.get(speaker.ID);
+    if (mesh) {
+      out.set(mesh.position.x, mesh.position.y + offsetY, mesh.position.z);
+    } else {
+      out.set(speaker.X, speaker.Y + offsetY, speaker.Z);
+    }
+    return out;
+  }
+  if (typeof speaker.x === "number") {
+    out.set(speaker.x, speaker.y, speaker.z);
+    return out;
+  }
+  return null;
+}
+
+// Vyrobí tenký jehlan jako ocásek dialogu. Pattern shodný s `cylinderBetween`:
+// geometrie má **jednotkovou výšku**, skutečnou délku řeší `scale.y` při
+// update. 4 radiální segmenty dávají „papírový" (tetrahedrický) vzhled —
+// méně generický než hladký kónus, a pořád viditelný z jakéhokoli úhlu.
+//
+// ConeGeometry(radius, height, radialSegments): špička na +Y, základna na
+// −Y, střed geometrie v lokálním origin. Stejná konvence jako CylinderGeometry,
+// proto `updateBubbleTail` vypočítává quaternion přes `_up` = (0,1,0).
+function buildBubbleTail() {
+  const geom = new THREE.ConeGeometry(0.06, 1, 4);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+  const mesh = new THREE.Mesh(geom, mat);
+  // Ocásek je vizuální indikátor, ne fyzický objekt — stín tenkého proužku
+  // na zemi rušil by čitelnost (přesahuje přes dlaždice gridu). Flag čteme
+  // v `createMeshFor` traverzi a přeskakujeme jinak globální castShadow.
+  mesh.userData.noShadow = true;
+  return mesh;
+}
+
+// Přepočítá jeden ocásek — pozici, orientaci, délku. Volaná per-frame.
+// Dispatch:
+//  1. Pokud `SPEAKER` neumíme rozlousknout (null, nebo target neexistuje)
+//     → ocásek zneviditelníme (ne vymažeme, uživatel může SPEAKER doplnit).
+//  2. Cíl je < 0.001 j od bubliny → skryj (degenerovaný směr by dal NaN).
+//  3. Základna ocásku = střed bubliny posunutý směrem k cíli o
+//     `bubbleHalfHeight` — přichytí se na okraj bubliny (ne uprostřed).
+//     Aproximace platí přesně, když je cíl pod bublinou (default iso scéna);
+//     do stran mírně „kouká dovnitř" bubliny, ale je to přijatelné (bublina
+//     ji přesto překryje z pohledu diváka).
+//  4. Délka = vzdálenost(start, cíl) — tip přesně v cíli.
+//  5. Orientace: quaternion rotující default osu +Y jehlanu na směr
+//     (cíl − start). `cylinderBetween` styl.
+function updateBubbleTail(entry) {
+  const { sprite, tail, instance, bubbleHalfHeight } = entry;
+  const target = resolveSpeakerTarget(instance.SPEAKER, instance.SPEAKER_OFFSET_Y, _speakerTarget);
+  if (!target) { tail.visible = false; return; }
+
+  // `_dir` = cíl − střed bubliny (reuse scratch z balloon animátoru)
+  _dir.subVectors(target, sprite.position);
+  const distCenter = _dir.length();
+  if (distCenter < 0.001) { tail.visible = false; return; }
+  _dir.divideScalar(distCenter);
+
+  // Start ocásku = okraj bubliny směrem k cíli
+  _a.copy(sprite.position).addScaledVector(_dir, bubbleHalfHeight);
+  // Pokud už je cíl uvnitř bubliny, zbytečný ocásek
+  const length = distCenter - bubbleHalfHeight;
+  if (length <= 0) { tail.visible = false; return; }
+
+  tail.visible = true;
+  tail.scale.y = length;
+  tail.quaternion.setFromUnitVectors(_up, _dir);
+  // Střed mesh-u = midpoint (start, target)
+  tail.position.set(
+    (_a.x + target.x) / 2,
+    (_a.y + target.y) / 2,
+    (_a.z + target.z) / 2,
+  );
+}
+
+// Update všech ocásků — volané v render loopu vedle `updateAnimations`.
+function updateBubbleTails() {
+  for (const entry of bubbleTails) updateBubbleTail(entry);
+}
+
+// === Diskrétní reakce na TIME.tick: TIMER → ACTION dispatch === (DD-17)
+// `ANIMATE` (DD-15) řeší plynulé per-frame chování (wall-clock). Nový mechanismus
+// pokrývá **diskrétní události**: TIMER instance se probudí každých N ticků
+// a vystřelí `ACTION` — recept `{ kind, target, attr, ... }` izomorfně s ANIMATE.
+//
+// `tickHandlers[]` je seznam callbacků `(tick) => void` volaných z rozšířeného
+// `setInterval` (vedle `advanceTime`). TIMER se tam registruje v `registerBehavior`
+// jako closure, která si drží `lastFire` tick počítadlo.
+const tickHandlers = [];
+
+// Dispatch ACTION. Každý `kind` je funkce `(action) => void` s odpovědností
+// provést efekt. Konzistence s ANIMATORS / faceMaterialFor patternem.
+//
+//  - `toggle` — flip bool atributu `target[attr]`.
+//  - `set`    — `target[attr] = value`.
+// Budoucí rozšíření: `increment` (counter), `spawn` (vytvořit instanci),
+// `trigger` (řetězit ACTION), …
+const ACTIONS = {
+  toggle: (action) => {
+    action.target[action.attr] = !action.target[action.attr];
+  },
+  set: (action) => {
+    action.target[action.attr] = action.value;
+  },
+};
+
+function dispatchAction(action) {
+  if (!action) return;
+  const fn = ACTIONS[action.kind];
+  if (!fn) {
+    console.warn(`Neznámý ACTION.kind: "${action.kind}"`);
+    return;
+  }
+  fn(action);
+}
+
+// Registruje COUNTER instanci do `tickHandlers` + dynamicky přidá HUD řádek.
+// COUNTER je „nevizuální ale observable": není ve 3D scéně (nedědí z CUBES),
+// ale engine mu vytvoří řádek v `#hud` elementu vedle `TIME`. Každý tick
+// `VALUE += INCREMENT`, DOM element se aktualizuje textContentem.
+//
+// Proč dynamický DOM a ne pevný řádek v HTML? Obecný pattern — libovolný
+// počet COUNTERů registrovaných po bootu dostane svůj řádek. HTML zůstává
+// minimální (drží jen TIME jako systémový counter).
+//
+// Bezpečnost: vytváříme elementy přes `createElement` + `textContent`, ne
+// `innerHTML` — NAME může přijít od uživatele (budoucí editor), nechceme
+// XSS. Konzistentní s `escapeHtml` principem v infotipu.
+function registerCounter(instance) {
+  const hud = document.getElementById("hud");
+  const row = document.createElement("div");
+  const labelSpan = document.createElement("span");
+  labelSpan.className = "label";
+  labelSpan.textContent = `${instance.NAME}:`;
+  const valueSpan = document.createElement("span");
+  valueSpan.textContent = instance.VALUE;
+  row.appendChild(labelSpan);
+  row.appendChild(valueSpan);
+  hud.appendChild(row);
+
+  tickHandlers.push(() => {
+    instance.VALUE += instance.INCREMENT;
+    valueSpan.textContent = instance.VALUE;
+  });
+}
+
+// Registruje TIMER instanci do `tickHandlers`. Closure si pamatuje
+// `lastFire = TIME.tick` (start relativní k aktuálnímu stavu, ne absolutní 0 —
+// TIMER registrovaný v tick 42 s INTERVAL=5 firuje poprvé v tick 47, ne hned).
+function registerTimer(instance) {
+  let lastFire = TIME.tick;
+  tickHandlers.push((tick) => {
+    if (tick - lastFire >= instance.INTERVAL) {
+      lastFire = tick;
+      dispatchAction(instance.ACTION);
+    }
+  });
+}
+
+// Proběhne všechny handlery — volá se z rozšířeného `setInterval` za
+// `advanceTime()`, aby handler viděl už inkrementovaný `TIME.tick`.
+function updateTickHandlers() {
+  for (const h of tickHandlers) h(TIME.tick);
+}
+
+// Dispatch pro nevizuální instance (potomci OBJECTS, ne CUBES). Registruje
+// jejich chování v příslušném registru. Symetrie s `createMeshFor` pro
+// vizuální entity: user píše `registerBehavior(timer)` místo `scene.add(createMeshFor(timer))`.
+function registerBehavior(instance) {
+  if (instance instanceof TIMER) {
+    registerTimer(instance);
+    return;
+  }
+  if (instance instanceof COUNTER) {
+    registerCounter(instance);
+    return;
+  }
+  console.warn(`Neznámá nevizuální třída: ${instance.constructor.name}`);
+}
+
+// === Lit entities: fade sync pro BALLOON.LIT ===
+// Engine watcher — per-frame lerpuje `emissiveIntensity` vaku a `intensity`
+// PointLight-u směrem k cíli podle `instance.LIT` bool. Exponenciální
+// konvergence (`1 − exp(−k·dt)`) dává plynulý „fade in / fade out" pocit
+// lampionu — ne skok. Rate `k = 5` → ~92 % cesty za 0.5 s.
+//
+// Proč ne `ANIMATE.kind = "lit"`? LIT je **stav**, ne recept. ANIMATE jede
+// nezávisle na atributu, zatímco fade je *reakcí* na změnu bool atributu
+// (click nebo TIMER). Stejná kategorie jako bubble tail (DD-16) —
+// engine-derived behavior, ne user recipe.
+const litEntities = [];
+
+const LIT_MAX_EMISSIVE = 1.5;    // HDR — s tone mappingem vypadá jako „září"
+const LIT_MAX_LIGHT    = 10.0;   // PointLight.intensity — dramatické stíny
+const LIT_FADE_RATE    = 5.0;    // exponenciální rate; ~0.5 s do 92 %
+
+function registerLit(instance, envelope, light) {
+  // `current` drží aktuální interpolovanou intenzitu (0..1). Cíl je
+  // `instance.LIT ? 1 : 0`. `envelope`/`light` jsou Three.js refy, aby
+  // watcher nemusel procházet scénu.
+  litEntities.push({ instance, envelope, light, current: 0 });
+}
+
+function updateLit(dt) {
+  // `factor = 1 − e^(−k·dt)` = „kolik cesty mezi current a target urazit
+  // za tento frame". Pro dt = 1/60 a k = 5: factor ≈ 0.080.
+  const factor = 1 - Math.exp(-LIT_FADE_RATE * dt);
+  for (const e of litEntities) {
+    const target = e.instance.LIT ? 1 : 0;
+    e.current += (target - e.current) * factor;
+    // Apply na obě vizuální stránky: materiálová záře vaku (HDR) + fyzický
+    // světelný zdroj (stíny). Obě sledují stejnou křivku — vizuálně synced.
+    e.envelope.material.emissiveIntensity = e.current * LIT_MAX_EMISSIVE;
+    e.light.intensity                     = e.current * LIT_MAX_LIGHT;
+  }
+}
+
 // === Vizualizační dispatch: instance → Three.js Object3D ===
 // Podle konkrétní třídy instance rozhodujeme, jaký vizuál sestrojit.
 // `instanceof` testuje řetěz dědičnosti. Pořadí větví je důležité:
@@ -624,13 +869,23 @@ function createMeshFor(instance) {
   object3d.traverse((child) => {
     if (child.isMesh) {
       child.userData.instance = instance;
-      child.castShadow = true;
-      child.receiveShadow = true;
+      // `noShadow` opt-out pro meshe, které jsou vizuální indikátory, ne
+      // fyzické objekty (např. bubble tail — tenký proužek na zemi). THREE
+      // default castShadow = false, takže stačí prostě přeskočit.
+      if (!child.userData.noShadow) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
     }
   });
   // Pokud má instance vyplněný ANIMATE recept, zaregistruj ji pro per-frame
   // update v render loopu. Bez ANIMATE (null) = statický objekt → přeskoč.
   registerAnimator(object3d, instance);
+  // Mapa pro rychlý lookup mesh-u podle instance ID — používá
+  // `resolveSpeakerTarget` u dynamických ocásků. Plníme vždy, i pro instance
+  // bez SPEAKER (levné — Map put, vlastní spotřeba jen když jiný mesh míří
+  // na tuto instanci).
+  meshByInstance.set(instance.ID, object3d);
   return object3d;
 }
 
@@ -688,15 +943,12 @@ function createSpriteFor(instance) {
   let spriteHeight;
 
   if (typeof instance.ASSET === "string") {
-    // Text → canvas bubble (s komix ocáskem dolů). Plátno tvoří dvě části:
-    // bubble (horních 120/160) a tail (spodních 40/160). Chceme, aby **bubble**
-    // sama měla přibližnou výšku 0.5; celkový sprite je o ocásek vyšší —
-    // vypočteno z `bubbleFraction`.
-    const { texture, aspect, bubbleFraction } = makeBubbleTexture(instance.ASSET);
+    // Text → canvas bubble (plochý zaoblený obdélník, bez ocásku). Poměr
+    // stran ~3.4:1 podle plátna 512×150. Cílová výška bubliny ve světě = 0.5 j.
+    const { texture, aspect } = makeBubbleTexture(instance.ASSET);
     material = new THREE.SpriteMaterial({ map: texture });
-    const BUBBLE_VISUAL_HEIGHT = 0.5;
-    spriteHeight = BUBBLE_VISUAL_HEIGHT / bubbleFraction;  // ~0.667
-    spriteWidth  = spriteHeight * aspect;                   // zachová poměr plátna
+    spriteHeight = 0.5;
+    spriteWidth  = spriteHeight * aspect;
   } else {
     // Fallback: šachovnicový billboard (DD-07). Square 1×1, reuse sdílené textury.
     material = new THREE.SpriteMaterial({ map: checkerboardTexture });
@@ -709,7 +961,21 @@ function createSpriteFor(instance) {
   // kamera byla ortografická — sprite si drží apparent size podle vzdálenosti
   // v perspektivě). Z-rozměr scale je u spritu ignorován, ale musí být > 0.
   sprite.scale.set(spriteWidth, spriteHeight, 1);
-  return sprite;
+
+  // Bez vyplněného SPEAKER → bublina bez ocásku, sprite jako samostatný node.
+  if (!instance.SPEAKER) return sprite;
+
+  // S vyplněným SPEAKER → `Group` obsahující sprite (billboard) + ocásek
+  // (plnohodnotný 3D mesh). Group je v origin bez transformace, takže
+  // `sprite.position` = world pozice (čte ji `updateBubbleTail`). Sprite
+  // v Group billboarduje nezávisle na rodiči (Three.js Sprite si projekci
+  // řeší v shader-u podle kamery, ne hierarchie).
+  const group = new THREE.Group();
+  group.add(sprite);
+  const tail = buildBubbleTail();
+  group.add(tail);
+  bubbleTails.push({ sprite, tail, instance, bubbleHalfHeight: spriteHeight / 2 });
+  return group;
 }
 
 // Sestaví 3D strukturu pro COMPOSITES instanci. Vrací THREE.Group
@@ -730,6 +996,8 @@ function createCompositeFor(instance) {
     buildHouse(group, instance);
   } else if (instance instanceof CLOUD) {
     buildCloud(group);
+  } else if (instance instanceof ROCK) {
+    buildRock(group, instance);
   }
 
   // userData.instance + shadow flagy nastaví až `createMeshFor` jednotně
@@ -838,7 +1106,14 @@ function buildBalloon(group, instance) {
   // SphereGeometry(radius, widthSegments, heightSegments).
   // Widthsegments/heightsegments = kolik polí má síť — vyšší hodnoty = hladší
   // koule (víc trojúhelníků). 16×12 je kompromis mezi kvalitou a náklady.
-  const envelopeMat = new THREE.MeshStandardMaterial({ color: instance.COLOR });
+  // Vak má navíc `emissive` nastavené na vlastní COLOR (lampion po rozsvícení
+  // září vlastní barvou); `emissiveIntensity = 0` při bootu → start tmavý.
+  // Fade watcher (DD-17 — BALLOON.LIT) tuto hodnotu per-frame lerpuje.
+  const envelopeMat = new THREE.MeshStandardMaterial({
+    color: instance.COLOR,
+    emissive: new THREE.Color(instance.COLOR),
+    emissiveIntensity: 0,
+  });
   const envelope = new THREE.Mesh(
     new THREE.SphereGeometry(0.55, 16, 12),
     envelopeMat,
@@ -849,6 +1124,30 @@ function buildBalloon(group, instance) {
   const bagBaseY = 1.3;
   envelope.position.y = bagBaseY;
   group.add(envelope);
+
+  // --- PointLight uvnitř vaku (lampion) ---
+  // Barva laděná k vaku, ale mírně teplejší (žloutnutí směrem k warm white)
+  // — čistý orange by zabarvil celou scénu do ohnivé, lehce posunutý
+  // k 0xffb060 dává „lantern/ohňový" pocit bez přebarvení.
+  // Intenzita = 0 (watcher ji přepočítá podle LIT); distance 12 j pokryje
+  // scénu 10×10; decay = 2 je fyzikálně korektní kvadratický pokles.
+  // castShadow = true — **druhá shadow mapa** vedle slunce, objekty budou
+  // vrhat další stíny (záměr uživatele). Cube camera pro 6 směrů = 6×
+  // render pass; mapSize 512² drží perf v normě (1024² by byl hezčí, ale
+  // drahý pro efekt, který jen občas svítí).
+  const light = new THREE.PointLight(0xffb060, 0, 12, 2);
+  light.castShadow = true;
+  light.shadow.mapSize.set(512, 512);
+  light.shadow.camera.near = 0.1;
+  light.shadow.camera.far  = 15;
+  // Mírný bias proti shadow acne / peter-panning (stejný důvod jako u slunce).
+  light.shadow.bias       = -0.0005;
+  light.shadow.normalBias =  0.02;
+  // Light jako **child vaku** (ne sourozenec v `group`): při pohupování
+  // (`animateBalloonBob` mutuje `envelope.position.y`) se světlo pohupuje
+  // spolu s vakem → lantern efekt zůstává centrovaný. Lokální pozice (0,0,0)
+  // = střed envelope; scale.y = 1.15 na envelope nemá vliv (scale × 0 = 0).
+  envelope.add(light);
 
   // --- 4 lana ---
   // Uchycení hluboko uvnitř koše (Y = 0.1, pod vrškem) a hluboko uvnitř vaku
@@ -889,7 +1188,12 @@ function buildBalloon(group, instance) {
     ropeCorners: corners,
     ropeBasketOffset,
     ropeBagOffset,
+    light,
   };
+  // Registruj pro LIT fade watcher — watcher per-frame lerpuje emissive +
+  // light.intensity z `instance.LIT` bool. Registrace tady (ne v `createMeshFor`)
+  // je BALLOON-specific: potřebuje konkrétní refy na vak a PointLight.
+  registerLit(instance, envelope, light);
 }
 
 // Procedurální domek — kvádr stěn + jehlanová střecha. Lokální souřadnice
@@ -963,6 +1267,48 @@ function buildCloud(group) {
     );
     puff.position.set(px, py, pz);
     group.add(puff);
+  });
+}
+
+// Procedurální balvan — shluk 5 nízkopolygonových koulí v šedé paletě.
+// IcosahedronGeometry(radius, detail=0) = 20 trojúhelníků, default hladké
+// normály. `flatShading: true` v materiálu přepne na **per-face** normály
+// → ostré facety, „tesaný kámen" vzhled (na rozdíl od hladkého kamínku).
+// Materiál je per-kus (3 barvy z palety odvozené od `instance.COLOR`), aby
+// balvany působily jako geologicky sourodé, ale ne identicky naklonované.
+//
+// KISS: pevná geometrie (žádný RNG), seed-free — stejný pattern jako CLOUD.
+// Rotace jsou pevné funkce indexu (determinický pseudo-random vzhled).
+function buildRock(group, instance) {
+  // Paleta tří odstínů z `instance.COLOR`: základní, tmavší (×0.75), světlejší
+  // (×1.2). Pro každý odstín **jediný sdílený materiál** (3 materiály pro 5
+  // mesh-ů, ne 5 unikátních) — GPU state batching friendlier při vyšším počtu
+  // kamenů ve scéně. Shared materials jsou bezpečné, dokud je nemutujeme
+  // per-instance; balvan je statický (žádný ANIMATE), takže invariant drží.
+  const base = new THREE.Color(instance.COLOR);
+  const materials = [
+    new THREE.MeshStandardMaterial({ color: base.clone(),                         flatShading: true }),
+    new THREE.MeshStandardMaterial({ color: base.clone().multiplyScalar(0.75),    flatShading: true }),
+    new THREE.MeshStandardMaterial({ color: base.clone().multiplyScalar(1.2),     flatShading: true }),
+  ];
+  // [x, y, z, radius, materialIndex] — 1 centrální + 2 velké okrajové + 2 malé
+  // odštěpky. Y hodnoty záporné → kameny „zapuštěné" do země (působí jako
+  // vyčnívající, ne levitující). Scéna Y=-0.5 je země, centrální balvan
+  // s r=0.45 sahá od −0.6 do +0.3 (přesah pod zemí = 0.1).
+  const puffs = [
+    [ 0.0,  -0.15,  0.0,  0.45, 0],  // centrální
+    [ 0.4,  -0.25, -0.1,  0.32, 1],  // vpravo vzadu (tmavší)
+    [-0.35, -0.30,  0.1,  0.30, 2],  // vlevo vpředu (světlejší)
+    [ 0.1,  -0.35,  0.4,  0.18, 1],  // malý odštěpek vpředu
+    [-0.1,   0.15, -0.25, 0.22, 0],  // nahoře, jako „kloboučka"
+  ];
+  puffs.forEach(([px, py, pz, r, mi], i) => {
+    const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 0), materials[mi]);
+    rock.position.set(px, py, pz);
+    // Pevné (ne náhodné) natočení závislé na indexu — deterministicky rozbije
+    // vizuální symetrii icosahedronů (které by bez rotace vypadaly stejně).
+    rock.rotation.set(0.3 * i, 0.7 * i + 0.2, 0.5 * i - 0.3);
+    group.add(rock);
   });
 }
 
@@ -1133,20 +1479,136 @@ cloud1.ANIMATE = {
 };
 scene.add(createMeshFor(cloud1));
 
-// Dialog bubble nad stromem — SPRITES (2D billboard, DD-13).
-// Pozice (3, 2.2, 0): X/Z = nad stromem (který je na (3, 0, 0)). Y = 2.2
-// zvoleno tak, aby **špička ocásku** dosáhla cca Y ≈ 1.89 (tip je 0.308
-// pod středem spritu pro BUBBLE_H=120, H=160) — těsně nad špičkou koruny
-// (poslední kužel končí okolo Y ≈ 1.85). Bubble je float pozice, bez
-// snap-to-grid (DD-12 — SPRITES jsou sourozenci COMPOSITES, oba spojité).
+// Balvan vlevo vzadu — ROCK (COMPOSITES). Pozice (-3, 0, -2): mimo dráhu
+// tbox_0002 (ta obíhá Z ∈ [1.2, 2.8]) a za mateřskou CUBES. Barva 0x9b8871
+// = teplá šedohnědá (pískovec) — světlejší než domek, tmavší než mrak,
+// přirozeně zapadá do palety. Statický (bez ANIMATE) — balvany nemají
+// ambice se hýbat. Uzavírá pětici COMPOSITES (TREE / BALLOON / HOUSE /
+// CLOUD / ROCK): organický, mechanický, stavební, atmosférický, geologický.
+const rock1 = new ROCK(
+  "rock_0001",
+  "Balvan",
+  -3, 0, -2,
+  0x9b8871,
+  "COMPOSITES — shluk 5 nízkopolygonových koulí (flat-shaded icosahedronů).",
+);
+scene.add(createMeshFor(rock1));
+
+// TIMER — první nevizuální potomek OBJECTS ve scéně (DD-17). Každých 5 ticků
+// (= 5 s) toggle-uje `balloon1.LIT`. Kombinuje se s click-to-toggle handlerem
+// — oba mechanismy mění stejný stav, fade watcher propaguje do emissive +
+// PointLight. Po zapnutí „lantern mode": vak září, objekty ve scéně dostanou
+// druhý zdroj stínů (vedle slunce) → dramatická večerní atmosféra.
+const timer1 = new TIMER(
+  "timer_0001",
+  "Timer lampionu",
+  5,
+  "Nevizuální OBJECTS — každých 5 ticků toggle balloon.LIT (DD-17).",
+);
+timer1.ACTION = { kind: "toggle", target: balloon1, attr: "LIT" };
+registerBehavior(timer1);
+
+// COUNTER — druhý nevizuální potomek OBJECTS (sez. 9). Není ve 3D scéně,
+// ale engine mu přidá řádek do HUD vedle `TIME`. Každý tick `VALUE +=
+// INCREMENT` (= 1 / s). Demonstruje, že nevizuální entita může být
+// plně observable jinou cestou než 3D renderováním (HUD DOM).
+//
+// COUNTER.VALUE je obyčejné datové pole — TIMER.ACTION { kind: "set",
+// target: counter, attr: "VALUE", value: 0 } by ho mohl kdykoli resetovat.
+const counter1 = new COUNTER(
+  "counter_0001",
+  "Skóre",
+  0,   // start hodnota
+  1,   // increment per tick
+  "Nevizuální OBJECTS — skóre v HUD, +1 každý tick.",
+);
+registerBehavior(counter1);
+
+// Dialog bubble mluvícího stromu — SPRITES (2D billboard, DD-13) + dynamický
+// 3D ocásek (M8+). Pozice (4.6, 2.7, 1.2) je **mimo osu stromu** (4.6 vs.
+// tree.X=3, Z=1.2 vs. tree.Z=0) — demonstruje, že ocásek míří diagonálně
+// na mluvčího, ne jen kolmo dolů. Statický ocásek v tomto případě (strom
+// mění jen pozice kuželů v `userData.parts`, ne kořenovou `object3d.position`,
+// proto `resolveSpeakerTarget` vrací stabilní bod).
 const dialog1 = new SPRITES(
   "dialog_0001",
   "Bublina stromu",
-  3, 2.2, 0,
+  4.6, 2.7, 1.2,
   "Ahoj! Jsem mluvící strom.",
-  "SPRITES — dialogová bublina nad stromem (canvas-generovaný text + ocásek).",
+  "SPRITES — bublina mimo osu stromu, dynamický 3D ocásek míří na mluvčího.",
 );
+dialog1.SPEAKER = tree1;
+// Strom má vrch koruny v ~Y = 1.85. Přepíšeme default 0.5 (pro voxel) na 1.8,
+// aby tail mířil do horní třetiny koruny, ne do kmene.
+dialog1.SPEAKER_OFFSET_Y = 1.8;
 scene.add(createMeshFor(dialog1));
+
+// Druhá bublina — demo dynamického trackingu pohyblivého cíle. SPEAKER =
+// `tbox2` (obíhá po stadium-dráze kolem své základny (-3, 0, 2)). Protože
+// `animateOrbitStadium` mutuje `object3d.position` (ne `instance.X/Y/Z`),
+// `resolveSpeakerTarget` čte aktuální world position přes `meshByInstance`
+// → ocásek se po scéně „žene" za krabicí. Bublina je pevně nad středem
+// orbity ve výšce ~3 j (dostatečně vysoko, aby neprotínala dráhu krabice
+// L=2, R=0.8 v Y=0).
+const dialog2 = new SPRITES(
+  "dialog_0002",
+  "Bublina krabice",
+  -3, 3.2, 2,
+  "Hej! Koukni, jak obíhám!",
+  "SPRITES — dynamický ocásek sleduje orbitující krabici tbox_0002.",
+);
+dialog2.SPEAKER = tbox2;
+// Krabice je voxel 1×1×1 → default SPEAKER_OFFSET_Y (0.5) míří přesně na vrch.
+scene.add(createMeshFor(dialog2));
+
+// === Edge highlight při hover (editor-like feedback) ===
+// Při najetí kurzoru na CUBES-potomka (kromě SPRITES) vykreslíme žluté
+// hrany meshe — jasný signál „toto je vybraná entita". Použití v budoucím
+// scéně-editoru (selekce), zatím UX zpětná vazba.
+//
+// Pattern: lazy build při prvním hoveru, cache v `root.userData.edgeOverlays`.
+// Per-mesh `THREE.EdgesGeometry(geom, 20)` → hrany s dihedral úhlem > 20°
+// (BoxGeometry = 12 hran čistě; SphereGeometry = žádné, plynulé; IcosahedronGeometry
+// s flatShading = všechny facet hrany). `LineSegments` s `LineBasicMaterial`
+// (WebGL limit — tenká 1px linie, na většině driverů se neignoruje linewidth).
+//
+// `depthTest = false` + `renderOrder = 999` → X-ray efekt: hrany vidíš skrz
+// mesh (všech 12 hran voxelu současně, editor-friendly). Alternativa s
+// depthTest=true by skrývala zadní hrany za přední plochou.
+//
+// `raycast = () => {}` no-op → hrany nejsou raycastovatelné → hover detekci
+// (raycaster nad `firstHit`) neruší. Jinak by hover „chytal" vlastní overlay.
+//
+// SPRITES skip: 2D billboardy nemají smysluplné 3D hrany. SPRITES se SPEAKER
+// (Group s tail mesh) by jinak dostali hranatý ocásek — nežádoucí.
+
+function setEdgeHighlight(instance, on) {
+  if (!instance) return;
+  if (instance instanceof SPRITES) return;
+  const root = meshByInstance.get(instance.ID);
+  if (!root) return;
+
+  if (!root.userData.edgeOverlays) {
+    const overlays = [];
+    root.traverse((child) => {
+      if (!child.isMesh) return;
+      const edges = new THREE.EdgesGeometry(child.geometry, 20);
+      const material = new THREE.LineBasicMaterial({
+        color: 0xffff00,           // editor-yellow (konvence selekce)
+        depthTest: false,           // X-ray: vidět skrz mesh
+        transparent: true,           // nutné pro depthTest=false správný blend
+      });
+      const lines = new THREE.LineSegments(edges, material);
+      lines.renderOrder = 999;                    // draw last → přes vše
+      lines.raycast = () => {};                   // ignore v raycast
+      lines.visible = false;                      // default off; `on=true` zapne
+      child.add(lines);                           // child mesh-u → dědí transform
+      overlays.push(lines);
+    });
+    root.userData.edgeOverlays = overlays;
+  }
+  for (const ov of root.userData.edgeOverlays) ov.visible = on;
+}
 
 // === Infotip (hover panel s atributy instance) ===
 // Viz DD-08. Generický přístup: iteruje vlastní vlastnosti instance a
@@ -1156,6 +1618,7 @@ const raycaster = new THREE.Raycaster();
 // pointer = normalized device coordinates: X v [-1, +1], Y v [-1, +1]
 const pointer = new THREE.Vector2();
 let lastHoveredMesh = null;
+let lastHoveredInstance = null;   // pro edge highlight — pamatovat, kdo byl highlighted
 
 // Escape HTML kvůli bezpečnosti — NAME/DESCRIPTION může v budoucnu přijít
 // od uživatele; nechceme XSS, když se tam dostane `<script>`.
@@ -1230,15 +1693,51 @@ canvas.addEventListener("pointermove", (event) => {
   const firstHit = hits.find((h) => h.object.userData?.instance);
 
   if (firstHit) {
-    showTooltip(event, firstHit.object.userData.instance);
+    const instance = firstHit.object.userData.instance;
+    showTooltip(event, instance);
     lastHoveredMesh = firstHit.object;
+    // Edge highlight: pokud jsme přešli na jinou instanci, vypni starý
+    // overlay a zapni nový. Same-instance hover → nic (overlay už svítí).
+    if (instance !== lastHoveredInstance) {
+      setEdgeHighlight(lastHoveredInstance, false);
+      setEdgeHighlight(instance, true);
+      lastHoveredInstance = instance;
+    }
   } else {
     hideTooltip();
+    setEdgeHighlight(lastHoveredInstance, false);
+    lastHoveredInstance = null;
     lastHoveredMesh = null;
   }
 });
-// Skryj tooltip, když kurzor opustí canvas úplně
-canvas.addEventListener("pointerleave", hideTooltip);
+// Skryj tooltip + edge highlight, když kurzor opustí canvas úplně
+canvas.addEventListener("pointerleave", () => {
+  hideTooltip();
+  setEdgeHighlight(lastHoveredInstance, false);
+  lastHoveredInstance = null;
+});
+
+// === Click handler: toggle interakce s entitami ===
+// Událost `click` (ne `pointerdown`) se spouští jen při down+up bez drag —
+// elegantně odlišuje „kliknutí na entitu" od „tah OrbitControls kamery".
+// Reuse stávajícího raycasteru + pointer vektoru (alokace mimo hot path).
+//
+// Dispatch podle třídy: zatím jediný handled case = klik na BALLOON → toggle
+// `instance.LIT`. Fade watcher (DD-17) stav propaguje do emissive + PointLight.
+// Pokud přibude víc interaktivních tříd, refaktor na `INTERACTIONS = { ClassName: fn }`
+// tabulku — izomorfně s `ACTIONS` / `ANIMATORS` patternem.
+canvas.addEventListener("click", (event) => {
+  pointer.x =  (event.clientX / window.innerWidth)  * 2 - 1;
+  pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(scene.children, true);
+  const firstHit = hits.find((h) => h.object.userData?.instance);
+  if (!firstHit) return;
+  const instance = firstHit.object.userData.instance;
+  if (instance instanceof BALLOON) {
+    instance.LIT = !instance.LIT;
+  }
+});
 
 // === Responsivita ===
 // Když uživatel změní velikost okna, upravíme aspect ratio kamery
@@ -1252,12 +1751,20 @@ window.addEventListener("resize", () => {
 // === TIME tikání ===
 // setInterval volá callback každých N milisekund. 1000 ms = 1 s = 1 tick.
 // Render loop (animate) běží nezávisle na ~60 FPS.
-setInterval(advanceTime, 1000);
+// Rozšířeno (DD-17): po inkrementu TIME.tick fire-uje všechny `tickHandlers`
+// — diskrétní chování (TIMER → ACTION) se probudí na nové hodnotě tiku.
+// Pořadí `advanceTime` → `updateTickHandlers` garantuje, že handler čte
+// aktualizovaný tick (ne starý).
+setInterval(() => {
+  advanceTime();
+  updateTickHandlers();
+}, 1000);
 
 // === Render loop ===
 // requestAnimationFrame = "zavolej mě, až bude vhodný čas překreslit".
 // Prohlížeč to obvykle dělá 60× za vteřinu, a synchronizuje to s refresh
 // rate monitoru. Uvnitř aktualizujeme controls a překreslíme scénu.
+let _lastFrameTime = performance.now() / 1000;
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
@@ -1265,7 +1772,17 @@ function animate() {
   // `updateAnimations`. `performance.now()` vrací ms od spuštění stránky
   // (high-resolution timer). TIME.tick by dával frame/sekundový counter —
   // ten je lepší pro diskrétní události, ne pro plynulou animaci.
-  updateAnimations(performance.now() / 1000);
+  const now = performance.now() / 1000;
+  const dt  = now - _lastFrameTime;
+  _lastFrameTime = now;
+  updateAnimations(now);
+  // Ocásky dialogových bublin: přepočítáme až **po** animátorech, aby jsme
+  // četli aktuální `object3d.position` případných pohybujících se mluvčí
+  // (tbox_0002 orbituje, …).
+  updateBubbleTails();
+  // Fade watcher pro BALLOON.LIT — exponenciální lerp `emissive` a
+  // `PointLight.intensity` podle `instance.LIT` stavu (DD-17).
+  updateLit(dt);
   renderer.render(scene, camera);
 }
 animate();

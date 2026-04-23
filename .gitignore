@@ -7,6 +7,9 @@ Thumbs.db
 .idea/
 *.swp
 
+# Claude Code local config (per-user, not shared)
+.claude/
+
 # Logs / temp
 *.log
 .tmp/

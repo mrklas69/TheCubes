@@ -4,7 +4,7 @@
 TheCubes je meta-sandbox s živým OOP modelem. Na začátku existuje jediná instance `OBJECTS`, rozšiřováním modelu se scéna zaplňuje. Cíl: demonstrovat současné mládeži, že tvorba je zábavnější než konzumace.
 
 ## Status
-Milníky **M1–M7 hotové**. Scéna obsahuje: středovou `CUBES` (šachovnice), 8× `CCUBES` (duhová růžice), `TREE` (kývá se ve větru), `BALLOON` (pohupuje se, koš pruží, lana se přepočítávají), `SPRITES` dialog bubble nad stromem, dvě `TCUBES` krabice, stínovací systém. Chování v čase: atribut `ANIMATE = { kind, ...params }` na `OBJECTS` (DD-15), dispatch v enginu. `TIME.tick` zůstává pro budoucí diskrétní události (pravidla/timery).
+Milníky **M1–M7 hotové**, **M8+ průběžně**. Scéna obsahuje: středovou `CUBES` (šachovnice), 8× `CCUBES` (duhová růžice), `TREE` (kývá se ve větru), `BALLOON` (pohupuje se + **lantern mode** s PointLight/fade), `HOUSE`, `CLOUD` (drift), `ROCK` (statický balvan), dvě `TCUBES` krabice (jedna rotuje, druhá obíhá stadium-dráhu), dvě `SPRITES` bubliny s **dynamickým 3D ocáskem** (SPEAKER tracking), stínovací systém. Plynulé chování: atribut `ANIMATE` (DD-15). Diskrétní: `TIMER` (DD-17) → `ACTION = { kind, target, attr, ... }` a `COUNTER` (VALUE + INCREMENT v HUD) — oba jsou nevizuální potomci OBJECTS, registrovaní přes `registerBehavior(instance)`. Engine-derived watchery (bubble tail DD-16, LIT fade DD-17) reagují per-frame na stav v modelu. Interakce: click na vak balónu toggle `LIT` — konverguje s TIMER na stejný stav.
 
 ## Dokumenty
 - `README.md` — overview

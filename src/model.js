@@ -139,6 +139,23 @@ export class SPRITES extends CUBES {
     // Konkrétní interpretaci (string → text bubble, URL → obrázek, …)
     // řeší engine v `createSpriteFor`. Model zůstává datový (DD-11).
     this.ASSET = asset;
+    // SPEAKER = volitelný cíl dynamického ocásku bubliny. `null` (default)
+    // → bublina bez ocásku (plochý obdélník). Jinak engine vygeneruje 3D
+    // ocásek (tenký jehlan) mířící z bubliny na cíl. Dva formáty (DD-16):
+    //  - instance OBJECTS-potomka (má `.X`, `.Y`, `.Z`) → cíl = pozice
+    //    instance + `SPEAKER_OFFSET_Y`. Dynamické — když se instance pohne
+    //    (např. orbit_stadium mutuje `object3d.position`), ocásek sleduje
+    //    aktuální world pozici přes `meshByInstance` lookup.
+    //  - `{ x, y, z }` literál → pevný bod v prostoru (offset se ignoruje).
+    // Vyplňuje se po konstrukci: `sprite.SPEAKER = tree1;` — stejný pattern
+    // jako `ANIMATE`. Model zůstává datový (DD-11), dispatch v enginu.
+    this.SPEAKER = null;
+    // SPEAKER_OFFSET_Y = vertikální posun nad pozici `SPEAKER` (instance varianta).
+    // Default `0.5` cílí na vrch standardního voxelu 1×1×1 centrovaného v Y=0.
+    // Pro větší COMPOSITES (TREE, BALLOON, HOUSE) uživatel nastaví ručně —
+    // např. `dialog.SPEAKER_OFFSET_Y = 1.8` cílí do koruny stromu. Pro
+    // literální `{x,y,z}` SPEAKER nemá význam (cíl je přesně zadaný bod).
+    this.SPEAKER_OFFSET_Y = 0.5;
   }
 }
 
@@ -192,6 +209,28 @@ export class HOUSE extends COMPOSITES {
 }
 
 /**
+ * ROCK = konkrétní COMPOSITES reprezentující kámen / balvan.
+ *
+ * Vizualizace: shluk 3–4 nízkopolygonových koulí (IcosahedronGeometry,
+ * detail = 0 = 20 trojúhelníků) v šedé paletě. Flat shading dává ostré
+ * faset — působí jako tesaný balvan, ne hladký kamínek. Atribut `COLOR`
+ * (JS number 0xRRGGBB, default šedá v enginu) umožní variaci „bazalt /
+ * žula / pískovec" bez nové třídy.
+ *
+ * Uzavírá základní COMPOSITES čtveřici TREE + BALLOON + HOUSE + CLOUD + ROCK
+ * (organický / mechanický / stavební / atmosférický / geologický).
+ *
+ * Bez `ANIMATE` je kámen statický — přirozený default pro dekorační prvek.
+ */
+export class ROCK extends COMPOSITES {
+  constructor(id, name, x, y, z, color = 0x808080, description = "") {
+    super(id, name, x, y, z, description);
+    // Barva kamene jako JS number 0xRRGGBB. Default 0x808080 = neutrální šedá.
+    this.COLOR = color;
+  }
+}
+
+/**
  * CLOUD = konkrétní COMPOSITES reprezentující mrak.
  *
  * Vizualizace: shluk překrývajících se koulí (SphereGeometry) s bílou barvou.
@@ -225,5 +264,72 @@ export class BALLOON extends COMPOSITES {
     super(id, name, x, y, z, description);
     // Barva vaku jako JS number 0xRRGGBB. Lana a koš nejsou atribut — fixní.
     this.COLOR = color;
+    // LIT = boolean „zapnutý lampión". `false` (default) → vak tmavý, bez
+    // zdroje světla. `true` → engine rozjede emissive záři vaku a aktivuje
+    // přidružený `PointLight` (odkaz drží `group.userData.parts.light`).
+    // Přechod je per-frame exponenciálně plynulý (fade ~0.5 s), ne instantní.
+    // Toggle přes `click` na mesh balónu nebo přes TIMER.ACTION. Viz DD-17.
+    this.LIT = false;
+  }
+}
+
+/**
+ * TIMER = nevizuální potomek OBJECTS — spouští `ACTION` v diskrétních
+ * intervalech měřených v `TIME.tick` (sekundy, DD-04). První skutečná
+ * reakce na TIME.tick v projektu (do sez. 8 tiky jen tiktaly v HUDu).
+ *
+ * Atributy:
+ *  - `INTERVAL` — počet ticků mezi vystřelením ACTION. Např. 5 = každých 5 s.
+ *  - `ACTION` — recept `{ kind, ...params }` stejně strukturovaný jako
+ *    `ANIMATE` (DD-15); engine dispatchuje přes `ACTIONS[kind]`. Default
+ *    `null` (TIMER bez ACTION je legitimní pro budoucí plánovač, teď no-op).
+ *    Aktuální `kind`y (DD-17): `toggle` (flip bool atributu cíle), `set`
+ *    (nastaví atribut cíle na hodnotu).
+ *
+ * Izomorfismus s ANIMATE: obě třídy drží *recept*, ne chování. Rozdíl:
+ * `ANIMATE` žije na libovolné instanci a běží per-frame (plynule), TIMER
+ * žije jako samostatná entita a firuje diskrétně per-tick. Oba dispatchují
+ * engine-side z `kind` → funkce mapy. Model nezná dispatch implementaci (DD-11).
+ *
+ * Nevizuální = infotip a 3D scéna TIMER neukazují; observable je pouze
+ * skrze efekt jeho ACTION (např. balón se rozsvítí). Pozdější milník:
+ * HUD list aktivních timerů, nebo vlastní SPRITES reprezentace.
+ */
+/**
+ * COUNTER = nevizuální potomek OBJECTS — stav (integer VALUE) mutovaný
+ * automaticky každý `TIME.tick`. Druhý nevizuální potomek po TIMER —
+ * demonstruje, že „nevizuální" nemusí znamenat „bez observability":
+ * COUNTER je viditelný v **HUD** (ne v 3D scéně), engine při registraci
+ * dynamicky přidá řádek do `#hud` elementu.
+ *
+ * Atributy:
+ *  - `VALUE` — aktuální hodnota (integer, libovolná; default 0).
+ *  - `INCREMENT` — o kolik se `VALUE` změní každý tick. Může být záporné
+ *    (countdown). Default 1.
+ *
+ * Use case: skóre, odpočet, uplynulé ticky od události, frame counter.
+ *
+ * Kombinace s TIMER: TIMER.ACTION { kind: "set", target: counter,
+ * attr: "VALUE", value: 0 } ho může kdykoli resetovat. Obecně je
+ * COUNTER.VALUE **datové pole** jako kterékoli jiné — TIMER.ACTION /
+ * ruční mutace / click handler do něj smí sahat paralelně (stejná
+ * filozofie jako BALLOON.LIT v DD-17).
+ */
+export class COUNTER extends OBJECTS {
+  constructor(id, name, startValue = 0, increment = 1, description = "") {
+    super(id, name, description);
+    this.VALUE = startValue;
+    this.INCREMENT = increment;
+  }
+}
+
+export class TIMER extends OBJECTS {
+  constructor(id, name, interval, description = "") {
+    super(id, name, description);
+    // INTERVAL = počet ticků mezi vystřelením ACTION. Musí být ≥ 1.
+    this.INTERVAL = interval;
+    // ACTION = recept `{ kind, target, attr, value? }`. Vyplnit post-hoc:
+    // `timer.ACTION = { kind: "toggle", target: balloon, attr: "LIT" };`
+    this.ACTION = null;
   }
 }
