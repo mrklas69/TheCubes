@@ -8,13 +8,15 @@ Projektově specifická makra. Globální makra (`@THINK`, `@AUDIT:CODE`, `@AUDI
 
 Zahajujeme nové sezení na projektu TheCubes.
 
-**(1.) Git sync** *(až bude git repo — prozatím skip):*
+**(1.) Git sync** *(povinný první krok — repo existuje od sez. 2):*
 
 ```bash
 git add . && git stash save "Auto-stash before pull" && git pull && (git stash pop || true)
 ```
 
-Konflikty: vyřeš, pak `git stash drop`.
+Pokud pracovní strom je čistý, stash je no-op a `git pull --ff-only` stačí. Konflikty: vyřeš, pak `git stash drop`.
+
+**Proč je to povinné:** paměť i lokální diář mohou být několik commitů pozadu za `origin/main` (práce z jiného stroje / session). Před plánováním dalšího kroku je potřeba čerstvý stav, jinak hrozí, že navrhneme něco, co je už hotové.
 
 **(2.) Kontext** — nastuduj:
 - `docs/TODO.md` — co je rozděláno a čeká

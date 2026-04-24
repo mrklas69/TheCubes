@@ -516,16 +516,28 @@ function animateDrift(object3d, anim, t) {
 // datový, konkrétní radius žije v enginu.
 const collidables = [];
 
+// Kolizní radii (DD-19): kruhy v XZ rovině. CHARACTER malý (úzký siluet),
+// TREE střední (kmen + koruna), HOUSE velký (domek je dominantní překážka),
+// voxel standard (jedna buňka gridu). BALLOON/CLOUD/SPRITES null = bez kolize
+// (floating nebo 2D billboard, postavy pod nimi můžou projít).
+const COLLISION_RADII = {
+  CHARACTER: 0.2,
+  TREE:      0.35,
+  HOUSE:     0.85,
+  ROCK:      0.5,
+  VOXEL:     0.5,  // CCUBES / TCUBES / holá CUBES
+};
+
 function collisionRadiusFor(instance) {
-  if (instance instanceof CHARACTER) return 0.2;
-  if (instance instanceof TREE)      return 0.35;
-  if (instance instanceof HOUSE)     return 0.85;
-  if (instance instanceof ROCK)      return 0.5;
-  if (instance instanceof CCUBES || instance instanceof TCUBES) return 0.5;
+  if (instance instanceof CHARACTER) return COLLISION_RADII.CHARACTER;
+  if (instance instanceof TREE)      return COLLISION_RADII.TREE;
+  if (instance instanceof HOUSE)     return COLLISION_RADII.HOUSE;
+  if (instance instanceof ROCK)      return COLLISION_RADII.ROCK;
+  if (instance instanceof CCUBES || instance instanceof TCUBES) return COLLISION_RADII.VOXEL;
   if (instance instanceof BALLOON)   return null;  // visí vysoko
   if (instance instanceof CLOUD)     return null;  // obloha
   if (instance instanceof SPRITES)   return null;  // 2D billboard
-  if (instance instanceof CUBES)     return 0.5;   // plain voxel (centrální)
+  if (instance instanceof CUBES)     return COLLISION_RADII.VOXEL;
   return null;                                     // TIMER/COUNTER (nevizuální)
 }
 
@@ -536,7 +548,17 @@ function registerCollisionFor(instance, object3d) {
 }
 
 // Zjistí, zda by pozice (nx, nz) pro `moving` (jeho instance) kolidovala
-// s jiným colliderem. Vlastní instanci z iterace vynechává.
+// s jiným colliderem. Vlastní instanci z iterace vynechává. Čte **live**
+// `c.object3d.position` — pro pohyblivé entity (postavy, orbit_stadium).
+//
+// Mutual collision & pořadí animátorů: `updateAnimations` prochází
+// `animators[]` v pořadí registrace (= `createMeshFor` volání ~ pořadí
+// `new X()` v `main.js`). Když dvě postavy sráží, ta **dřív registrovaná**
+// vidí druhou ještě na staré pozici a posune se; druhá pak vidí první
+// na nové pozici a zastaví. Je to tedy first-come-first-served, ne fair.
+// V open scéně 3 postav se to neprojeví. Pokud se ukáže zasekávání (editor
+// Fáze 2, husté scény), řešit jako two-pass: (1) kandidátní pozice, (2)
+// commit po global resolve. Dokumentováno pro budoucí revizi.
 function isBlocked(moving, nx, nz) {
   const movingInstance = moving.userData.instance;
   const movingR = collisionRadiusFor(movingInstance) ?? 0;
@@ -585,17 +607,32 @@ function applySitPose(p) {
 // Leh na zádech — naklon celého groupu −90° kolem X (local +Y hlava → world
 // −Z). Posun skupiny dolů tak, aby záda (local −Z → world −Y po rotaci,
 // ≈0.19 pod group origin) ležela na zemi y=−0.5.
-function applyLiePose(group) {
+// Lež: tělo otočené na záda (group.rotation.x = −π/2) a posunuté tak, aby
+// ležící silueta spočinula na zemi. Narozdíl od ostatních `apply*Pose(p, ...)`
+// mění tato póza **world transform** celé skupiny, ne klouby přes `p` — lež
+// je ze své podstaty whole-body pose, klouby zůstávají v reset stavu (volající
+// by měl nejprve volat `resetCharBase(group)`).
+// `groundY` = offset, který posadí ležící tělo na plochu Y=0. Default −0.31
+// platí pro ground plane Y=0 (stejná konvence jako u kostek). Pro stupňovitý
+// terén (budoucí rampy) se dopočítá z konkrétní výšky povrchu.
+const LIE_GROUND_Y_DEFAULT = -0.31;
+function applyLiePose(group, groundY = LIE_GROUND_Y_DEFAULT) {
   group.rotation.x = -Math.PI / 2;
-  group.position.y = -0.31;
+  group.position.y = groundY;
 }
 
-// Work pose — obě ruce švihají dolů/nahoru (sekera, krumpáč). Rozsah upper
-// arm rotace.x: [−π, −π/2] = plný vzpřímený švih přes hlavu dopředu dolů.
-// Stejná animace pro „dolování kamene" i „těžbu stromu" — rozdíl jen v cíli.
+// Work pose parametry — střed a amplituda ramene kolem něj. Upper arm swinguje
+// v rozsahu [centerAngle − amplitude, centerAngle + amplitude] = [−π, −π/2] =
+// plný vzpřímený švih přes hlavu dopředu dolů. Stejná animace pro „dolování
+// kamene" i „těžbu stromu" — rozdíl jen v cíli (subject).
+const WORK_POSE = {
+  period:      0.6,                // s — jeden cyklus švihu
+  centerAngle: -3 * Math.PI / 4,   // −135° = střední pozice (diagonála nahoru-zpět)
+  amplitude:   Math.PI / 4,        // ±45° okolo středu
+};
 function applyWorkPose(p, t) {
-  const swing = Math.sin(oscPhase(t, 0.6));
-  const angle = -3 * Math.PI / 4 + (Math.PI / 4) * swing;
+  const swing = Math.sin(oscPhase(t, WORK_POSE.period));
+  const angle = WORK_POSE.centerAngle + WORK_POSE.amplitude * swing;
   p.leftArm.rotation.x  = angle;
   p.rightArm.rotation.x = angle;
   p.leftForearm.rotation.x  = 0;
@@ -701,33 +738,54 @@ function animateSit(group) {
 // přetrvávají — postava se nerestartuje na výchozí místo každou změnou stavu.
 const WANDER_STATES = ["walk", "stand", "sit", "lie", "run", "work"];
 
+// Wander timery (vteřiny) pro jednotlivé substavy:
+// - stand/sit/lie: náhodný interval [min, min+range] — postava chvíli „trvá".
+// - walk/run/work: `fallback` = pojistka proti zaseknutí (cíl nedosažitelný).
+//   V praxi stav obvykle skončí dřív, když `moveTowards` vrátí true (cíl
+//   dosažen nebo kolize).
+// - work.performMin/performRange: po dosažení subjektu trvá work pose 3–5 s.
+const WANDER_TIMERS = {
+  stand: { min: 2, range: 3 },   // 2–5 s
+  sit:   { min: 3, range: 3 },   // 3–6 s
+  lie:   { min: 4, range: 4 },   // 4–8 s
+  walk:  { fallback: 15 },
+  run:   { fallback: 15 },
+  work:  { fallback: 20, performMin: 3, performRange: 2 },
+};
+
+// Walk / run parametry — sdílené mezi samostatným `animateWalk` (budoucí) a
+// wander walk/run/work-approach substavy. Amplituda a perioda jsou v rad/s;
+// `speed` je lineární rychlost posunu v j/s.
+const WALK_PARAMS = { speed: 1.0, amp: Math.PI / 6, period: 1.0 };
+const RUN_PARAMS  = { speed: 2.2, amp: Math.PI / 4, period: 0.5 };
+
 function enterWanderState(group, st, anim, name) {
   resetCharBase(group);
   st.current = name;
   st.substate = null;
   const bounds = anim.bounds ?? 3;
   if (name === "stand") {
-    st.timer = 2 + Math.random() * 3;
+    st.timer = WANDER_TIMERS.stand.min + Math.random() * WANDER_TIMERS.stand.range;
   } else if (name === "sit") {
     applySitPose(group.userData.parts);
-    st.timer = 3 + Math.random() * 3;
+    st.timer = WANDER_TIMERS.sit.min + Math.random() * WANDER_TIMERS.sit.range;
   } else if (name === "lie") {
     applyLiePose(group);
-    st.timer = 4 + Math.random() * 4;
+    st.timer = WANDER_TIMERS.lie.min + Math.random() * WANDER_TIMERS.lie.range;
   } else if (name === "walk" || name === "run") {
     st.targetX = (Math.random() - 0.5) * 2 * bounds;
     st.targetZ = (Math.random() - 0.5) * 2 * bounds;
-    st.timer = 15; // pojistka proti zaseknutí (cíl nedosažitelný)
+    st.timer = WANDER_TIMERS[name].fallback;
   } else if (name === "work") {
     const subjects = anim.subjects ?? [];
     if (subjects.length === 0) {
       st.current = "stand";
-      st.timer = 2;
+      st.timer = WANDER_TIMERS.stand.min;
       return;
     }
     st.subject = subjects[Math.floor(Math.random() * subjects.length)];
     st.substate = "approach";
-    st.timer = 20;
+    st.timer = WANDER_TIMERS.work.fallback;
   }
 }
 
@@ -752,10 +810,10 @@ function animateWander(group, anim, t) {
   st.timer -= dt;
 
   if (st.current === "walk" || st.current === "run") {
-    const isRun = st.current === "run";
-    const speed  = isRun ? 2.2 : 1.0;
-    const amp    = isRun ? Math.PI / 4 : Math.PI / 6;
-    const period = isRun ? 0.5 : 1.0;
+    // Destrukturalizace = JS konstrukce, která rozbalí objekt do lokálních
+    // proměnných jedním krokem. Tady vybereme mezi WALK_PARAMS a RUN_PARAMS
+    // a hned rozložíme na speed/amp/period.
+    const { speed, amp, period } = st.current === "run" ? RUN_PARAMS : WALK_PARAMS;
     if (moveTowards(group, st.targetX, st.targetZ, speed, dt)) {
       st.timer = 0;
     } else {
@@ -766,12 +824,12 @@ function animateWander(group, anim, t) {
     if (!subj) {
       st.timer = 0;
     } else if (st.substate === "approach") {
-      if (moveTowards(group, subj.X, subj.Z, 1.0, dt, 1.1)) {
+      if (moveTowards(group, subj.X, subj.Z, WALK_PARAMS.speed, dt, 1.1)) {
         st.substate = "perform";
-        st.timer = 3 + Math.random() * 2;
+        st.timer = WANDER_TIMERS.work.performMin + Math.random() * WANDER_TIMERS.work.performRange;
         resetCharBase(group);
       } else {
-        applyWalkCycle(p, t, 1.0, Math.PI / 6);
+        applyWalkCycle(p, t, WALK_PARAMS.period, WALK_PARAMS.amp);
       }
     } else {
       applyWorkPose(p, t);

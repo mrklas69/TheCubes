@@ -246,20 +246,12 @@ export class CLOUD extends COMPOSITES {
 }
 
 /**
- * CHARACTER = konkrétní COMPOSITES reprezentující humanoidní postavičku
- * („loutka"). Vizualizace: torzo (kvádr) + hlava (koule) + 4 končetiny, každá
- * ze dvou dílů (horní/spodní) spojených kulovým kloubem (loket / koleno).
- * Atribut `COLOR` určuje barvu oblečení/končetin; hlava má fixní „pleťový"
- * odstín v enginu.
+ * CHARACTER = humanoidní postavička („loutka"). Atribut `COLOR` určuje barvu
+ * oblečení/končetin; hlava má fixní „pleťový" odstín v enginu.
  *
- * Kostra: každá končetina je Three.js `Group` s pivotem na kořenu (rameno /
- * kyčel). Rotace skupiny (`rotation.x`) kýve celou končetinou kolem pivotu —
- * walk animátor to využívá. Spodní díl by mohl mít vlastní pivot na kloubu
- * (loket/koleno) pro plný „hinge" ohyb; V1 je ponecháván rigidní (straight
- * hang) pro KISS, pozdější rozšíření přidá druhou úroveň rotace.
- *
- * Default pose (bez `ANIMATE`): ruce podél těla, nohy rovně dolů — visí jako
- * loutka bez tahu. Podporovaný `ANIMATE.kind`: `walk` (viz dispatch v main.js).
+ * Default pose (bez `ANIMATE`): ruce podél těla, nohy rovně dolů.
+ * Podporované `ANIMATE.kind`: `walk`, `sit`, `lie`, `wander` (stavový automat
+ * s 6 substavy: walk/run/stand/sit/lie/work). Viz dispatch v main.js (DD-18).
  */
 export class CHARACTER extends COMPOSITES {
   constructor(id, name, x, y, z, color, description = "") {
