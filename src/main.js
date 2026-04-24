@@ -6,7 +6,7 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, BALLOON, HOUSE, CLOUD, ROCK, CHARACTER, TIMER, COUNTER } from "./model.js";
+import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, BALLOON, HOUSE, CLOUD, ROCK, CHARACTER, NOODLE, STICKMAN, TIMER, COUNTER } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
 
 // === Renderer ===
@@ -522,6 +522,8 @@ const collidables = [];
 // (floating nebo 2D billboard, postavy pod nimi můžou projít).
 const COLLISION_RADII = {
   CHARACTER: 0.2,
+  NOODLE:    0.2,   // stejný siluet jako CHARACTER
+  STICKMAN:  0.2,   // stejný siluet jako CHARACTER
   TREE:      0.35,
   HOUSE:     0.85,
   ROCK:      0.5,
@@ -530,6 +532,8 @@ const COLLISION_RADII = {
 
 function collisionRadiusFor(instance) {
   if (instance instanceof CHARACTER) return COLLISION_RADII.CHARACTER;
+  if (instance instanceof NOODLE)    return COLLISION_RADII.NOODLE;
+  if (instance instanceof STICKMAN)  return COLLISION_RADII.STICKMAN;
   if (instance instanceof TREE)      return COLLISION_RADII.TREE;
   if (instance instanceof HOUSE)     return COLLISION_RADII.HOUSE;
   if (instance instanceof ROCK)      return COLLISION_RADII.ROCK;
@@ -590,6 +594,16 @@ function applyWalkCycle(p, t, period, amp, lowerFactor = 0.6) {
   p.rightForearm.rotation.x = -extra;
   p.leftShin.rotation.x     = -extra;
   p.rightShin.rotation.x    =  extra;
+  // Volitelné terminal klouby (zápěstí/kotník). STICKMAN má 3. segment končetiny
+  // s vlastním hinge, CHARACTER ne. Overlapping action: rotace stejným směrem
+  // jako upper, amplituda = lowerFactor × 0.5 (menší než forearm/shin).
+  if (p.leftWrist) {
+    const extra2 = extra * 0.5;
+    p.leftWrist.rotation.x    =  extra2;
+    p.rightWrist.rotation.x   = -extra2;
+    p.leftAnkle.rotation.x    = -extra2;
+    p.rightAnkle.rotation.x   =  extra2;
+  }
 }
 
 // Statická sit póza: kyčel +90° vpřed, koleno −90° (holeň svěšená svisle).
@@ -602,6 +616,14 @@ function applySitPose(p) {
   p.rightArm.rotation.x     = 0;
   p.leftForearm.rotation.x  = 0;
   p.rightForearm.rotation.x = 0;
+  // Terminal klouby (STICKMAN only): zápěstí na 0 (ruce v klidu), kotník
+  // +π/2 kompenzuje ohyb kolena −π/2 → chodidlo se vrátí k horizontále.
+  if (p.leftWrist) {
+    p.leftWrist.rotation.x   = 0;
+    p.rightWrist.rotation.x  = 0;
+    p.leftAnkle.rotation.x   =  Math.PI / 2;
+    p.rightAnkle.rotation.x  =  Math.PI / 2;
+  }
 }
 
 // Leh na zádech — naklon celého groupu −90° kolem X (local +Y hlava → world
@@ -641,6 +663,12 @@ function applyWorkPose(p, t) {
   p.rightLeg.rotation.x  = 0;
   p.leftShin.rotation.x  = 0;
   p.rightShin.rotation.x = 0;
+  if (p.leftWrist) {
+    p.leftWrist.rotation.x   = 0;
+    p.rightWrist.rotation.x  = 0;
+    p.leftAnkle.rotation.x   = 0;
+    p.rightAnkle.rotation.x  = 0;
+  }
 }
 
 // Reset postavy do default standing pózy. Ponechává XZ pozici a rotation.y
@@ -655,6 +683,12 @@ function resetCharBase(group) {
   p.rightForearm.rotation.x = 0;
   p.leftShin.rotation.x = 0;
   p.rightShin.rotation.x = 0;
+  if (p.leftWrist) {
+    p.leftWrist.rotation.x = 0;
+    p.rightWrist.rotation.x = 0;
+    p.leftAnkle.rotation.x = 0;
+    p.rightAnkle.rotation.x = 0;
+  }
   group.rotation.x = 0;
   group.rotation.z = 0;
   group.position.y = group.userData.base?.y ?? 0;
@@ -677,6 +711,98 @@ function moveTowards(group, tx, tz, speed, dt, stopDist = 0.15) {
   group.position.z = nz;
   group.rotation.y = Math.atan2(-dx, -dz);
   return false;
+}
+
+// === Pose primitives pro NOODLE (paralelní k CHARACTER) ===
+// NOODLE ohýbá končetiny **per-frame mutací kontrolních bodů křivky**
+// (CatmullRomCurve3) → rebuild TubeGeometry každý frame. Rebuild = dispose
+// staré GPU bufferu + upload nové geometrie. Tubular/radial segmenty držíme
+// nízko (8/6), aby 4 končetiny × 60 FPS ≈ 240 uploadů/s zůstaly zanedbatelné.
+//
+// Každá končetina v `parts.limbs[]` je objekt:
+//   { mesh, curve, restCtrl: [V3,V3,V3], currentCtrl: [V3,V3,V3], radius,
+//     tubularSegments, radialSegments, length, swingSign }
+// `restCtrl` = neměnná klidová pozice (3 body: start/mid/end). `currentCtrl`
+// = aktuální ctrl body, sdílené s `curve.points` (stejné Vector3 reference)
+// → mutace currentCtrl[i].z zasáhne i curve.
+
+// Regenerace TubeGeometry z aktuálního stavu `limb.curve`. Povinný
+// `.dispose()` starého bufferu — jinak WebGL drží GPU paměť (leak).
+function rebuildNoodleLimb(limb) {
+  const newGeo = new THREE.TubeGeometry(
+    limb.curve,
+    limb.tubularSegments,
+    limb.radius,
+    limb.radialSegments,
+    false,
+  );
+  limb.mesh.geometry.dispose();
+  limb.mesh.geometry = newGeo;
+}
+
+// Idempotentní reset ctrl bodů do rest pozice. Iteruje přes **celé** pole
+// `currentCtrl` (variabilní délka — paže mohou mít 4 uzly, nohy 3). Pokud
+// jsou už v rest stavu, přeskočí rebuild — šetří zbytečné GPU uploady při
+// statických pózách (sit, stand), kde se animator per-frame volá, ale nic
+// se nemění.
+function resetNoodleLimbs(parts) {
+  for (const limb of parts.limbs) {
+    let changed = false;
+    const n = limb.currentCtrl.length;
+    for (let i = 0; i < n; i++) {
+      if (!limb.currentCtrl[i].equals(limb.restCtrl[i])) {
+        limb.currentCtrl[i].copy(limb.restCtrl[i]);
+        changed = true;
+      }
+    }
+    if (changed) rebuildNoodleLimb(limb);
+  }
+}
+
+// Walk cycle pro NOODLE. Oproti CHARACTER (kloubová rotace) mutuje Z-souřadnici
+// kontrolních bodů křivky → končetina se „vlní" dopředu/dozadu. `swingSign`
+// (±1 per limb) zajistí protifázi (levá ruka + pravá noha vpřed ↔ opačně).
+//
+// Shift factor lineárně roste od startu (0) po konec (1) podél indexu. Pro
+// končetinu se 3 uzly to je [0, 0.5, 1], pro 4 uzly [0, 0.333, 0.667, 1] —
+// tj. rameno stojí, loket se hne méně, zápěstí víc, ruka plnou amplitudu.
+// `lowerFactor` parametr z CHARACTER signatury ignorujeme — tady je
+// progresivní shift implicitní v indexu.
+function applyNoodleWalkCycle(parts, t, period, amp, _lowerFactor) {
+  const swing = Math.sin(oscPhase(t, period));
+  for (const limb of parts.limbs) {
+    const endShift = limb.swingSign * amp * limb.length * swing;
+    const n = limb.currentCtrl.length;
+    for (let i = 0; i < n; i++) {
+      limb.currentCtrl[i].copy(limb.restCtrl[i]);
+      // factor lineárně od 0 (start) po 1 (end); pro n=1 (jen start) = 0.
+      const factor = n > 1 ? i / (n - 1) : 0;
+      limb.currentCtrl[i].z += endShift * factor;
+    }
+    rebuildNoodleLimb(limb);
+  }
+}
+
+// Sit pose pro NOODLE — V1 fallback na rest (plný sed s pokrčenými nohami
+// doplníme později). Idempotent — volat per-frame je levné.
+function applyNoodleSitPose(parts) {
+  resetNoodleLimbs(parts);
+}
+
+// Work pose pro NOODLE — V1 fallback na rest. Plný „sekací" švih paží
+// doplníme později (podobně jako applyWorkPose pro CHARACTER).
+function applyNoodleWorkPose(parts, _t) {
+  resetNoodleLimbs(parts);
+}
+
+// Reset NOODLE do default standing pózy. Stejné chování jako resetCharBase
+// pro group transform (rotation.x/z=0, y na base), plus reset ctrl bodů.
+function resetNoodleBase(group) {
+  const parts = group.userData.parts;
+  if (parts) resetNoodleLimbs(parts);
+  group.rotation.x = 0;
+  group.rotation.z = 0;
+  group.position.y = group.userData.base?.y ?? 0;
 }
 
 // Walk cycle pro CHARACTER — čtyři končetiny kývají kolem ramenního/kyčelního
@@ -702,7 +828,9 @@ function moveTowards(group, tx, tz, speed, dt, stopDist = 0.15) {
 function animateWalk(group, anim, t) {
   const parts = group.userData.parts;
   if (!parts) return;
-  applyWalkCycle(parts, t, anim.period, anim.amplitude ?? 0, anim.lowerAmpFactor ?? 0.6);
+  // Dispatch přes poseFns — umožňuje různým třídám (CHARACTER, NOODLE, …)
+  // mít vlastní walk implementaci pod stejným ANIMATE.kind. Izomorfní s DD-11.
+  group.userData.poseFns.walkCycle(parts, t, anim.period, anim.amplitude ?? 0, anim.lowerAmpFactor ?? 0.6);
 }
 
 // Statický sed. Kyčle ohnuté +90° vpřed (stehna horizontálně v character-forward
@@ -718,7 +846,7 @@ function animateWalk(group, anim, t) {
 function animateSit(group) {
   const p = group.userData.parts;
   if (!p) return;
-  applySitPose(p);
+  group.userData.poseFns.sitPose(p);
 }
 
 // Stavový automat „poflakování se" pro CHARACTER. Náhodně střídá stavy
@@ -760,17 +888,18 @@ const WALK_PARAMS = { speed: 1.0, amp: Math.PI / 6, period: 1.0 };
 const RUN_PARAMS  = { speed: 2.2, amp: Math.PI / 4, period: 0.5 };
 
 function enterWanderState(group, st, anim, name) {
-  resetCharBase(group);
+  const poseFns = group.userData.poseFns;
+  poseFns.reset(group);
   st.current = name;
   st.substate = null;
   const bounds = anim.bounds ?? 3;
   if (name === "stand") {
     st.timer = WANDER_TIMERS.stand.min + Math.random() * WANDER_TIMERS.stand.range;
   } else if (name === "sit") {
-    applySitPose(group.userData.parts);
+    poseFns.sitPose(group.userData.parts);
     st.timer = WANDER_TIMERS.sit.min + Math.random() * WANDER_TIMERS.sit.range;
   } else if (name === "lie") {
-    applyLiePose(group);
+    poseFns.liePose(group);
     st.timer = WANDER_TIMERS.lie.min + Math.random() * WANDER_TIMERS.lie.range;
   } else if (name === "walk" || name === "run") {
     st.targetX = (Math.random() - 0.5) * 2 * bounds;
@@ -809,6 +938,7 @@ function animateWander(group, anim, t) {
   st.lastT = t;
   st.timer -= dt;
 
+  const poseFns = group.userData.poseFns;
   if (st.current === "walk" || st.current === "run") {
     // Destrukturalizace = JS konstrukce, která rozbalí objekt do lokálních
     // proměnných jedním krokem. Tady vybereme mezi WALK_PARAMS a RUN_PARAMS
@@ -817,7 +947,7 @@ function animateWander(group, anim, t) {
     if (moveTowards(group, st.targetX, st.targetZ, speed, dt)) {
       st.timer = 0;
     } else {
-      applyWalkCycle(p, t, period, amp);
+      poseFns.walkCycle(p, t, period, amp);
     }
   } else if (st.current === "work") {
     const subj = st.subject;
@@ -827,12 +957,12 @@ function animateWander(group, anim, t) {
       if (moveTowards(group, subj.X, subj.Z, WALK_PARAMS.speed, dt, 1.1)) {
         st.substate = "perform";
         st.timer = WANDER_TIMERS.work.performMin + Math.random() * WANDER_TIMERS.work.performRange;
-        resetCharBase(group);
+        poseFns.reset(group);
       } else {
-        applyWalkCycle(p, t, WALK_PARAMS.period, WALK_PARAMS.amp);
+        poseFns.walkCycle(p, t, WALK_PARAMS.period, WALK_PARAMS.amp);
       }
     } else {
-      applyWorkPose(p, t);
+      poseFns.workPose(p, t);
     }
   }
   // stand/sit/lie: pose nastavená při enteru, per-frame update nepotřeba
@@ -1354,6 +1484,10 @@ function createCompositeFor(instance) {
     buildRock(group, instance);
   } else if (instance instanceof CHARACTER) {
     buildCharacter(group, instance);
+  } else if (instance instanceof NOODLE) {
+    buildNoodle(group, instance);
+  } else if (instance instanceof STICKMAN) {
+    buildStickman(group, instance);
   }
 
   // userData.instance + shadow flagy nastaví až `createMeshFor` jednotně
@@ -1779,6 +1913,285 @@ function buildCharacter(group, instance) {
     leftArm, rightArm, leftLeg, rightLeg,
     leftForearm, rightForearm, leftShin, rightShin,
   };
+  // poseFns dispatch — engine-side map pose primitives. Animátor (`walk`,
+  // `sit`, `wander`) volá přes tento slot, ne přímo — umožňuje alternativním
+  // tvarům postavičky (NOODLE) mít vlastní pose implementaci pod stejným
+  // ANIMATE.kind. Izomorfní s DD-11 / DD-14 patternem.
+  group.userData.poseFns = {
+    walkCycle: applyWalkCycle,
+    sitPose:   applySitPose,
+    liePose:   applyLiePose,
+    workPose:  applyWorkPose,
+    reset:     resetCharBase,
+  };
+}
+
+// NOODLE builder — alternativní humanoidní tvar (DD-18 mode slot sdílený
+// s CHARACTER). Dvě CapsuleGeometry (šišky — tělo + hlava) a čtyři končetiny
+// jako TubeGeometry podél CatmullRomCurve3 se 3 kontrolními body (rameno/
+// kyčel → střed → konec). Walk cycle ohýbá ctrl body per-frame → plastelínový
+// look. CapsuleGeometry (Three.js ≥ r132) = válec + 2 polokoule na koncích.
+function buildNoodle(group, instance) {
+  const bodyMat = new THREE.MeshStandardMaterial({ color: instance.COLOR });
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0xf5c88e });
+
+  // --- Tělo (velká fazole) ---
+  // CapsuleGeometry(radius, length, capSegments, radialSegments). `length` je
+  // jen cylinder část (bez polokoulí). Total výška = length + 2*radius.
+  const bodyR = 0.16, bodyLen = 0.25;
+  const body = new THREE.Mesh(
+    new THREE.CapsuleGeometry(bodyR, bodyLen, 6, 12),
+    bodyMat,
+  );
+  // Y střed tělesa — spodek body = hipY (0.1), vršek = topBodyY (0.67).
+  const hipY = 0.1;
+  const bodyCenterY = hipY + bodyLen / 2 + bodyR;
+  body.position.y = bodyCenterY;
+  group.add(body);
+
+  // --- Hlava (malá fazole) ---
+  // Hlava mírně zabořená do horního pólu body — spodní hemisféra hlavy se
+  // překrývá s horní hemisférou body o ~60 % jejího poloměru (F1).
+  const headR = 0.12, headLen = 0.06;
+  const head = new THREE.Mesh(
+    new THREE.CapsuleGeometry(headR, headLen, 6, 12),
+    skinMat,
+  );
+  const headCenterY = bodyCenterY + bodyLen / 2 + bodyR + headR * 0.4;
+  head.position.y = headCenterY;
+  group.add(head);
+
+  // --- Pomocný builder končetiny ---
+  // `points` = pole objektů `{ x, y, z? }` (Z default 0) — řetěz uzlů, skrz
+  // které CatmullRomCurve3 prochází. Délka pole = libovolný počet uzlů; paže
+  // mají 4 (rameno–loket–zápěstí–ruka), nohy 3 (kyčel–koleno–chodidlo).
+  // Vrací `{ mesh, curve, restCtrl, currentCtrl, radius, tubularSegments,
+  // radialSegments, length, swingSign }`. `currentCtrl` je předaný do
+  // CatmullRomCurve3, který si drží **referenci** na pole — mutace bodů se
+  // propaguje do křivky bez rekonstrukce. `length` = vzdálenost start↔end
+  // (ne kumulativní délka křivky), používá se v swing amplitudě walk cyclu.
+  function buildLimb(points, radius, swingSign) {
+    const currentCtrl = points.map((p) => new THREE.Vector3(p.x, p.y, p.z ?? 0));
+    const restCtrl = currentCtrl.map((v) => v.clone());
+    const curve = new THREE.CatmullRomCurve3(currentCtrl);
+    const tubularSegments = 12;
+    const radialSegments = 6;
+    const geom = new THREE.TubeGeometry(curve, tubularSegments, radius, radialSegments, false);
+    const mesh = new THREE.Mesh(geom, bodyMat);
+    group.add(mesh);
+    const first = restCtrl[0], last = restCtrl[restCtrl.length - 1];
+    const length = Math.hypot(last.x - first.x, last.y - first.y);
+    return {
+      mesh, curve, restCtrl, currentCtrl,
+      radius, tubularSegments, radialSegments, length, swingSign,
+    };
+  }
+
+  // --- Paže ---
+  // F1: ramena posunuta výš — z cylinder středu do horní polokoule body
+  // (shoulderY ~= 0.60), těsně pod hlavou. F4: rameno X zabořené do body
+  // (shoulderX < bodyR). Paže vychází pod úhlem 45° ven a dolů —
+  // decomposed do (+armLen/√2, −armLen/√2). F2: 4 uzly (rameno–loket–
+  // zápěstí–ruka) s mírným forward Z offsetem u lokte (pokrčený loket
+  // v rest pose → přirozený stoj). `Math.SQRT2` = √2 ≈ 1.414.
+  const armR = 0.03;
+  const shoulderX = 0.10;                                    // uvnitř body (bodyR=0.16)
+  const shoulderY = bodyCenterY + bodyLen / 2 + 0.09;        // horní polokoule, blízko topu (F1)
+  const armLen = 0.35;
+  const armOffset = armLen / Math.SQRT2;                     // 45° dekompozice po X a Y
+  const handX = shoulderX + armOffset;
+  const handY = shoulderY - armOffset;
+  const elbowZ = -0.06;    // loket vpřed = −Z (default forward postavy)
+  const wristZ = -0.03;    // zápěstí méně vpřed — paže se narovnává zpět k ruce
+  // Mirror: m = −1 (levá) / +1 (pravá). Paže mají 4 lineárně rozmístěné uzly
+  // (t = 0, 1/3, 2/3, 1), loket s forward Z offsetem.
+  const makeArmPoints = (m) => [
+    { x: m * shoulderX,                          y: shoulderY,                              z: 0 },
+    { x: m * (shoulderX + armOffset / 3),        y: shoulderY - armOffset / 3,              z: elbowZ },
+    { x: m * (shoulderX + 2 * armOffset / 3),    y: shoulderY - 2 * armOffset / 3,          z: wristZ },
+    { x: m * handX,                              y: handY,                                  z: 0 },
+  ];
+  const leftArm  = buildLimb(makeArmPoints(-1), armR,  1);
+  const rightArm = buildLimb(makeArmPoints( 1), armR, -1);
+
+  // --- Nohy ---
+  // F3: kyčle zabořené do dolní polokoule body (hipStartY > hipY → start ctrl
+  // bod leží uvnitř body, horní část tube schovaná za capsule povrchem).
+  // Chodidla stále na groundplane (local Y = −0.5, stejně jako CHARACTER).
+  // F2: legR zmenšen na polovinu (0.08 → 0.04). 3 uzly (kyčel–koleno–chodidlo),
+  // koleno uprostřed (rest pose = přímá noha; walk cycle ho rozvlní).
+  const legR = 0.04;
+  const hipX = 0.06;
+  const hipStartY = 0.20;                                    // uvnitř spodní polokoule body
+  const footY = -0.5;
+  const makeLegPoints = (m) => [
+    { x: m * hipX, y: hipStartY,                   z: 0 },
+    { x: m * hipX, y: (hipStartY + footY) / 2,     z: 0 },
+    { x: m * hipX, y: footY,                       z: 0 },
+  ];
+  const leftLeg  = buildLimb(makeLegPoints(-1), legR, -1);
+  const rightLeg = buildLimb(makeLegPoints( 1), legR,  1);
+
+  // parts + poseFns (izomorfní s CHARACTER)
+  group.userData.parts = {
+    body, head,
+    leftArm, rightArm, leftLeg, rightLeg,
+    limbs: [leftArm, rightArm, leftLeg, rightLeg],
+  };
+  group.userData.poseFns = {
+    walkCycle: applyNoodleWalkCycle,
+    sitPose:   applyNoodleSitPose,
+    liePose:   applyLiePose,       // sdílené whole-body transform s CHARACTER
+    workPose:  applyNoodleWorkPose,
+    reset:     resetNoodleBase,
+  };
+}
+
+// STICKMAN builder — blokový low-poly humanoid (kvádr trup, 8/4-segmentová
+// koule hlava, 6-segmentové válce končetin, kostkové ruce a chodidla). Plná
+// kloubová struktura: 3 hinge segmenty per končetina (rameno/loket/zápěstí,
+// kyčel/koleno/kotník). Sdílí pose primitives s CHARACTER přes poseFns —
+// `applyWalkCycle` animuje volitelné wristy/ankles pokud `parts` je má.
+function buildStickman(group, instance) {
+  const bodyMat = new THREE.MeshStandardMaterial({ color: instance.COLOR });
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0xf5c88e });
+
+  // --- Trup (kvádr) ---
+  const torsoW = 0.4, torsoH = 0.5, torsoD = 0.24;
+  const torso = new THREE.Mesh(
+    new THREE.BoxGeometry(torsoW, torsoH, torsoD),
+    bodyMat,
+  );
+  const hipsY = -0.5 + 0.56;   // 0.06, stejné jako CHARACTER — chodidla skončí na y=-0.5
+  const torsoCenterY = hipsY + torsoH / 2;
+  torso.position.y = torsoCenterY;
+  group.add(torso);
+
+  // --- Hlava (low-poly koule, 8 rovník × 4 póly ≈ 32 trojúhelníků) ---
+  const headR = 0.18;
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(headR, 8, 4),
+    skinMat,
+  );
+  head.position.y = torsoCenterY + torsoH / 2 + headR;
+  group.add(head);
+
+  // --- Pomocný builder 3-segmentové končetiny ---
+  // Hierarchie: `limb` Group (pivot rameno/kyčel) obsahuje upper Mesh + joint
+  // sphere + `lower` Group (pivot loket/koleno). Lower obsahuje lower Mesh +
+  // joint sphere + `terminal` Group (pivot zápěstí/kotník). Terminal obsahuje
+  // kostkový hand/foot Mesh + joint sphere. Animátor rotuje Grupy (upper/lower/
+  // terminal.rotation.x), mesh uvnitř dědí transform. Child Group má pozici na
+  // konci parent segmentu (y = −parentLen) → správný hinge pivot.
+  function buildStickLimb(upperLen, upperR, lowerLen, lowerR, jointR, termGeom, termOffsetY, termOffsetZ = 0) {
+    const limb = new THREE.Group();
+
+    // Upper segment (cylinder)
+    const upper = new THREE.Mesh(
+      new THREE.CylinderGeometry(upperR, upperR, upperLen, 6),
+      bodyMat,
+    );
+    upper.position.y = -upperLen / 2;
+    limb.add(upper);
+
+    // Shoulder/hip joint sphere (na pivotu — origin limbu)
+    const shoulderJoint = new THREE.Mesh(
+      new THREE.SphereGeometry(jointR, 6, 4),
+      bodyMat,
+    );
+    limb.add(shoulderJoint);
+
+    // Lower Group (pivot na konci upper)
+    const lower = new THREE.Group();
+    lower.position.y = -upperLen;
+
+    const lowerMesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(lowerR, lowerR, lowerLen, 6),
+      bodyMat,
+    );
+    lowerMesh.position.y = -lowerLen / 2;
+    lower.add(lowerMesh);
+
+    const elbowJoint = new THREE.Mesh(
+      new THREE.SphereGeometry(jointR * 0.85, 6, 4),
+      bodyMat,
+    );
+    lower.add(elbowJoint);
+
+    // Terminal Group (pivot na konci lower) — zápěstí/kotník
+    const terminal = new THREE.Group();
+    terminal.position.y = -lowerLen;
+
+    const termMesh = new THREE.Mesh(termGeom, bodyMat);
+    termMesh.position.set(0, termOffsetY, termOffsetZ);
+    terminal.add(termMesh);
+
+    const wristJoint = new THREE.Mesh(
+      new THREE.SphereGeometry(jointR * 0.7, 6, 4),
+      bodyMat,
+    );
+    terminal.add(wristJoint);
+
+    lower.add(terminal);
+    limb.add(lower);
+
+    return { limb, lower, terminal };
+  }
+
+  // --- Paže (ramena/lokty/zápěstí) ---
+  const armUpperLen = 0.2, armLowerLen = 0.2, armJointR = 0.055;
+  const shoulderY = torsoCenterY + torsoH / 2 - 0.04;
+  const shoulderX = torsoW / 2 + 0.04;
+  // Ruka = malá kostka 0.08×0.1×0.08, visí pod zápěstím (offset y=-0.05)
+  const handBoxGeom = new THREE.BoxGeometry(0.08, 0.1, 0.08);
+
+  const la = buildStickLimb(armUpperLen, 0.05, armLowerLen, 0.045, armJointR, handBoxGeom, -0.05);
+  la.limb.position.set(-shoulderX, shoulderY, 0);
+  group.add(la.limb);
+
+  const ra = buildStickLimb(armUpperLen, 0.05, armLowerLen, 0.045, armJointR, handBoxGeom, -0.05);
+  ra.limb.position.set(shoulderX, shoulderY, 0);
+  group.add(ra.limb);
+
+  // --- Nohy (kyčle/kolena/kotníky) ---
+  // Celková délka nohy = upperLen + lowerLen + foot offset = 0.56 (aby spodek
+  // chodidla seděl na groundplane Y=-0.5 při hipsY=0.06). Math: ankle world Y
+  // = hipsY − upperLen − lowerLen = 0.06 − 0.25 − 0.25 = −0.44. Foot box H=0.05,
+  // offset y=−0.035 → spodek chodidla = −0.44 − 0.035 − 0.025 = −0.5 ✓
+  const legUpperLen = 0.25, legLowerLen = 0.25, legJointR = 0.07;
+  const hipX = 0.1;
+  // Chodidlo = plochá kostka vysunutá dopředu (−Z, default postava forward).
+  // Width 0.11, height 0.05 (tenká), depth 0.2 (dlouhá dopředu).
+  const footBoxGeom = new THREE.BoxGeometry(0.11, 0.05, 0.2);
+
+  const ll = buildStickLimb(legUpperLen, 0.06, legLowerLen, 0.055, legJointR, footBoxGeom, -0.035, -0.06);
+  ll.limb.position.set(-hipX, hipsY, 0);
+  group.add(ll.limb);
+
+  const rl = buildStickLimb(legUpperLen, 0.06, legLowerLen, 0.055, legJointR, footBoxGeom, -0.035, -0.06);
+  rl.limb.position.set(hipX, hipsY, 0);
+  group.add(rl.limb);
+
+  // parts — stejná klíčová struktura jako CHARACTER + přidané terminal klouby
+  // (leftWrist/rightWrist/leftAnkle/rightAnkle). `applyWalkCycle` je volitelně
+  // animuje; bez terminal klouby by fungovalo jako CHARACTER (2 segmenty).
+  group.userData.parts = {
+    leftArm:      la.limb,     rightArm:     ra.limb,
+    leftLeg:      ll.limb,     rightLeg:     rl.limb,
+    leftForearm:  la.lower,    rightForearm: ra.lower,
+    leftShin:     ll.lower,    rightShin:    rl.lower,
+    leftWrist:    la.terminal, rightWrist:   ra.terminal,
+    leftAnkle:    ll.terminal, rightAnkle:   rl.terminal,
+  };
+  // poseFns sdílené s CHARACTER (A1) — walk/sit/lie/work/reset používají
+  // stejné funkce. Backward compat díky `if (p.leftWrist)` checku.
+  group.userData.poseFns = {
+    walkCycle: applyWalkCycle,
+    sitPose:   applySitPose,
+    liePose:   applyLiePose,
+    workPose:  applyWorkPose,
+    reset:     resetCharBase,
+  };
 }
 
 // === Model: 3×3 grid dlaždic v rovině Y=0 + strom ===
@@ -1973,12 +2386,12 @@ scene.add(createMeshFor(rock1));
 // `subject` (rock nebo strom) + perform (mávnutí sekerou). Subjects jsou
 // sdílené (dva chodci můžou „těžit" totéž — bez konfliktu, jen vizuální
 // overlap).
-const char1 = new CHARACTER(
+const char1 = new NOODLE(
   "char_0001",
   "Poutník modrý",
   2, 0, -2,
   0x4a7cbe,
-  "CHARACTER — poflakuje se (walk/run/stand/sit/lie/work).",
+  "NOODLE — plastelínový poutník (dvě fazole + čtyři makarony, wander).",
 );
 char1.ANIMATE = { kind: "wander", bounds: 3, subjects: [rock1, tree1] };
 scene.add(createMeshFor(char1));
@@ -1992,6 +2405,20 @@ const char3 = new CHARACTER(
 );
 char3.ANIMATE = { kind: "wander", bounds: 3, subjects: [rock1, tree1] };
 scene.add(createMeshFor(char3));
+
+// Čtvrtá postava — STICKMAN. Blokový low-poly styl, 3-segmentové končetiny
+// s animovanými zápěstími a kotníky (overlapping action při chůzi). Sdílí
+// pose primitives s CHARACTER přes poseFns; `applyWalkCycle` volitelně
+// animuje wristy/ankles pokud `parts` je má.
+const char4 = new STICKMAN(
+  "char_0004",
+  "Stickman červený",
+  1, 0, 2.5,
+  0xcc3333,
+  "STICKMAN — blokový poutník (3-segmentové končetiny, animovaná zápěstí a kotníky).",
+);
+char4.ANIMATE = { kind: "wander", bounds: 3, subjects: [rock1, tree1] };
+scene.add(createMeshFor(char4));
 
 // Druhá postava sedí na severním okraji oranžové dlaždice `ccube_0002` (0, 0, -1).
 // Vršek dlaždice = y=0.5; lokální hipsY uvnitř CHARACTER = 0.06 nad originem;
