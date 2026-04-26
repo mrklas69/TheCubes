@@ -644,12 +644,13 @@ function applyLiePose(group, groundY = LIE_GROUND_Y_DEFAULT) {
 }
 
 // Work pose parametry — střed a amplituda ramene kolem něj. Upper arm swinguje
-// v rozsahu [centerAngle − amplitude, centerAngle + amplitude] = [−π, −π/2] =
-// plný vzpřímený švih přes hlavu dopředu dolů. Stejná animace pro „dolování
-// kamene" i „těžbu stromu" — rozdíl jen v cíli (subject).
+// v rozsahu [centerAngle − amplitude, centerAngle + amplitude] = [π/2, π] =
+// horizontálně vpřed → přes hlavu dopředu. Plný vzpřímený švih axe-style
+// chopem. Stejná animace pro „dolování kamene" i „těžbu stromu" — rozdíl jen
+// v cíli (subject).
 const WORK_POSE = {
   period:      0.6,                // s — jeden cyklus švihu
-  centerAngle: -3 * Math.PI / 4,   // −135° = střední pozice (diagonála nahoru-zpět)
+  centerAngle: 3 * Math.PI / 4,    // +135° = střední pozice (diagonála vpřed-nahoru)
   amplitude:   Math.PI / 4,        // ±45° okolo středu
 };
 function applyWorkPose(p, t) {
@@ -692,6 +693,121 @@ function resetCharBase(group) {
   group.rotation.x = 0;
   group.rotation.z = 0;
   group.position.y = group.userData.base?.y ?? 0;
+}
+
+// === Scéna 2 animátory: anatomicky věrné gait cykly ===
+// Inspirováno Gemini referenčním demem (lokální HTML, file:.../gemini-code-…).
+// Klíčové techniky:
+//   - `Math.max(0, sin(...))` = jednosměrný kloub (koleno se ohýbá jen vzad)
+//   - cross-pattern fáze (paže × opačná noha)
+//   - vertikální bob group v rytmu kroků
+//   - běh: vyšší frekvence + amplituda, paže pokrčené stále
+//   - dřep: trup descend + naklon, kolena vpřed, paže drží předmět
+//
+// Společný idiom: Gemini má lower jako child upper, my máme samostatné
+// `lower` a `terminal` Group. Mapping: leftLeg.upper → leftLeg, leftLeg.lower
+// → leftShin (totéž pro paže). Terminal klouby (wrist/ankle) zůstávají na 0
+// nebo lehce kompenzují.
+
+const WALK_IDLE_PARAMS = { speed: 4.0, hipAmp: 0.6, kneeAmp: 0.8, armAmp: 0.5, elbowAmp: 0.5, bobAmp: 0.05 };
+const RUN_IDLE_PARAMS  = { speed: 8.0, hipAmp: 1.0, kneeAmp: 1.5, armAmp: 1.0, elbowFix: -1.2, bobAmp: 0.20, lean: 0.20 };
+const SQUAT_PARAMS     = { speed: 2.0, hipAmp: 1.2, kneeAmp: 2.4, armReach: 1.0, elbowReach: 0.5, descend: 0.6, lean: 0.4 };
+
+// Chůze na místě — klasický gait s jednosměrným kolenem a anti-fázovými
+// pažemi. Bob trupu dvakrát za krok (každý dotyk nohy o zem).
+function animateWalkIdle(object3d, _anim, t) {
+  const p = object3d.userData.parts;
+  const w = WALK_IDLE_PARAMS;
+  const s = t * w.speed;
+
+  p.leftLeg.rotation.x   =  Math.sin(s) * w.hipAmp;
+  p.rightLeg.rotation.x  =  Math.sin(s + Math.PI) * w.hipAmp;
+  // Koleno ohyb jen jedním směrem (Math.max). Záporné znaménko = shin se
+  // ohne dozadu (heel kicks behind), což je anatomicky správně.
+  p.leftShin.rotation.x  = -Math.max(0, Math.sin(s - Math.PI / 2)) * w.kneeAmp;
+  p.rightShin.rotation.x = -Math.max(0, Math.sin(s + Math.PI - Math.PI / 2)) * w.kneeAmp;
+
+  // Paže anti-fázově k nohám (cross-pattern: levá ruka ↔ pravá noha).
+  p.leftArm.rotation.x      =  Math.sin(s + Math.PI) * w.armAmp;
+  p.rightArm.rotation.x     =  Math.sin(s) * w.armAmp;
+  p.leftForearm.rotation.x  = -Math.max(0, Math.sin(s + Math.PI)) * w.elbowAmp;
+  p.rightForearm.rotation.x = -Math.max(0, Math.sin(s)) * w.elbowAmp;
+
+  // Terminal klouby — kotník drží chodidlo trochu kompenzované, zápěstí klid.
+  p.leftAnkle.rotation.x  = -p.leftShin.rotation.x  * 0.5;
+  p.rightAnkle.rotation.x = -p.rightShin.rotation.x * 0.5;
+  p.leftWrist.rotation.x  = 0;
+  p.rightWrist.rotation.x = 0;
+
+  // Bob — abs(sin(2s)) dává pulz dvakrát za jeden krokový cyklus.
+  object3d.position.y = (object3d.userData.base?.y ?? 0) + Math.abs(Math.sin(s * 2)) * w.bobAmp;
+  object3d.rotation.x = 0;
+}
+
+// Běh na místě — větší amplituda, dvojnásobná frekvence, paže pokrčené stále
+// (běžecký styl). Trup naklon vpřed, výrazný vertikální bob (let-fáze).
+function animateRunIdle(object3d, _anim, t) {
+  const p = object3d.userData.parts;
+  const r = RUN_IDLE_PARAMS;
+  const s = t * r.speed;
+
+  p.leftLeg.rotation.x   =  Math.sin(s) * r.hipAmp;
+  p.rightLeg.rotation.x  =  Math.sin(s + Math.PI) * r.hipAmp;
+  p.leftShin.rotation.x  = -Math.max(0, Math.sin(s - 1)) * r.kneeAmp;
+  p.rightShin.rotation.x = -Math.max(0, Math.sin(s + Math.PI - 1)) * r.kneeAmp;
+
+  p.leftArm.rotation.x      =  Math.sin(s + Math.PI) * r.armAmp;
+  p.rightArm.rotation.x     =  Math.sin(s) * r.armAmp;
+  // Lokty trvale pokrčené (běžecká pozice paží).
+  p.leftForearm.rotation.x  = r.elbowFix;
+  p.rightForearm.rotation.x = r.elbowFix;
+
+  p.leftAnkle.rotation.x  = 0;
+  p.rightAnkle.rotation.x = 0;
+  p.leftWrist.rotation.x  = 0;
+  p.rightWrist.rotation.x = 0;
+
+  // Trup naklon vpřed (group rotace — feet se mírně vykloní, akceptovatelné
+  // pro „běh na místě" demo). Pro plně anatomicky správný náklon by torso
+  // muselo být parent paží + hlavy, což zatím není.
+  object3d.rotation.x = r.lean;
+  object3d.position.y = (object3d.userData.base?.y ?? 0) + Math.abs(Math.sin(s)) * r.bobAmp;
+}
+
+// Dřep / zvedání břemene — jeden cyklus klesání-stoupání. Trup descenduje
+// + leans forward, kolena vpřed (neg upper, pos shin), paže natažené vpřed.
+function animateSquatLift(object3d, _anim, t) {
+  const p = object3d.userData.parts;
+  const sq = SQUAT_PARAMS;
+  const s = t * sq.speed;
+  // cycle 0..1 (0 = stoj, 1 = plný dřep)
+  const cycle = (Math.sin(s) + 1) / 2;
+
+  // Stehna vpřed (záporné = thigh swings forward), holeně dozadu (pos =
+  // koleno se ohne, shin tip se vrátí pod pánev). Velký poměr ohyb-kolena
+  // / ohyb-kyčel (2.4 / 1.2) drží shin přibližně vertikálně i v plném dřepu.
+  p.leftLeg.rotation.x   = -cycle * sq.hipAmp;
+  p.rightLeg.rotation.x  = -cycle * sq.hipAmp;
+  p.leftShin.rotation.x  =  cycle * sq.kneeAmp;
+  p.rightShin.rotation.x =  cycle * sq.kneeAmp;
+
+  // Paže natažené vpřed (jako by držely břemeno). Z osa mírně dovnitř
+  // (paže se sbližují k „uchopení").
+  p.leftArm.rotation.x   = -cycle * sq.armReach;
+  p.leftArm.rotation.z   =  0.2;
+  p.rightArm.rotation.x  = -cycle * sq.armReach;
+  p.rightArm.rotation.z  = -0.2;
+  p.leftForearm.rotation.x  = -cycle * sq.elbowReach;
+  p.rightForearm.rotation.x = -cycle * sq.elbowReach;
+
+  p.leftAnkle.rotation.x  = 0;
+  p.rightAnkle.rotation.x = 0;
+  p.leftWrist.rotation.x  = 0;
+  p.rightWrist.rotation.x = 0;
+
+  // Trup naklon vpřed v dřepu, descend.
+  object3d.rotation.x = cycle * sq.lean;
+  object3d.position.y = (object3d.userData.base?.y ?? 0) - cycle * sq.descend;
 }
 
 // Jeden krok pohybu skupiny k cíli (world x,z). Vrací `true` při dosažení
@@ -984,6 +1100,9 @@ const ANIMATORS = {
   walk:           animateWalk,
   sit:            animateSit,
   wander:         animateWander,
+  walk_idle:      animateWalkIdle,
+  run_idle:       animateRunIdle,
+  squat_lift:     animateSquatLift,
 };
 
 // Registruje pár mesh↔instance k animaci. Voláno z `createMeshFor` pro
@@ -1288,6 +1407,79 @@ function updateLit(dt) {
   }
 }
 
+// === Faces: náhodně přepínané canvas výrazy na PlaneGeometry před hlavou ===
+// Třetí engine-derived registry (vedle `bubbleTails` a `litEntities`). Watcher
+// per-frame přepíná `mesh.material` mezi předgenerovanými texturami v náhodných
+// intervalech. Viz F2 z auditu sez. 11 — `updaters[]` federace odložena.
+const faceUpdaters = [];
+
+const FACE_EXPRESSIONS = ["happy", "neutral", "sad"];
+const FACE_SWITCH_MIN   = 2.0;   // s — minimální čas mezi změnami
+const FACE_SWITCH_RANGE = 3.0;   // s — náhodný přídavek (interval [2, 5] s)
+
+// Canvas 256×128 = 2:1, korespondující PlaneGeometry je širší než vyšší
+// (oči vedle sebe). Průhledné pozadí, černé oči + pusa.
+function makeFaceTexture(expression) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, 256, 128);
+
+  // Oči — dvě plné kuličky symetricky kolem středu.
+  ctx.fillStyle = "#000";
+  for (const eyeX of [88, 168]) {
+    ctx.beginPath();
+    ctx.arc(eyeX, 50, 14, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Pusa — výraz podle parametru. Tloušťka 6 px, zaoblené konce.
+  ctx.strokeStyle = "#000";
+  ctx.lineWidth = 6;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  if (expression === "happy") {
+    // Úsměv = dolní polovina kruhu (úhly 0..π v canvasu = pod středem,
+    // protože Y na canvasu roste dolů).
+    ctx.arc(128, 86, 22, 0, Math.PI);
+  } else if (expression === "sad") {
+    // Smutek = horní polovina kruhu (π..2π).
+    ctx.arc(128, 110, 22, Math.PI, Math.PI * 2);
+  } else {
+    // Neutrální = vodorovná čára.
+    ctx.moveTo(106, 100);
+    ctx.lineTo(150, 100);
+  }
+  ctx.stroke();
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  return tex;
+}
+
+function registerFaceRandomizer(object3d) {
+  const face = object3d.userData.face;
+  if (!face) return;
+  face.nextSwitch =
+    performance.now() / 1000 + FACE_SWITCH_MIN + Math.random() * FACE_SWITCH_RANGE;
+  faceUpdaters.push(face);
+}
+
+function updateFaces(now) {
+  for (const face of faceUpdaters) {
+    if (now < face.nextSwitch) continue;
+    // Vyber jiný výraz než aktuální, ať každá změna je viditelná.
+    let next;
+    do {
+      next = Math.floor(Math.random() * face.materials.length);
+    } while (next === face.current && face.materials.length > 1);
+    face.current = next;
+    face.mesh.material = face.materials[next];
+    face.nextSwitch = now + FACE_SWITCH_MIN + Math.random() * FACE_SWITCH_RANGE;
+  }
+}
+
 // === Vizualizační dispatch: instance → Three.js Object3D ===
 // Podle konkrétní třídy instance rozhodujeme, jaký vizuál sestrojit.
 // `instanceof` testuje řetěz dědičnosti. Pořadí větví je důležité:
@@ -1369,6 +1561,12 @@ function createMeshFor(instance) {
   if (instance instanceof BALLOON) {
     const { bag, light } = object3d.userData.parts;
     registerLit(instance, bag, light);
+  }
+  // Face randomizer pro entity, které mají vyplněný `userData.face` slot
+  // (zatím jen STICKMAN — `buildStickman` ho naplní). Stejně jako registerLit
+  // držíme registraci tady, ne v build*.
+  if (object3d.userData.face) {
+    registerFaceRandomizer(object3d);
   }
   return object3d;
 }
@@ -2057,7 +2255,8 @@ function buildStickman(group, instance) {
   const skinMat = new THREE.MeshStandardMaterial({ color: 0xf5c88e });
 
   // --- Trup (kvádr) ---
-  const torsoW = 0.4, torsoH = 0.5, torsoD = 0.24;
+  // Hloubka (Z) zploštěna z 0.24 na 0.16 (−1/3) — z profilu užší silueta.
+  const torsoW = 0.4, torsoH = 0.5, torsoD = 0.16;
   const torso = new THREE.Mesh(
     new THREE.BoxGeometry(torsoW, torsoH, torsoD),
     bodyMat,
@@ -2067,14 +2266,42 @@ function buildStickman(group, instance) {
   torso.position.y = torsoCenterY;
   group.add(torso);
 
-  // --- Hlava (low-poly koule, 8 rovník × 4 póly ≈ 32 trojúhelníků) ---
-  const headR = 0.18;
+  // --- Hlava (středně hustá koule, 16 rovník × 12 pólů ≈ 384 trojúhelníků) ---
+  // Poloměr zmenšen o 1/5 (0.18 → 0.144) — drobnější silueta, dětský proporčně.
+  const headR = 0.144;
   const head = new THREE.Mesh(
-    new THREE.SphereGeometry(headR, 8, 4),
+    new THREE.SphereGeometry(headR, 16, 12),
     skinMat,
   );
   head.position.y = torsoCenterY + torsoH / 2 + headR;
   group.add(head);
+
+  // --- Obličej: PlaneGeometry před hlavou + 3 canvas textury (happy/neutral/sad) ---
+  // Plane je child hlavy (lokální transform), jeho materiál se přepíná přes
+  // `faceUpdaters` v render loopu. `noShadow` aby čtverec ze stínu nedopadal
+  // na zem. MeshBasicMaterial = nereaguje na světlo (výraz vždy čitelný i ve
+  // stínu); `transparent` aby canvas alpha (průhledné pozadí) fungovala.
+  const faceMaterials = FACE_EXPRESSIONS.map((expr) => new THREE.MeshBasicMaterial({
+    map: makeFaceTexture(expr),
+    transparent: true,
+  }));
+  const faceMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(headR * 1.6, headR * 0.9),
+    faceMaterials[0],
+  );
+  // Lokální −Z = forward postavy (default). Plane default normal = +Z, takže
+  // rotation.y = π otočí čelo plane do −Z. Posun o 5 mm ven aby nedocházelo
+  // k z-fightu se sférou hlavy.
+  faceMesh.position.set(0, 0, -headR - 0.005);
+  faceMesh.rotation.y = Math.PI;
+  faceMesh.userData.noShadow = true;
+  head.add(faceMesh);
+  group.userData.face = {
+    mesh:      faceMesh,
+    materials: faceMaterials,
+    current:   0,
+    nextSwitch: 0,   // přepsáno v `registerFaceRandomizer`
+  };
 
   // --- Pomocný builder 3-segmentové končetiny ---
   // Hierarchie: `limb` Group (pivot rameno/kyčel) obsahuje upper Mesh + joint
@@ -2193,6 +2420,12 @@ function buildStickman(group, instance) {
     reset:     resetCharBase,
   };
 }
+
+// === Scéna 1: úvodní svět ===
+// Wrap stávajícího setupu do funkce — umožňuje URL-driven přepínač scén.
+// Reload stránky s `?scene=N` → dispatch na patřičný builder. Cleanup
+// registrů je „zdarma" díky reloadu (žádný in-memory dispose).
+function buildSceneOne(scene) {
 
 // === Model: 3×3 grid dlaždic v rovině Y=0 + strom ===
 // Centrální buňka (0,0,0) = mateřská CUBES (šachovnice jako default DD-07).
@@ -2376,26 +2609,11 @@ const rock1 = new ROCK(
 );
 scene.add(createMeshFor(rock1));
 
-// CHARACTER — humanoidní postavička ze dvou-dílových končetin. Dvě instance:
-// `char_0001` (pravá, chodí na místě) s `walk` animátorem, amp π/6 → viditelné
-// kývání končetin; `char_0002` (levá, loutka) bez ANIMATE → visí jako
-// marionetě v klidu. Pozice mezi růžicí a domkem, aby obě byly v záběru default
-// kamery (4,4,4 → 0,0,0).
-// Dvě poflakující se postavy — stavový automat `wander`. Náhodně střídají
+// Poflakující se postavy — stavový automat `wander`. Náhodně střídají
 // walk / run / stand / sit / lie / work. „Work" je dvojfázový: approach k
 // `subject` (rock nebo strom) + perform (mávnutí sekerou). Subjects jsou
-// sdílené (dva chodci můžou „těžit" totéž — bez konfliktu, jen vizuální
+// sdílené (více chodců můžou „těžit" totéž — bez konfliktu, jen vizuální
 // overlap).
-const char1 = new NOODLE(
-  "char_0001",
-  "Poutník modrý",
-  2, 0, -2,
-  0x4a7cbe,
-  "NOODLE — plastelínový poutník (dvě fazole + čtyři makarony, wander).",
-);
-char1.ANIMATE = { kind: "wander", bounds: 3, subjects: [rock1, tree1] };
-scene.add(createMeshFor(char1));
-
 const char3 = new CHARACTER(
   "char_0003",
   "Poutník zelený",
@@ -2505,6 +2723,146 @@ const dialog2 = new SPRITES(
 dialog2.SPEAKER = tbox2;
 // Krabice je voxel 1×1×1 → default SPEAKER_OFFSET_Y (0.5) míří přesně na vrch.
 scene.add(createMeshFor(dialog2));
+
+}   // konec buildSceneOne
+
+// === Scéna 2: travnatá louka ===
+// Velký horizontální plane v Y ≈ −0.5 s procedurální „grass" texturou
+// (mřížka 32×32 čtverečků, paleta zelených + občas žlutá). Texture wrap
+// + repeat dává dojem rozsáhlejší louky. Nahoře nad ní zůstává ShadowMaterial
+// z bootu (Y=-0.501) — stíny se promítají do trávy.
+
+// Procedurální tráva — canvas 256×256 s 32×32 buňkami, každá buňka náhodný
+// odstín z palety. NearestFilter zachová ostré hrany čtverečků (pixel-art
+// look), RepeatWrapping pak texturu obkládá po celé ploše plane.
+function makeGrassTexture() {
+  const canvas = document.createElement("canvas");
+  const SIZE = 256;
+  const CELL = 8;            // px na buňku → 32×32 grid
+  canvas.width = canvas.height = SIZE;
+  const ctx = canvas.getContext("2d");
+
+  // Paleta: pět zelených odstínů + občasná žlutá (sluncem vybledlá tráva).
+  const palette = [
+    "#4e823c",   // tmavá zeleň
+    "#629646",   // střední zeleň
+    "#78aa50",   // světlá zeleň
+    "#8cb446",   // žluto-zelená
+    "#5a8c37",   // olivová
+    "#b4c346",   // žlutá tráva (občas)
+  ];
+  // Kumulativní distribuce pro vážený výběr — žlutá ~5 %, ostatní podle zelené.
+  const weights = [0.25, 0.30, 0.20, 0.10, 0.10, 0.05];
+  const cum = [];
+  weights.reduce((acc, w, i) => (cum[i] = acc + w), 0);
+
+  for (let cy = 0; cy < SIZE; cy += CELL) {
+    for (let cx = 0; cx < SIZE; cx += CELL) {
+      const r = Math.random();
+      const idx = cum.findIndex((c) => r < c);
+      ctx.fillStyle = palette[idx];
+      ctx.fillRect(cx, cy, CELL, CELL);
+    }
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(3, 3);      // 3× tile přes 10×10 plane = ~3.3 j na repetition
+  tex.magFilter = THREE.NearestFilter;  // ostré hrany čtverečků
+  return tex;
+}
+
+function buildSceneTwo(scene) {
+  // Travnatá rovina — 10×10 j (stejný footprint jako grid Scény 1, kdyby se
+  // rozšířil na 10×10). Pod ShadowMaterial bootu (Y = −0.501), aby se stíny
+  // postav promítly do trávy. Posun o 1 mm dolů (Y = −0.502) zabraňuje
+  // z-fightu mezi shadow plane a grass plane.
+  const grass = new THREE.Mesh(
+    new THREE.PlaneGeometry(10, 10),
+    new THREE.MeshStandardMaterial({
+      map:       makeGrassTexture(),
+      roughness: 1,            // matný povrch
+      metalness: 0,
+    }),
+  );
+  grass.rotation.x = -Math.PI / 2;
+  grass.position.y = -0.502;
+  grass.receiveShadow = true;
+  scene.add(grass);
+
+  // Tři Stickmani vedle sebe — demo anatomicky věrných gait cyklů (sez. 13,
+  // inspirováno Gemini referenčním demem). Každý jiný `ANIMATE.kind`:
+  // chodec, běžec, dřepař.
+  const demos = [
+    { id: "char_0001", name: "Chodec",  x: -2.5, color: 0xcc3333, kind: "walk_idle" },
+    { id: "char_0002", name: "Běžec",   x:  0,   color: 0x3366cc, kind: "run_idle"  },
+    { id: "char_0003", name: "Dřepař",  x:  2.5, color: 0x33aa55, kind: "squat_lift" },
+  ];
+  for (const d of demos) {
+    const stick = new STICKMAN(
+      d.id, d.name, d.x, 0, 0, d.color,
+      `STICKMAN — ${d.kind} demo (anatomicky věrný cyklus).`,
+    );
+    stick.ANIMATE = { kind: d.kind };
+    scene.add(createMeshFor(stick));
+  }
+}
+
+// === Scene dispatch podle URL ===
+// `?scene=N` parametr vybírá builder. Default = 1. Reload stránky dělá
+// kompletní cleanup zdarma (Three.js scene + všechny engine registry).
+const SCENE_BUILDERS = { "1": buildSceneOne, "2": buildSceneTwo };
+const requestedScene = new URLSearchParams(location.search).get("scene") || "1";
+const sceneBuilder = SCENE_BUILDERS[requestedScene] || buildSceneOne;
+sceneBuilder(scene);
+
+// === Jednorázový export Stickmana do .glb (Blender pipeline) ===
+// Volej z DevTools konzole: `exportStickman()`. Najde první STICKMAN entitu
+// v scéně, serializuje její Three.js Group strukturu přes `GLTFExporter`
+// (vnořené Object3D uzly bez skeletonu — armaturu doplníš v Blenderu).
+// Stáhne se jako `stickman.glb` do Downloads.
+window.exportStickman = async function exportStickman() {
+  const root = scene.children.find(
+    (c) => c.userData?.instance?.constructor?.name === "STICKMAN",
+  );
+  if (!root) {
+    console.warn("Stickman v aktuální scéně nenalezen.");
+    return;
+  }
+  const { GLTFExporter } = await import("three/addons/exporters/GLTFExporter.js");
+  new GLTFExporter().parse(
+    root,
+    (data) => {
+      const blob = new Blob([data], { type: "model/gltf-binary" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "stickman.glb";
+      a.click();
+      URL.revokeObjectURL(a.href);
+      console.log("Stickman exportován jako stickman.glb.");
+    },
+    (err) => console.error("Export selhal:", err),
+    { binary: true },
+  );
+};
+
+// === Scene switcher: HUD tlačítka v pravém horním rohu ===
+// Reload-based přepínač. Aktivní scéna má `aria-pressed="true"` (vizuální
+// odlišení v CSS). Klik = `location.search` → reload s novým parametrem.
+const switcherEl = document.getElementById("scene-switcher");
+if (switcherEl) {
+  Object.keys(SCENE_BUILDERS).forEach((id) => {
+    const btn = document.createElement("button");
+    btn.textContent = `Scéna ${id}`;
+    btn.setAttribute("aria-pressed", id === requestedScene ? "true" : "false");
+    btn.addEventListener("click", () => {
+      if (id === requestedScene) return;
+      location.search = `?scene=${id}`;
+    });
+    switcherEl.appendChild(btn);
+  });
+}
 
 // === Edge highlight při hover (editor-like feedback) ===
 // Při najetí kurzoru na CUBES-potomka (kromě SPRITES) vykreslíme žluté
@@ -2730,6 +3088,9 @@ function animate() {
   // Fade watcher pro BALLOON.LIT — exponenciální lerp `emissive` a
   // `PointLight.intensity` podle `instance.LIT` stavu (DD-17).
   updateLit(dt);
+  // Náhodné přepínání obličejových výrazů STICKMANa — nezávislý timer per
+  // entita, interval [2, 5] s.
+  updateFaces(now);
   renderer.render(scene, camera);
 }
 animate();
