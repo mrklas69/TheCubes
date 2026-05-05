@@ -245,62 +245,9 @@ export class CLOUD extends COMPOSITES {
   // Podporovaný `ANIMATE.kind`: `drift` (viz dispatch v main.js).
 }
 
-/**
- * CHARACTER = humanoidní postavička („loutka"). Atribut `COLOR` určuje barvu
- * oblečení/končetin; hlava má fixní „pleťový" odstín v enginu.
- *
- * Default pose (bez `ANIMATE`): ruce podél těla, nohy rovně dolů.
- * Podporované `ANIMATE.kind`: `walk`, `sit`, `lie`, `wander` (stavový automat
- * s 6 substavy: walk/run/stand/sit/lie/work). Viz dispatch v main.js (DD-18).
- */
-export class CHARACTER extends COMPOSITES {
-  constructor(id, name, x, y, z, color, description = "") {
-    super(id, name, x, y, z, description);
-    this.COLOR = color;
-  }
-}
-
-/**
- * NOODLE = humanoidní postavička alternativního stylu — „fazole + nudle".
- * Tělo a hlava = dvě CapsuleGeometry (šišky), čtyři končetiny = TubeGeometry
- * podél křivky CatmullRomCurve3 (silnější makaron). Oproti CHARACTER, který
- * má rigidní hinge klouby, NOODLE ohýbá končetiny per-frame mutací
- * kontrolních bodů křivky → plastelínový walk cycle.
- *
- * Atribut `COLOR` (JS number 0xRRGGBB) barví tělo + končetiny; hlava má
- * fixní „pleťový" odstín v enginu (stejně jako CHARACTER — izomorfismus).
- *
- * Podporované `ANIMATE.kind` sdílené s CHARACTER: `walk`, `sit`, `lie`,
- * `wander`. Dispatch pose primitives přes `group.userData.poseFns` (engine-side);
- * sit/work v první iteraci fallback na rest pose (plné ohyby doplníme později).
- */
-export class NOODLE extends COMPOSITES {
-  constructor(id, name, x, y, z, color, description = "") {
-    super(id, name, x, y, z, description);
-    this.COLOR = color;
-  }
-}
-
-/**
- * STICKMAN = humanoidní postavička v blokově low-poly stylu. Kvádrový trup,
- * nízko-polygonová koule hlava (8 segmentů rovník, 4 póly), válcové končetiny
- * se 6 radial segmenty, kostkové ruce a chodidla. Plná kloubová struktura:
- * rameno/loket/zápěstí a kyčel/koleno/kotník — 3 hinge klouby per končetina
- * (oproti CHARACTER se 2 hinge klouby).
- *
- * Atribut `COLOR` (JS number 0xRRGGBB) barví tělo i končetiny; hlava má
- * fixní „pleťový" odstín (izomorfismus s CHARACTER/NOODLE).
- *
- * Podporované `ANIMATE.kind`: `walk`, `sit`, `lie`, `wander` — sdílené pose
- * primitives s CHARACTER přes `poseFns` dispatch. `applyWalkCycle` animuje
- * i volitelná zápěstí a kotníky (pokud `parts` je má).
- */
-export class STICKMAN extends COMPOSITES {
-  constructor(id, name, x, y, z, color, description = "") {
-    super(id, name, x, y, z, description);
-    this.COLOR = color;
-  }
-}
+// Humanoidní třídy (CHARACTER, NOODLE, STICKMAN) byly přesunuty do
+// samostatného projektu ./source/Stickman (sez. 14 cleanup). DD-18/19/20
+// zůstávají v immutable logu jako historický kontext.
 
 /**
  * BALLOON = konkrétní COMPOSITES reprezentující horkovzdušný balón.
