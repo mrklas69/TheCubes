@@ -250,6 +250,61 @@ export class CLOUD extends COMPOSITES {
 // zůstávají v immutable logu jako historický kontext.
 
 /**
+ * TUNNEL_ARCH = konkrétní COMPOSITES — kamenný portál tunelu (Π shape).
+ * Dva svislé sloupy + horní příčník, vnitřek průchozí. Footprint 1×1×1
+ * voxel, materiál šedý kamenný.
+ *
+ * Atribut `COLOR` (JS number 0xRRGGBB, default `0x8a8278` = STONE_BASE)
+ * — barva sloupů + příčníku.
+ *
+ * Use case: Scéna 2 — vstupy do tunelu na obou koncích železniční trati.
+ * Train mezi nimi projíždí. Bez `ANIMATE`.
+ */
+export class TUNNEL_ARCH extends COMPOSITES {
+  constructor(id, name, x, y, z, color = 0x8a8278, description = "") {
+    super(id, name, x, y, z, description);
+    this.COLOR = color;
+  }
+}
+
+/**
+ * WAREHOUSE = konkrétní COMPOSITES — sklad u železniční koleje. Kvádr stěn
+ * (BoxGeometry) + jehlanová střecha (ConeGeometry, 4 segmenty, HOUSE idiom),
+ * dveře a okno na čelní stěně. Footprint 2 voxely × 1 voxel; výška ~1.5j.
+ *
+ * Atribut `COLOR` (JS number 0xRRGGBB) barví stěny; střecha + dveře + okno
+ * mají fixní barvy v enginu (izomorfismus s HOUSE — model drží jen primární
+ * barvu, engine doplní paletu).
+ *
+ * Use case: Scéna 2 (vlaková dioráma) — sklad nakládá/vykládá náklad u kolejí.
+ * Bez `ANIMATE` — statická budova.
+ */
+export class WAREHOUSE extends COMPOSITES {
+  constructor(id, name, x, y, z, color, description = "") {
+    super(id, name, x, y, z, description);
+    this.COLOR = color;
+  }
+}
+
+/**
+ * TRAIN = konkrétní COMPOSITES — nákladní vlak (lokomotiva + 1 vagón).
+ * Lokomotiva: hlavní kvádr + kabina + komín; vagón: otevřený kvádr za
+ * lokomotivou, propojený spojkou. 8 kol pod oběma vozy. Total délka ~2.6j.
+ *
+ * Atribut `COLOR` barví lokomotivu (kabina je ve stejné barvě); vagón má
+ * fixní hnědou (izomorfismus s WAREHOUSE).
+ *
+ * Use case: Scéna 2 — vlak na koleji, statický ve fázi 1. Pohyb (`ANIMATE`
+ * `rail`) a nakládka přijdou ve fázi 2/3.
+ */
+export class TRAIN extends COMPOSITES {
+  constructor(id, name, x, y, z, color, description = "") {
+    super(id, name, x, y, z, description);
+    this.COLOR = color;
+  }
+}
+
+/**
  * BALLOON = konkrétní COMPOSITES reprezentující horkovzdušný balón.
  *
  * Vizualizace: vak (koule) + 4 lana + koš. Vak je barevný podle atributu

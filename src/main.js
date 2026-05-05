@@ -6,7 +6,7 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, BALLOON, HOUSE, CLOUD, ROCK, TIMER, COUNTER } from "./model.js";
+import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, BALLOON, HOUSE, CLOUD, ROCK, TUNNEL_ARCH, WAREHOUSE, TRAIN, TIMER, COUNTER } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
 
 // === Renderer ===
@@ -58,7 +58,9 @@ scene.add(new THREE.AmbientLight(0xffffff, 0.15));
 // target.position je default (0,0,0), směr se odvodí jako position → target.
 // Pozn.: Three.js má Y jako osu nahoru. Viz DD-10 (nahrazuje DD-09).
 const sun = new THREE.DirectionalLight(0xffffff, 0.8);
-sun.position.set(-10, 10, 10);
+// Pozice slunce: úhel ≈ 30° nad horizontem (Y=8, horizontal_dist=√(100+100)≈14.14
+// → atan(8/14.14)=29.5°). Stíny ~1.5× delší než výška objektu.
+sun.position.set(-10, 8, 10);
 // Slunce vrhá stíny. DirectionalLight používá **ortografickou** stínovou
 // kameru — je jako slunce v nekonečnu, paprsky jsou rovnoběžné. Frustum
 // této kamery musí obalit celou scénu, jinak objekty mimo frustum stín
@@ -83,20 +85,9 @@ sun.shadow.bias = -0.0005;
 sun.shadow.normalBias = 0.02;
 scene.add(sun);
 
-// === Orientační pomůcky ===
-// GridHelper = 2D mřížka v rovině XZ na dané výšce Y. Pomáhá vizuálně
-// pochopit rozložení scény a směr os. Parametry: celková velikost (10
-// jednotek), počet dělení (10 → 1 jednotka = 1 buňka — odpovídá voxelu).
-// Y = -0.5 → grid leží přesně pod kostkami (BoxGeometry 1×1×1 centrovaná
-// v (0,0,0) sahá od -0.5 do +0.5). Kostky tak "stojí" na gridu.
-const grid = new THREE.GridHelper(10, 10, 0x666666, 0x333333);
-grid.position.y = -0.5;
-scene.add(grid);
-
-// AxesHelper = tři barevné úsečky z počátku: X červená, Y zelená, Z modrá.
-// Parametr = délka v jednotkách. Incident DD-09 (světlo svítilo zespodu
-// kvůli záměně os) by s helperem ve scéně nenastal.
-scene.add(new THREE.AxesHelper(3));
+// (Sez. 14: GridHelper a AxesHelper odstraněny — orientační pomůcky pro
+// vývojářské účely M1/M2 už nepotřebujeme. Souřadný systém Three.js Y-up
+// je etablovaný; mřížka navíc rušila čistotu dioramy.)
 
 // === Ground plane pro zachytávání stínů ===
 // PlaneGeometry je default v rovině XY (ležící vertikálně). Otočíme ji
@@ -237,6 +228,134 @@ function makeEmojiTexture(char) {
   return texture;
 }
 
+// === Pojmenované procedurální textury (`:dirt`, `:grass-top`, …) ===
+// Jednotná base barva + 2–4 náhodné obdélníkové záplaty v kontrastních
+// odstínech. Per-cube fresh (žádný singleton) → každá kostka v 10×10 dioramě
+// má lehce jiný vzor → žádné mřížkové opakování v ploše.
+//
+// Idiom inspirovaný Minecraftem zjednodušený do KISS: minimum noisy detailu,
+// dominantní jednolitá plocha s drobnou variací. Rozšiřitelné — přidání
+// `":sand"` = nová `make*Texture()` + řádek v NAMED_TEXTURE_FACTORIES.
+// Konstanty texturového gridu — 16×16 px (Minecraft klasika), záplaty 1–2 px
+// (na polovinu z původních 2–5 px). Grass strip = 2 px ≈ 12.5 % výšky kostky
+// (cíl 10 % = 1.6 px, zaokrouhleno na celý pixel pro pixel-art look).
+const TEX_SIZE = 16;
+const PATCH_MIN = 1;
+const PATCH_MAX = 2;
+const GRASS_STRIP_PX = 2;
+
+// Helper — náhodné obdélníkové záplaty v zadaném vertikálním pásu canvasu.
+// Záplaty mohou přesáhnout okraj canvasu nebo pásu (fillRect ořízne) — drobné
+// „roztrhané" hrany dávají organický vzhled.
+function drawPatches(ctx, palette, count, yMin, yMax) {
+  const yRange = yMax - yMin;
+  for (let i = 0; i < count; i++) {
+    const w = PATCH_MIN + Math.floor(Math.random() * (PATCH_MAX - PATCH_MIN + 1));
+    const h = PATCH_MIN + Math.floor(Math.random() * (PATCH_MAX - PATCH_MIN + 1));
+    const x = Math.floor(Math.random() * TEX_SIZE);
+    const y = yMin + Math.floor(Math.random() * yRange);
+    ctx.fillStyle = palette[Math.floor(Math.random() * palette.length)];
+    ctx.fillRect(x, y, w, h);
+  }
+}
+
+// Wrap canvas → THREE.Texture s pixel-art nastavením (NearestFilter) a
+// správným barvovým prostorem.
+function canvasToPixelTexture(canvas) {
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// Jednolitý base + 2–4 záplaty (přes celou plochu).
+function makePatchTexture(baseColor, accentPalette) {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = TEX_SIZE;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = baseColor;
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+  const patchCount = 2 + Math.floor(Math.random() * 3);   // 2..4
+  drawPatches(ctx, accentPalette, patchCount, 0, TEX_SIZE);
+  return canvasToPixelTexture(canvas);
+}
+
+// Pozn.: paleta dirt + grass je sdílená v `DIRT_*` / `GRASS_*` konstantách,
+// aby `:grass-side` (kompozit obou vrstev) mohla čerpat ze stejných hodnot.
+const DIRT_BASE = "#6b4a2a";
+const DIRT_ACCENTS = ["#5a3a22", "#7a5630", "#48301d"];
+const GRASS_BASE = "#5d9446";
+const GRASS_ACCENTS = ["#4e823c", "#3e6a32", "#6ea054"];
+const STONE_BASE = "#8a8278";
+const STONE_ACCENTS = ["#6f6860", "#a09890", "#5a5450"];
+
+function makeDirtTexture() {
+  return makePatchTexture(DIRT_BASE, DIRT_ACCENTS);
+}
+
+function makeGrassTopTexture() {
+  return makePatchTexture(GRASS_BASE, GRASS_ACCENTS);
+}
+
+function makeStoneTexture() {
+  return makePatchTexture(STONE_BASE, STONE_ACCENTS);
+}
+
+// Kolej (vrch voxelu): tmavě hnědý štěrkový základ + pražce (sleepers) +
+// kovové kolejnice. Pražce vertikální v canvasu (= napříč směrem jízdy
+// ve světě X), kolejnice horizontální v canvasu (= podél X osy ve světě).
+// Pokud orientace v prohlížeči vyjde špatně, swap canvas X/Y.
+function makeRailTopTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = TEX_SIZE;
+  const ctx = canvas.getContext("2d");
+  // Tmavě hnědý štěrk pod tratí
+  ctx.fillStyle = "#3a2818";
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+  // Pražce — 4 vertikální dřevěné pruhy (canvas X)
+  ctx.fillStyle = "#6b4a2a";
+  for (const sx of [1, 5, 9, 13]) {
+    ctx.fillRect(sx, 0, 2, TEX_SIZE);
+  }
+  // Kolejnice — 2 horizontální kovové pruhy (canvas Y)
+  ctx.fillStyle = "#9c948c";
+  ctx.fillRect(0, 4, TEX_SIZE, 2);
+  ctx.fillRect(0, 10, TEX_SIZE, 2);
+  return canvasToPixelTexture(canvas);
+}
+
+// Boční strana grass-bloku: spodních 14 px dirt + vrchních 2 px grass strip.
+// Záplaty každé vrstvy jen v jejím pásu (drawPatches respektuje yMin/yMax).
+function makeGrassSideTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = TEX_SIZE;
+  const ctx = canvas.getContext("2d");
+  // Spodní vrstva — dirt
+  ctx.fillStyle = DIRT_BASE;
+  ctx.fillRect(0, GRASS_STRIP_PX, TEX_SIZE, TEX_SIZE - GRASS_STRIP_PX);
+  drawPatches(ctx, DIRT_ACCENTS, 2 + Math.floor(Math.random() * 3), GRASS_STRIP_PX, TEX_SIZE);
+  // Vrchní vrstva — grass strip
+  ctx.fillStyle = GRASS_BASE;
+  ctx.fillRect(0, 0, TEX_SIZE, GRASS_STRIP_PX);
+  // V tenkém pásu jen 0–1 záplata, ať nezakryje base barvu.
+  if (Math.random() < 0.6) {
+    drawPatches(ctx, GRASS_ACCENTS, 1, 0, GRASS_STRIP_PX);
+  }
+  return canvasToPixelTexture(canvas);
+}
+
+// Per-cube fresh textury (žádný singleton) — každé volání factory vrátí novou
+// `THREE.Texture` s vlastním vzorem → 100 kostek × 6 stran = až 600 unikátních
+// textur. Každá 16×16 = 256 px, celkem ~600 KB GPU mem (zanedbatelné).
+const NAMED_TEXTURE_FACTORIES = {
+  ":dirt":       () => makeDirtTexture(),
+  ":grass-top":  () => makeGrassTopTexture(),
+  ":grass-side": () => makeGrassSideTexture(),
+  ":stone":      () => makeStoneTexture(),
+  ":rail-top":   () => makeRailTopTexture(),
+};
+
 // === Dispatch: atribut strany TCUBES → Three.js materiál ===
 // Rozhodne podle **typu** hodnoty, jaký materiál pro jednu stranu voxelu
 // vyrobit. Izomorfně s dispatchem `createSpriteFor(ASSET)` — stejný pattern
@@ -245,8 +364,11 @@ function makeEmojiTexture(char) {
 //  - `null`/`undefined` → fallback šachovnice (DD-07). Stejná sdílená
 //    textura jako u mateřské CUBES — vizuální idiom „strana nevyplněná".
 //  - `number` (0xRRGGBB) → plocha barva celé strany.
-//  - `string` (`"#ff0000"`, `"🌳"`, …) → Three.js `Color` umí parse hex
-//    i named barvy, nebo dispatch na canvas s emoji/textem pro jiné stringy.
+//  - `string` `:<name>` → pojmenovaná sdílená procedurální textura
+//    (`:dirt`, `:grass-top`, …). Lookup v `NAMED_TEXTURE_FACTORIES` —
+//    všechny voxely sdílejí stejný `THREE.Texture` instance.
+//  - `string` `#rrggbb` / CSS barva → plocha barva.
+//  - jiný `string` (emoji/text) → canvas s textem.
 function faceMaterialFor(val) {
   if (val == null) {
     return new THREE.MeshStandardMaterial({ map: checkerboardTexture });
@@ -255,6 +377,15 @@ function faceMaterialFor(val) {
     return new THREE.MeshStandardMaterial({ color: val });
   }
   if (typeof val === "string") {
+    // Prefix `:` značí pojmenovanou sdílenou texturu (Minecraft-style).
+    if (val.startsWith(":")) {
+      const factory = NAMED_TEXTURE_FACTORIES[val];
+      if (factory) {
+        return new THREE.MeshStandardMaterial({ map: factory() });
+      }
+      console.warn(`Neznámá pojmenovaná textura: "${val}"`);
+      return new THREE.MeshStandardMaterial({ map: checkerboardTexture });
+    }
     // `#rrggbb` → Three.js Color parse (stejné jako number). Test přes regex,
     // aby např. `"red"` prošlo stejnou cestou (pojmenované CSS barvy).
     if (/^#[0-9a-f]{3,8}$/i.test(val)) {
@@ -1030,6 +1161,12 @@ function createCompositeFor(instance) {
     buildCloud(group);
   } else if (instance instanceof ROCK) {
     buildRock(group, instance);
+  } else if (instance instanceof TUNNEL_ARCH) {
+    buildTunnelArch(group, instance);
+  } else if (instance instanceof WAREHOUSE) {
+    buildWarehouse(group, instance);
+  } else if (instance instanceof TRAIN) {
+    buildTrain(group, instance);
   }
 
   // userData.instance + shadow flagy nastaví až `createMeshFor` jednotně
@@ -1342,6 +1479,146 @@ function buildRock(group, instance) {
   });
 }
 
+// TUNNEL_ARCH builder — kamenný kulový (zaoblený) oblouk. Half-torus stojící
+// jako duha: nohy na zemi, oblouk nahoře, vlak prochází zespodu podél X osy.
+//
+// TorusGeometry: ring v XY plane, thetaLength=π → horní polovina kruhu.
+// Rotace Y o π/2 přepne ring do YZ plane → opening (void uvnitř oblouku) pro
+// průchod podél X. Translate Y na −0.5 → nohy na ground level.
+// Vertikální stretch 1.7× pro elegantnější (Roman-style) proporce.
+function buildTunnelArch(group, instance) {
+  const stoneMat = new THREE.MeshStandardMaterial({ color: instance.COLOR });
+  const RING_R = 0.42;   // poloměr středu trubky → outer width = 2×(R+tube) ≈ 1
+  const TUBE_R = 0.08;   // tloušťka oblouku
+  const arch = new THREE.Mesh(
+    new THREE.TorusGeometry(RING_R, TUBE_R, 8, 24, Math.PI), stoneMat,
+  );
+  arch.rotation.y = Math.PI / 2;
+  arch.position.y = -0.5;
+  arch.scale.y = 1.7;    // elliptický stretch — vyšší než širší
+  group.add(arch);
+}
+
+// WAREHOUSE builder — sklad u koleje (Scéna 2). Kvádr stěn + jehlanová střecha
+// (HOUSE idiom) + dveře a okno na čelní (-Z) stěně. Konvence: instance.Y = 0
+// znamená spodek stěn na world Y = −0.5 (= horní plocha grass voxelů). Footprint
+// 2j × ~1.4j, výška stěn 1.5j + střecha 0.7j → vrchol v world Y ≈ 1.7.
+function buildWarehouse(group, instance) {
+  const wallMat = new THREE.MeshStandardMaterial({ color: instance.COLOR });
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0x4a3020 });   // tmavě hnědá
+  const doorMat = new THREE.MeshStandardMaterial({ color: 0x2a1810 });
+  const winMat  = new THREE.MeshStandardMaterial({
+    color: 0xffe8a0, emissive: 0x664422, emissiveIntensity: 0.4,         // teplé světlo zevnitř
+  });
+
+  const W = 2.0;          // šířka (X)
+  const D = 1.4;          // hloubka (Z)
+  const H = 1.5;          // výška stěn (Y)
+  const ROOF_H = 0.7;
+  const GROUND = -0.5;    // top of grass voxel = world Y −0.5
+
+  // Stěny — BoxGeometry s base v Y=GROUND (instance.Y posune celý group)
+  const walls = new THREE.Mesh(new THREE.BoxGeometry(W, H, D), wallMat);
+  walls.position.y = GROUND + H / 2;
+  group.add(walls);
+
+  // Dveře — tmavý plát na −Z stěně (čelo směřující ke koleji v Z=−4)
+  const door = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.95), doorMat);
+  door.position.set(-0.5, GROUND + 0.475, -D / 2 - 0.001);
+  group.add(door);
+
+  // Okno — světlý plát vpravo od dveří, mírně výš (působí osvětleně)
+  const win = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.4), winMat);
+  win.position.set(0.5, GROUND + 0.95, -D / 2 - 0.001);
+  group.add(win);
+
+  // Střecha — 4-stranný jehlan (ConeGeometry s 4 segmenty, HOUSE pattern).
+  // ConeGeometry default: vrchol v +Y, base v −Y, radius je půl diagonály base.
+  // Rotace Y o π/4 narovná stěny jehlanu rovnoběžně s X/Z osami.
+  const roofRadius = Math.hypot(W / 2, D / 2) * 0.95;   // diagonála základny
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(roofRadius, ROOF_H, 4), roofMat);
+  roof.position.y = GROUND + H + ROOF_H / 2;
+  roof.rotation.y = Math.PI / 4;
+  group.add(roof);
+}
+
+// TRAIN builder — lokomotiva + 1 nákladní vagón. Konvence: instance.Y = 0
+// znamená kola sedí na rail topu (world Y = 0.5) — interní wheel.position.y =
+// railTop + wheelRadius. Train heading: lokomotiva vpřed (+X). Vagón vzadu (−X).
+function buildTrain(group, instance) {
+  const bodyMat    = new THREE.MeshStandardMaterial({ color: instance.COLOR });
+  const cabMat     = new THREE.MeshStandardMaterial({ color: 0x442218 });   // tmavší než tělo
+  const cargoMat   = new THREE.MeshStandardMaterial({ color: 0x6a4a2a });   // hnědý vagón
+  const wheelMat   = new THREE.MeshStandardMaterial({ color: 0x222222 });
+  const chimneyMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a });
+
+  const RAIL_TOP   = 0.5;          // world Y koleje (top voxelu Y=0)
+  const WHEEL_R    = 0.16;
+  const WHEEL_THK  = 0.06;
+  const FRAME_BOT  = RAIL_TOP + 2 * WHEEL_R;   // spodek lokomotivy/vagónu
+
+  // --- Lokomotiva (vpředu, X > 0) ---
+  const LOCO_LEN = 1.2;
+  const LOCO_W   = 0.55;
+  const LOCO_H   = 0.55;
+  const LOCO_X   = 0.65;            // střed lokomotivy v X
+  const loco = new THREE.Mesh(new THREE.BoxGeometry(LOCO_LEN, LOCO_H, LOCO_W), bodyMat);
+  loco.position.set(LOCO_X, FRAME_BOT + LOCO_H / 2, 0);
+  group.add(loco);
+
+  // Kabina — užší box vzadu na lokomotivě (zadní třetina, vyšší)
+  const CAB_LEN = 0.45;
+  const CAB_H   = 0.4;
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(CAB_LEN, CAB_H, LOCO_W), cabMat);
+  cab.position.set(LOCO_X - LOCO_LEN / 2 + CAB_LEN / 2,
+                   FRAME_BOT + LOCO_H + CAB_H / 2, 0);
+  group.add(cab);
+
+  // Komín — krátký válec na předku lokomotivy
+  const chimney = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.07, 0.07, 0.32, 10), chimneyMat,
+  );
+  chimney.position.set(LOCO_X + LOCO_LEN / 2 - 0.2,
+                       FRAME_BOT + LOCO_H + 0.16, 0);
+  group.add(chimney);
+
+  // --- Vagón (vzadu, X < 0) ---
+  const CAR_LEN = 0.95;
+  const CAR_W   = LOCO_W;
+  const CAR_H   = 0.5;
+  const CAR_X   = -0.55;
+  const car = new THREE.Mesh(new THREE.BoxGeometry(CAR_LEN, CAR_H, CAR_W), cargoMat);
+  car.position.set(CAR_X, FRAME_BOT + CAR_H / 2, 0);
+  group.add(car);
+
+  // Spojka mezi lokomotivou a vagónem — krátká tyč
+  const link = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.05, 0.06), wheelMat);
+  link.position.set((LOCO_X - LOCO_LEN / 2 + CAR_X + CAR_LEN / 2) / 2,
+                    FRAME_BOT + 0.1, 0);
+  group.add(link);
+
+  // --- Kola — po 2 párech pod lokomotivou a vagónem ---
+  // CylinderGeometry default osa Y; pro kola s osou rovnoběžnou s Z (= napříč
+  // směrem jízdy) rotujeme kolem X o π/2.
+  function addWheel(x, z) {
+    const wheel = new THREE.Mesh(
+      new THREE.CylinderGeometry(WHEEL_R, WHEEL_R, WHEEL_THK, 12), wheelMat,
+    );
+    wheel.position.set(x, RAIL_TOP + WHEEL_R, z);
+    wheel.rotation.x = Math.PI / 2;
+    group.add(wheel);
+  }
+  // Lokomotiva — 2 páry: pod přední třetinou + zadní třetinou
+  for (const x of [LOCO_X + 0.3, LOCO_X - 0.3]) {
+    addWheel(x,  LOCO_W / 2 + 0.02);
+    addWheel(x, -LOCO_W / 2 - 0.02);
+  }
+  // Vagón — 2 páry
+  for (const x of [CAR_X + 0.25, CAR_X - 0.25]) {
+    addWheel(x,  CAR_W / 2 + 0.02);
+    addWheel(x, -CAR_W / 2 - 0.02);
+  }
+}
 
 // === Scéna 1: úvodní svět ===
 // Wrap stávajícího setupu do funkce — umožňuje URL-driven přepínač scén.
@@ -1604,70 +1881,214 @@ scene.add(createMeshFor(dialog2));
 
 }   // konec buildSceneOne
 
-// === Scéna 2: travnatá louka ===
-// Velký horizontální plane v Y ≈ −0.5 s procedurální „grass" texturou
-// (mřížka 32×32 čtverečků, paleta zelených + občas žlutá). Texture wrap
-// + repeat dává dojem rozsáhlejší louky. Nahoře nad ní zůstává ShadowMaterial
-// z bootu (Y=-0.501) — stíny se promítají do trávy.
+// === Scéna 2: 10×10 dioráma (postupně budovaná, s interaktivním builderem) ===
+// Připraveno v kódu (čeká na zavolání): textura `:rail-top`; třídy WAREHOUSE,
+// TRAIN; buildery `buildWarehouse`, `buildTrain`.
 
-// Procedurální tráva — canvas 256×256 s 32×32 buňkami, každá buňka náhodný
-// odstín z palety. NearestFilter zachová ostré hrany čtverečků (pixel-art
-// look), RepeatWrapping pak texturu obkládá po celé ploše plane.
-function makeGrassTexture() {
-  const canvas = document.createElement("canvas");
-  const SIZE = 256;
-  const CELL = 8;            // px na buňku → 32×32 grid
-  canvas.width = canvas.height = SIZE;
-  const ctx = canvas.getContext("2d");
-
-  // Paleta: pět zelených odstínů + občasná žlutá (sluncem vybledlá tráva).
-  const palette = [
-    "#4e823c",   // tmavá zeleň
-    "#629646",   // střední zeleň
-    "#78aa50",   // světlá zeleň
-    "#8cb446",   // žluto-zelená
-    "#5a8c37",   // olivová
-    "#b4c346",   // žlutá tráva (občas)
-  ];
-  // Kumulativní distribuce pro vážený výběr — žlutá ~5 %, ostatní podle zelené.
-  const weights = [0.25, 0.30, 0.20, 0.10, 0.10, 0.05];
-  const cum = [];
-  weights.reduce((acc, w, i) => (cum[i] = acc + w), 0);
-
-  for (let cy = 0; cy < SIZE; cy += CELL) {
-    for (let cx = 0; cx < SIZE; cx += CELL) {
-      const r = Math.random();
-      const idx = cum.findIndex((c) => r < c);
-      ctx.fillStyle = palette[idx];
-      ctx.fillRect(cx, cy, CELL, CELL);
-    }
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(3, 3);      // 3× tile přes 10×10 plane = ~3.3 j na repetition
-  tex.magFilter = THREE.NearestFilter;  // ostré hrany čtverečků
-  return tex;
+// Helpery pro 3 typy voxelových bloků — sjednocený pattern (izomorfismus).
+// Volány z `buildSceneTwo` (statický seed) i z builderu (interaktivní spawn).
+// Helpery pro 3 typy voxelových bloků — sdílený pattern (izomorfismus DD-14).
+function makeStoneBlock(id, x, y, z) {
+  return new TCUBES(id, `Skála (${x}, ${y}, ${z})`, x, y, z, {
+    TOP:    ":stone", BOTTOM: ":stone",
+    NORTH:  ":stone", SOUTH:  ":stone",
+    EAST:   ":stone", WEST:   ":stone",
+  }, "TCUBES — skála (šedý kamenný blok).");
 }
+
+function makeDirtBlock(id, x, y, z) {
+  return new TCUBES(id, `Hlína (${x}, ${y}, ${z})`, x, y, z, {
+    TOP:    ":dirt", BOTTOM: ":dirt",
+    NORTH:  ":dirt", SOUTH:  ":dirt",
+    EAST:   ":dirt", WEST:   ":dirt",
+  }, "TCUBES — hlíněný blok.");
+}
+
+function makeGrassBlock(id, x, y, z) {
+  return new TCUBES(id, `Tráva (${x}, ${y}, ${z})`, x, y, z, {
+    TOP:    ":grass-top", BOTTOM: ":dirt",
+    NORTH:  ":grass-side", SOUTH:  ":grass-side",
+    EAST:   ":grass-side", WEST:   ":grass-side",
+  }, "TCUBES — travnatý blok.");
+}
+
+// Layout Scény 2 — exportovaný z builderu (sez. 14). Pravidlo „překryté =
+// hlína / skála" je už aplikované při exportu (grass s Y+1 obsazené → dirt;
+// + Y+2 obsazené → stone). Aktualizace: postavit v builderu, kliknout
+// „Export do clipboardu", nahradit obsah pole.
+const SCENE2_LAYOUT = [
+  ["dirt", -5, -1, -5],
+  ["dirt", -5, 0, -5],
+  ["dirt", -5, 1, -5],
+  ["grass", -5, 2, -5],
+  ["dirt", -4, -1, -5],
+  ["dirt", -4, 0, -5],
+  ["dirt", -4, 1, -5],
+  ["grass", -4, 2, -5],
+  ["dirt", -3, -1, -5],
+  ["dirt", -3, 0, -5],
+  ["grass", -3, 1, -5],
+  ["dirt", -2, -1, -5],
+  ["dirt", -2, 0, -5],
+  ["grass", -2, 1, -5],
+  ["dirt", -1, -1, -5],
+  ["dirt", -1, 0, -5],
+  ["dirt", 0, -1, -5],
+  ["dirt", 0, 0, -5],
+  ["grass", 0, 1, -5],
+  ["dirt", 1, -1, -5],
+  ["dirt", 1, 0, -5],
+  ["grass", 1, 1, -5],
+  ["dirt", 2, -1, -5],
+  ["dirt", 2, 0, -5],
+  ["stone", 2, 1, -5],
+  ["stone", 2, 2, -5],
+  ["dirt", 3, -1, -5],
+  ["dirt", 3, 0, -5],
+  ["dirt", 3, 1, -5],
+  ["grass", 3, 2, -5],
+  ["dirt", 4, -1, -5],
+  ["dirt", 4, 0, -5],
+  ["dirt", 4, 1, -5],
+  ["grass", 4, 2, -5],
+  ["dirt", -5, -1, -4],
+  ["dirt", -5, 0, -4],
+  ["grass", -5, 1, -4],
+  ["dirt", -4, -1, -4],
+  ["dirt", -4, 0, -4],
+  ["grass", -4, 1, -4],
+  ["dirt", -3, -1, -4],
+  ["grass", -3, 0, -4],
+  ["dirt", -2, -1, -4],
+  ["grass", -2, 0, -4],
+  ["grass", -1, -1, -4],
+  ["grass", 0, -1, -4],
+  ["dirt", 1, -1, -4],
+  ["stone", 1, 0, -4],
+  ["dirt", 2, -1, -4],
+  ["stone", 2, 0, -4],
+  ["stone", 3, -1, -4],
+  ["dirt", 3, 0, -4],
+  ["stone", 3, 1, -4],
+  ["dirt", 4, -1, -4],
+  ["grass", 4, 0, -4],
+  ["dirt", -5, -1, -3],
+  ["dirt", -5, 0, -3],
+  ["grass", -5, 1, -3],
+  ["dirt", -4, -1, -3],
+  // (Y=0 vynecháno — místo pro tunelový oblouk arch_left)
+  ["grass", -3, -1, -3],
+  ["grass", -2, -1, -3],
+  ["grass", -1, -1, -3],
+  ["grass", 0, -1, -3],
+  ["grass", 1, -1, -3],
+  ["grass", 2, -1, -3],
+  ["dirt", 3, -1, -3],
+  // (Y=0 vynecháno — místo pro tunelový oblouk arch_right)
+  ["dirt", 4, -1, -3],
+  ["grass", 4, 0, -3],
+  ["dirt", -5, -1, -2],
+  ["dirt", -5, 0, -2],
+  ["grass", -5, 1, -2],
+  ["grass", -4, -1, -2],
+  ["grass", -3, -1, -2],
+  ["grass", -2, -1, -2],
+  ["grass", -1, -1, -2],
+  ["grass", 0, -1, -2],
+  ["grass", 1, -1, -2],
+  ["grass", 2, -1, -2],
+  ["grass", 3, -1, -2],
+  ["dirt", 4, -1, -2],
+  ["grass", 4, 0, -2],
+  ["grass", -5, -1, -1],
+  ["grass", -4, -1, -1],
+  ["grass", -3, -1, -1],
+  ["grass", -2, -1, -1],
+  ["grass", -1, -1, -1],
+  ["grass", 0, -1, -1],
+  ["grass", 1, -1, -1],
+  ["grass", 2, -1, -1],
+  ["grass", 3, -1, -1],
+  ["dirt", 4, -1, -1],
+  ["grass", 4, 0, -1],
+  ["dirt", -5, -1, 0],
+  ["grass", -5, 0, 0],
+  ["grass", -4, -1, 0],
+  ["grass", -3, -1, 0],
+  ["grass", -2, -1, 0],
+  ["grass", -1, -1, 0],
+  ["grass", 0, -1, 0],
+  ["grass", 1, -1, 0],
+  ["grass", 2, -1, 0],
+  ["grass", 3, -1, 0],
+  ["grass", 4, -1, 0],
+  ["dirt", -5, -1, 1],
+  ["grass", -5, 0, 1],
+  ["grass", -4, -1, 1],
+  ["grass", -3, -1, 1],
+  ["grass", -2, -1, 1],
+  ["grass", -1, -1, 1],
+  ["grass", 0, -1, 1],
+  ["grass", 1, -1, 1],
+  ["grass", 2, -1, 1],
+  ["grass", 3, -1, 1],
+  ["grass", 4, -1, 1],
+  ["grass", -5, -1, 2],
+  ["grass", -4, -1, 2],
+  ["grass", -3, -1, 2],
+  ["grass", -2, -1, 2],
+  ["grass", -1, -1, 2],
+  ["grass", 0, -1, 2],
+  ["grass", 1, -1, 2],
+  ["stone", 2, -1, 2],
+  ["dirt", 3, -1, 2],
+  ["stone", 3, 0, 2],
+  ["grass", 4, -1, 2],
+  ["grass", -5, -1, 3],
+  ["grass", -4, -1, 3],
+  ["grass", -3, -1, 3],
+  ["grass", -2, -1, 3],
+  ["grass", -1, -1, 3],
+  ["grass", 0, -1, 3],
+  ["grass", 1, -1, 3],
+  ["dirt", 2, -1, 3],
+  ["grass", 2, 0, 3],
+  ["stone", 3, -1, 3],
+  ["stone", 3, 0, 3],
+  ["grass", 4, -1, 3],
+  ["grass", -5, -1, 4],
+  ["grass", -4, -1, 4],
+  ["grass", -3, -1, 4],
+  ["grass", -2, -1, 4],
+  ["grass", -1, -1, 4],
+  ["grass", 0, -1, 4],
+  ["grass", 1, -1, 4],
+  ["grass", 2, -1, 4],
+  ["grass", 3, -1, 4],
+  ["grass", 4, -1, 4],
+];
 
 function buildSceneTwo(scene) {
-  // Travnatá rovina — 10×10 j. Po sez. 14 cleanup zůstala scéna 2 bez obsahu
-  // (Stickmani přesunuti do projektu ./source/Stickman). Louka je rezerva
-  // pro budoucí experimenty / integraci externího Stickmana.
-  const grass = new THREE.Mesh(
-    new THREE.PlaneGeometry(10, 10),
-    new THREE.MeshStandardMaterial({
-      map:       makeGrassTexture(),
-      roughness: 1,
-      metalness: 0,
-    }),
-  );
-  grass.rotation.x = -Math.PI / 2;
-  grass.position.y = -0.502;
-  grass.receiveShadow = true;
-  scene.add(grass);
+  const FACTORIES = {
+    grass: makeGrassBlock,
+    dirt:  makeDirtBlock,
+    stone: makeStoneBlock,
+  };
+  for (const [kind, x, y, z] of SCENE2_LAYOUT) {
+    const id = `s2_${kind}_${x + 5}_${y + 1}_${z + 5}`;
+    scene.add(createMeshFor(FACTORIES[kind](id, x, y, z)));
+  }
+
+  // Tunelové oblouky — vstupy do tunelu na obou koncích budoucí trati.
+  // Vlak mezi nimi pojede podél X osy na Z = −3.
+  scene.add(createMeshFor(new TUNNEL_ARCH(
+    "arch_left", "Tunelový oblouk vlevo", -4, 0, -3,
+  )));
+  scene.add(createMeshFor(new TUNNEL_ARCH(
+    "arch_right", "Tunelový oblouk vpravo", 3, 0, -3,
+  )));
 }
+
 
 // === Scene dispatch podle URL ===
 // `?scene=N` parametr vybírá builder. Default = 1. Reload stránky dělá
@@ -1861,18 +2282,86 @@ canvas.addEventListener("pointerleave", () => {
 // `instance.LIT`. Fade watcher (DD-17) stav propaguje do emissive + PointLight.
 // Pokud přibude víc interaktivních tříd, refaktor na `INTERACTIONS = { ClassName: fn }`
 // tabulku — izomorfně s `ACTIONS` / `ANIMATORS` patternem.
-canvas.addEventListener("click", (event) => {
+// Pomocný raycast helper — sdílený mezi LMB click a RMB contextmenu.
+function raycastFirstInstance(event) {
   pointer.x =  (event.clientX / window.innerWidth)  * 2 - 1;
   pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
   const hits = raycaster.intersectObjects(scene.children, true);
-  const firstHit = hits.find((h) => h.object.userData?.instance);
+  return hits.find((h) => h.object.userData?.instance);
+}
+
+canvas.addEventListener("click", (event) => {
+  const firstHit = raycastFirstInstance(event);
   if (!firstHit) return;
   const instance = firstHit.object.userData.instance;
   if (instance instanceof BALLOON) {
     instance.LIT = !instance.LIT;
   }
 });
+
+// === Klávesové ovládání kamery ===
+// WASD = horizontální pan (W/S podél kamerového „forward" promítnutého na XZ
+// rovinu, A/D strafe). Q/E = rotace kamery kolem cíle (yaw, kolem Y osy).
+// Y/X = zoom (Y in, X out). Kombinuje se s OrbitControls.
+const heldKeys = new Set();
+window.addEventListener("keydown", (e) => heldKeys.add(e.key.toLowerCase()));
+window.addEventListener("keyup",   (e) => heldKeys.delete(e.key.toLowerCase()));
+// Když okno ztratí focus (alt-tab apod.), uvolníme všechny zachycené klávesy,
+// jinak by „vlasy stály" do dalšího keydown.
+window.addEventListener("blur", () => heldKeys.clear());
+
+const KB_PAN_SPEED    = 6.0;     // jednotek za sekundu
+const KB_ROT_SPEED    = 1.5;     // radiánů za sekundu (yaw rotace)
+const KB_ZOOM_PER_SEC = 2.0;     // multiplier vzdálenosti za sekundu
+const _kbForward = new THREE.Vector3();
+const _kbRight   = new THREE.Vector3();
+const _kbDelta   = new THREE.Vector3();
+
+function updateKeyboardCamera(dt) {
+  if (heldKeys.size === 0) return;
+
+  // „Forward" = směr pohledu kamery promítnutý na vodorovnou rovinu (Y=0)
+  // → pohyb po terénu, ne ponor pod / ven nad scénu.
+  camera.getWorldDirection(_kbForward);
+  _kbForward.y = 0;
+  if (_kbForward.lengthSq() < 1e-6) _kbForward.set(0, 0, -1);
+  _kbForward.normalize();
+  _kbRight.crossVectors(_kbForward, camera.up).normalize();
+
+  let panFwd = 0, panRight = 0;
+  if (heldKeys.has("w")) panFwd   += KB_PAN_SPEED * dt;
+  if (heldKeys.has("s")) panFwd   -= KB_PAN_SPEED * dt;
+  if (heldKeys.has("d")) panRight += KB_PAN_SPEED * dt;
+  if (heldKeys.has("a")) panRight -= KB_PAN_SPEED * dt;
+
+  if (panFwd || panRight) {
+    _kbDelta.set(0, 0, 0);
+    _kbDelta.addScaledVector(_kbForward, panFwd);
+    _kbDelta.addScaledVector(_kbRight,   panRight);
+    controls.target.add(_kbDelta);
+    camera.position.add(_kbDelta);
+  }
+
+  // Q/E rotace — kamera obíhá cíl kolem Y osy. Q = CCW (camera shifts left
+  // od pohledu kamery), E = CW. Mutujeme camera.position; cíl zůstává.
+  if (heldKeys.has("q") || heldKeys.has("e")) {
+    const sign  = heldKeys.has("q") ? 1 : -1;
+    const angle = sign * KB_ROT_SPEED * dt;
+    _kbDelta.subVectors(camera.position, controls.target);
+    _kbDelta.applyAxisAngle(camera.up, angle);
+    camera.position.copy(controls.target).add(_kbDelta);
+  }
+
+  // Zoom — Y přiblížit, X oddálit. Geometrický factor podle dt → konstantní
+  // rychlost zoomu nezávisle na FPS.
+  if (heldKeys.has("y") || heldKeys.has("x")) {
+    const factor = Math.pow(KB_ZOOM_PER_SEC, dt);
+    const scale  = heldKeys.has("y") ? 1 / factor : factor;
+    _kbDelta.subVectors(camera.position, controls.target).multiplyScalar(scale);
+    camera.position.copy(controls.target).add(_kbDelta);
+  }
+}
 
 // === Responsivita ===
 // Když uživatel změní velikost okna, upravíme aspect ratio kamery
@@ -1918,6 +2407,7 @@ function animate() {
   // Fade watcher pro BALLOON.LIT — exponenciální lerp `emissive` a
   // `PointLight.intensity` podle `instance.LIT` stavu (DD-17).
   updateLit(dt);
+  updateKeyboardCamera(dt);
   renderer.render(scene, camera);
 }
 animate();

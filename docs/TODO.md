@@ -116,3 +116,4 @@
 - [ ] **`ACTION.kind: increment`** — *(přeneseno; relevantní bez humanoidů — počítadlo přes TIMER)*.
 - [ ] **Editor fáze 2** — spawn/move/delete + registry cleanup. Bez humanoidů zjednodušeno (žádný wander/collision dispose).
 - [ ] CCUBES typizace (ICE/GRASS/SAND) *(možná)*.
+- [ ] **Zaoblené hrany voxelů (sez. 14 diskuse)** — `RoundedBoxGeometry` z three/addons (~5 řádků v `createTCubeFor`). Důvod: izomorfismus se zbytkem scény (stromy/balón/mraky/kameny jsou hladké/zaoblené, jen voxely tvrdé). Trade-off: pixel-art textury se na zaoblených rozích roztáhnou do gradientu → ztrátu detailu kompenzovat větší texturou (32×32, větší záplaty) nebo přejít na flat color voxely. Rozhodnout jako globální výtvarné DD (zaoblený jazyk celého projektu vs. hybrid voxel/smooth).
