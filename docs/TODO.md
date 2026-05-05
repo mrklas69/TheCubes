@@ -117,3 +117,25 @@
 - [ ] **Editor fáze 2** — spawn/move/delete + registry cleanup. Bez humanoidů zjednodušeno (žádný wander/collision dispose).
 - [ ] CCUBES typizace (ICE/GRASS/SAND) *(možná)*.
 - [ ] **Zaoblené hrany voxelů (sez. 14 diskuse)** — `RoundedBoxGeometry` z three/addons (~5 řádků v `createTCubeFor`). Důvod: izomorfismus se zbytkem scény (stromy/balón/mraky/kameny jsou hladké/zaoblené, jen voxely tvrdé). Trade-off: pixel-art textury se na zaoblených rozích roztáhnou do gradientu → ztrátu detailu kompenzovat větší texturou (32×32, větší záplaty) nebo přejít na flat color voxely. Rozhodnout jako globální výtvarné DD (zaoblený jazyk celého projektu vs. hybrid voxel/smooth).
+
+## Sezení 14 (2026-05-05)
+
+- [x] **Scéna 2 dioráma** — 10×10 voxelová podlaha (`SCENE2_LAYOUT` ~145 kostek: grass podlaha + hliněná zadní stěna s peaky + jeden stone block). Postavena interaktivně přes builder (LMB stavět, RMB bourat, 3 typy: tráva/hlína/skála + Export do clipboardu) — builder pak odstraněn, hotová dioráma hardcoded.
+- [x] **Nové procedurální textury** — `:stone`, `:rail-top`, `:grass-side`. Refaktor `makePatchTexture` (jednolitý base + 1-2 px záplaty per cube) + `:grass-side` kompozit (14px dirt + 2px grass strip nahoře). DRY palette (DIRT_*, GRASS_*, STONE_*).
+- [x] **Klávesové ovládání kamery** — WASD pan, Q/E rotace kolem cíle, Y/X zoom. Per-frame v render loopu, smooth dle dt. `heldKeys` Set + window keydown/keyup/blur listener.
+- [x] **Tunelové oblouky** (sez. 14 v.1, později nahrazeno) — TUNNEL_ARCH třída + builder s half-torus rotated π/2 + scale.y 1.7 (Roman style). Připraveno na vlak. Class zůstává jako fallback, instance nahrazeny VOXEL_MODELem.
+- [x] **WAREHOUSE + TRAIN třídy** — připraveny v model.js + buildery v main.js (kvádr stěn + jehlanová střecha à la HOUSE; lokomotiva + vagón se 16 koly). Zatím nepoužity ve scéně, čekají na fáze 2 (railway) + 3 (cargo).
+- [x] **GridHelper + AxesHelper** odstraněny — orientační pomůcky M1/M2 už nepotřebujeme.
+- [x] **Slunce** úhel 30° nad horizontem (Y=10→8).
+- [x] **Shadow fix** — peter-panning na voxel boundaries: `normalBias` 0.02→0, `bias` -0.0005→-0.0001, `PCFSoftShadowMap`→`PCFShadowMap`. Tenké světelné proužky na styku kostek pryč.
+- [x] **MagicaVoxel pipeline (DD-21)** — VOXEL_MODEL třída + `buildVoxelModel` (async OBJLoader+MTLLoader, auto-center XZ + bottom snap Y, NearestFilter pro pixel-art). První import: 2 auta (cars-0, cars-1). Pak tunel.
+- [x] **Tools/exports** — 4 Node skripty: `dump-png-palette.mjs` (debug palety), `export-grass-vox.mjs` (TheCubes → MagicaVoxel grass cube template), `export-scene-palette-vox.mjs` (12-color palette swatches), `export-cars-vox.mjs` (jednoduchý sedan + truck šablona).
+- [x] **DD-21 Vizuální zdroje hybrid** — formálně zafixováno: parametrizované entity → procedurální COMPOSITES, statická dekorace → VOXEL_MODEL default. GLOSSARY rozšířen o sekci „Vizuální zdroje" s tabulkou workflow rozhodnutí. CLAUDE.md Status + hierarchie aktualizovány.
+- [x] **Stickman jako sibling projekt** — humanoidní vývoj přesunut do `./source/Stickman` (vlastní layered MVC + IK + Inspector, 13+ vlastních sezení). V TheCubes smazány všechny humanoidi (cleanup commit `7679fef`).
+- [ ] **Tunel re-coloring v MagicaVoxelu** *(user iteration)* — paleta `tunel.png` má jen 1 barvu (#5d9446 = grass). User vyrobí znovu s plnou paletou (`scene-palette.vox` jako šablona): foundation hlína, oblouk + vnitřek skála, grass povrch dle plánu.
+- [ ] **2 simplifikovaná auta z .vox** *(user iteration)* — `car-simple-0.vox` (sedan modré) + `car-simple-1.vox` (truck červené) generované — user otevře, ověří/upraví, exportuje jako `cars-0`/`cars-1`.
+- [ ] **9 voxel modelů** *(user iteration)* — 3 stromy + 3 kameny + 3 trsy trávy v MagicaVoxelu. Pojmenování: `tree-0..2`, `rock-0..2`, `grass-0..2`. Pak instance v buildSceneTwo.
+- [ ] **Železnice mezi tunely** — 6 rail-top voxelů Z=−3, X=−3..2 (mezi `tunel_left` a `tunel_right`). Connect to TUNNEL_ARCH/VOXEL_MODEL position.
+- [ ] **Vlak na koleji + animace** — fáze 2 (statický → pohyb po koleji s zastávkou u skladu).
+- [ ] **Cargo loading/unloading** — fáze 3, otevírá novou DD (sequenční chování + cargo entity reparenting). Diskuse: 1 sklad + tunely jako trade portály (cargo se objeví na peronu, vlak ho odveze a vrátí jiné).
+- [ ] **VOXEL_MODEL pro Scénu 1** *(volitelné)* — postupná migrace TREE/ROCK/HOUSE atd. na VOXEL_MODEL pokud bude třeba bohatší vizuál. Zatím status quo (fungují parametrizovaně).

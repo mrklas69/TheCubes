@@ -4,13 +4,17 @@
 TheCubes je meta-sandbox s živým OOP modelem. Na začátku existuje jediná instance `OBJECTS`, rozšiřováním modelu se scéna zaplňuje. Cíl: demonstrovat současné mládeži, že tvorba je zábavnější než konzumace.
 
 ## Status
-Milníky **M1–M7 hotové**, **M8+ průběžně**. **Dvě scény** (sez. 13: URL switcher `?scene=N`, HUD tlačítka).
+Milníky **M1–M7 hotové**, **M8+ průběžně**. **Dvě scény** (URL switcher `?scene=N`).
 
-**Scéna 1** (default): středová `CUBES` (šachovnice), 8× `CCUBES` (duhová růžice), `TREE` (kývá se ve větru), `BALLOON` (pohupuje se + **lantern mode** s PointLight/fade), `HOUSE`, `CLOUD` (drift), `ROCK`, dvě `TCUBES` krabice (jedna rotuje, druhá obíhá stadium-dráhu), dvě `SPRITES` bubliny s **dynamickým 3D ocáskem** (SPEAKER tracking), stínovací systém.
+**Scéna 1** (default): středová `CUBES` (šachovnice), 8× `CCUBES` (duhová růžice), `TREE` (kývá se ve větru), `BALLOON` (pohupuje se + **lantern mode** s PointLight/fade), `HOUSE`, `CLOUD` (drift), `ROCK`, dvě `TCUBES` krabice (jedna rotuje, druhá obíhá stadium-dráhu), dvě `SPRITES` bubliny s **dynamickým 3D ocáskem** (SPEAKER tracking).
 
-**Scéna 2**: travnatá louka (procedurální `makeGrassTexture` 32×32 buněk). Po sez. 14 cleanup vyprázdněna — rezerva pro budoucí experimenty / integraci externího Stickmana.
+**Scéna 2** (sez. 14): **10×10 voxelová dioráma** z `SCENE2_LAYOUT` (~145 TCUBES kostek — grass podlaha + hliněná zadní stěna s peaky + jeden stone block) + **2 kamenné kulové oblouky** (TUNNEL_ARCH, half-torus) jako budoucí tunelové vstupy + **2 voxelová auta** (VOXEL_MODEL, MagicaVoxel pipeline). Připraveno (zatím nepoužito): WAREHOUSE, TRAIN.
 
-**Sez. 14 cleanup:** humanoidní postavy (CHARACTER / NOODLE / STICKMAN) se přesunuly do samostatného projektu `./source/Stickman`. V TheCubes byl smazán veškerý humanoid kód (třídy, builders, pose primitives, gait animátory, wander stavový automat, 2D kolizní systém DD-19, face plane registry, `window.exportStickman`). DD-18/19/20 zůstávají v immutable logu jako historický kontext. Integrace externího Stickmana je TBD (.glb / sibling ES module).
+**Vizuální zdroje** (DD-21 sez. 14): hybrid 4 zdrojů — procedurální COMPOSITES (parametrizované/animované entity), procedurální canvas textury (`:named` pro voxely), canvas SPRITES (dialogy), externí 3D modely VOXEL_MODEL (statická dekorace, MagicaVoxel default). Pipeline: `tools/export-grass-vox.mjs` (TheCubes → `.vox` šablona pro MagicaVoxel) + `assets/` + OBJLoader (MagicaVoxel `.obj` → VOXEL_MODEL).
+
+**Klávesové ovládání kamery** (sez. 14): WASD pan, Q/E rotace kolem cíle, Y/X zoom (per-frame v render loopu).
+
+**Sez. 14 cleanup:** humanoidní postavy (CHARACTER / NOODLE / STICKMAN) se přesunuly do samostatného projektu `./source/Stickman`. DD-18/19/20 zůstávají v immutable logu jako historický kontext.
 
 Plynulé chování: atribut `ANIMATE` (DD-15), aktivní `kind`y `balloon_bob` / `tree_sway` / `rotate` / `orbit_stadium` / `pulse` / `drift`. Diskrétní: `TIMER` (DD-17) → `ACTION = { kind, target, attr, ... }` a `COUNTER` (VALUE + INCREMENT v HUD) — oba nevizuální potomci OBJECTS, registrovaní přes `registerBehavior(instance)`. Engine-derived watchery (bubble tail DD-16, LIT fade DD-17) reagují per-frame na stav v modelu. Interakce: click na vak balónu toggle `LIT`; hover → edge highlight (jen viditelné hrany).
 
@@ -32,12 +36,16 @@ OBJECTS (ID, NAME, DESCRIPTION, ANIMATE)
  │    ├── CCUBES (COLOR)                 ← plochá barva; dřív TERRAIN
  │    ├── TCUBES (TEXTURE_TOP/BOTTOM/NORTH/SOUTH/EAST/WEST) ← per-face textury
  │    ├── SPRITES (ASSET, SPEAKER, SPEAKER_OFFSET_Y) ← 2D billboard ke kameře
- │    └── COMPOSITES (3D mesh z primitivů)
+ │    └── COMPOSITES (3D mesh z primitivů / externí asset)
  │         ├── TREE                       ← kmen + kužely (tree_sway)
  │         ├── BALLOON (COLOR, LIT)       ← vak + lana + koš, mimo grid (balloon_bob, lantern)
  │         ├── HOUSE (COLOR)              ← stěny + jehlanová střecha
  │         ├── CLOUD                      ← shluk koulí (drift)
- │         └── ROCK (COLOR)               ← nízkopoly balvan
+ │         ├── ROCK (COLOR)               ← nízkopoly balvan
+ │         ├── TUNNEL_ARCH (COLOR)        ← kamenný kulový oblouk (half-torus)
+ │         ├── WAREHOUSE (COLOR)          ← sklad u koleje (Scéna 2)
+ │         ├── TRAIN (COLOR)              ← lokomotiva + vagón (Scéna 2)
+ │         └── VOXEL_MODEL (ASSET, SCALE, ROTATION_Y) ← async .obj+.mtl+.png z MagicaVoxelu (DD-21)
  ├── TIMER (INTERVAL, ACTION)             ← nevizuální (DD-17)
  └── COUNTER (VALUE, INCREMENT)           ← nevizuální, řádek v HUD
 ```

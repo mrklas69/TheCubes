@@ -250,6 +250,33 @@ export class CLOUD extends COMPOSITES {
 // zůstávají v immutable logu jako historický kontext.
 
 /**
+ * VOXEL_MODEL = obecný COMPOSITES, který načte mesh ze souboru `.obj` (s
+ * `.mtl` materiálem a `.png` paletou) — typicky export z MagicaVoxelu.
+ * Engine asynchronně dotáhne soubor a vyplní `Group` o načtený `Object3D`.
+ *
+ * Atributy:
+ *  - `ASSET` — basename souboru v `./assets/` (např. `"cars-0"` → `cars-0.obj`
+ *    + `cars-0.mtl` + `cars-0.png`).
+ *  - `SCALE` — uniformní scale faktor (default 0.5; MagicaVoxel default
+ *    1 voxel = 1 j → 0.5 znamená 2 voxely = 1 j).
+ *  - `ROTATION_Y` — natočení kolem Y osy v radiánech (default 0).
+ *
+ * Engine po načtení **auto-centruje** model v XZ a posune Y tak, aby spodek
+ * mesh seděl na `instance.Y` → instance.Y = world Y land surface.
+ *
+ * Use case: importovat hotové 3D modely z externích nástrojů bez nutnosti
+ * ručně kódit COMPOSITES dispatch.
+ */
+export class VOXEL_MODEL extends COMPOSITES {
+  constructor(id, name, x, y, z, asset, scale = 0.5, rotationY = 0, description = "") {
+    super(id, name, x, y, z, description);
+    this.ASSET = asset;
+    this.SCALE = scale;
+    this.ROTATION_Y = rotationY;
+  }
+}
+
+/**
  * TUNNEL_ARCH = konkrétní COMPOSITES — kamenný portál tunelu (Π shape).
  * Dva svislé sloupy + horní příčník, vnitřek průchozí. Footprint 1×1×1
  * voxel, materiál šedý kamenný.

@@ -6,7 +6,9 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, BALLOON, HOUSE, CLOUD, ROCK, TUNNEL_ARCH, WAREHOUSE, TRAIN, TIMER, COUNTER } from "./model.js";
+import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
+import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, BALLOON, HOUSE, CLOUD, ROCK, TUNNEL_ARCH, WAREHOUSE, TRAIN, VOXEL_MODEL, TIMER, COUNTER } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
 
 // === Renderer ===
@@ -21,7 +23,10 @@ renderer.setPixelRatio(window.devicePixelRatio);
 // s rozmazáním → měkké hrany stínů (nejhezčí/nejdražší default). Alternativy:
 // BasicShadowMap (ostré hrany, rychlejší), VSMShadowMap (variance, složitější).
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// PCFShadowMap = středně tvrdé stíny (PCF, ale bez "Soft" extra blur).
+// Soft varianta blurovala přes několik texelů a na voxel boundaries zanechávala
+// tenký light leak — sez. 14 přepnuto na PCF.
+renderer.shadowMap.type = THREE.PCFShadowMap;
 
 // === Scéna ===
 // Scene = kontejner pro všechny 3D objekty (kostky, světla, kamery).
@@ -79,10 +84,12 @@ sun.shadow.mapSize.set(2048, 2048);
 // `bias` posune depth-test o malý zápor, aby mesh nestínoval sám sebe
 // artefakty ("shadow acne" = tečkovaný vzor na osvětlených plochách).
 // `normalBias` posune test podle normály — pomáhá na zaoblených plochách
-// (vak balónu, kužely stromu), kde klasický bias způsobuje "peter-panning"
+// (vak balónu, kužely stromu), kde klasický bias způsobuje "peter-panning".
+// Pro voxel kostky dotýkající se ploch (Scéna 2) způsobuje vysoká hodnota
+// opačný problém — tenkou „lit line" na styku → snížené z 0.02 na 0.005,
 // (stín se odlepí od objektu).
-sun.shadow.bias = -0.0005;
-sun.shadow.normalBias = 0.02;
+sun.shadow.bias = -0.0001;
+sun.shadow.normalBias = 0;
 scene.add(sun);
 
 // (Sez. 14: GridHelper a AxesHelper odstraněny — orientační pomůcky pro
@@ -1163,6 +1170,8 @@ function createCompositeFor(instance) {
     buildRock(group, instance);
   } else if (instance instanceof TUNNEL_ARCH) {
     buildTunnelArch(group, instance);
+  } else if (instance instanceof VOXEL_MODEL) {
+    buildVoxelModel(group, instance);
   } else if (instance instanceof WAREHOUSE) {
     buildWarehouse(group, instance);
   } else if (instance instanceof TRAIN) {
@@ -1477,6 +1486,48 @@ function buildRock(group, instance) {
     rock.rotation.set(0.3 * i, 0.7 * i + 0.2, 0.5 * i - 0.3);
     group.add(rock);
   });
+}
+
+// VOXEL_MODEL builder — async načte `.obj` (s `.mtl` a paletou `.png`) z
+// `./assets/${ASSET}.obj`. Po dotazení mesh: aplikuje SCALE, auto-centruje
+// XZ + posune Y bottom na 0 (= grass top při instance.Y=−0.5), nastaví
+// shadows + NearestFilter texture (zachová pixel-art look).
+//
+// Async: builder se vrací sync s prázdným Group; mesh se přidá až po dokončení
+// HTTP requestu na .mtl + .obj. Group je stále referencovaný, takže update
+// scény proběhne automaticky v dalším render frame.
+function buildVoxelModel(group, instance) {
+  const mtlLoader = new MTLLoader().setPath("./assets/");
+  mtlLoader.load(`${instance.ASSET}.mtl`, (materials) => {
+    materials.preload();
+    const objLoader = new OBJLoader().setMaterials(materials).setPath("./assets/");
+    objLoader.load(`${instance.ASSET}.obj`, (object) => {
+      // Aplikuj scale jako první (transform je bottom-up: scale → rotate → translate)
+      object.scale.setScalar(instance.SCALE);
+      object.rotation.y = instance.ROTATION_Y;
+      object.updateMatrixWorld(true);
+      // Auto-center v XZ + bottom na Y=0 (cílí na instance.Y = surface úroveň)
+      const bbox = new THREE.Box3().setFromObject(object);
+      object.position.set(
+        -(bbox.min.x + bbox.max.x) / 2,
+        -bbox.min.y,
+        -(bbox.min.z + bbox.max.z) / 2,
+      );
+      // Shadows + pixel-art filter na všechny mesh-e v importu
+      object.traverse((child) => {
+        if (!child.isMesh) return;
+        child.castShadow = true;
+        child.receiveShadow = true;
+        if (child.material?.map) {
+          child.material.map.magFilter = THREE.NearestFilter;
+          child.material.map.minFilter = THREE.NearestFilter;
+          child.material.map.colorSpace = THREE.SRGBColorSpace;
+          child.material.map.needsUpdate = true;
+        }
+      });
+      group.add(object);
+    }, undefined, (err) => console.error(`OBJ load failed: ${instance.ASSET}.obj`, err));
+  }, undefined, (err) => console.error(`MTL load failed: ${instance.ASSET}.mtl`, err));
 }
 
 // TUNNEL_ARCH builder — kamenný kulový (zaoblený) oblouk. Half-torus stojící
@@ -2079,13 +2130,30 @@ function buildSceneTwo(scene) {
     scene.add(createMeshFor(FACTORIES[kind](id, x, y, z)));
   }
 
-  // Tunelové oblouky — vstupy do tunelu na obou koncích budoucí trati.
+  // Tunelové oblouky — voxelový model `tunel` (MagicaVoxel, 16³ vox).
+  // Scale 0.625 = 1 MagicaVoxel cube (1.6 j) → 1 TheCubes voxel (1 j).
+  // Y=−0.5 = top of grass cube (auto-center loadera posadí mesh na surface).
   // Vlak mezi nimi pojede podél X osy na Z = −3.
-  scene.add(createMeshFor(new TUNNEL_ARCH(
-    "arch_left", "Tunelový oblouk vlevo", -4, 0, -3,
+  // Levý vchod míří vpravo (+X), pravý vchod vlevo (−X). Pokud je default
+  // orientace modelu jiná, swap či doplň offset.
+  scene.add(createMeshFor(new VOXEL_MODEL(
+    "tunel_left", "Tunel vlevo", -4, -0.5, -3, "tunel", 0.625, -Math.PI / 2,
+    "VOXEL_MODEL — tunelový vstup z MagicaVoxelu (vlevo, vchod míří +X).",
   )));
-  scene.add(createMeshFor(new TUNNEL_ARCH(
-    "arch_right", "Tunelový oblouk vpravo", 3, 0, -3,
+  scene.add(createMeshFor(new VOXEL_MODEL(
+    "tunel_right", "Tunel vpravo", 3, -0.5, -3, "tunel", 0.625, Math.PI / 2,
+    "VOXEL_MODEL — tunelový vstup z MagicaVoxelu (vpravo, vchod míří −X).",
+  )));
+
+  // Auta — voxel modely z MagicaVoxelu (sez. 14, první VOXEL_MODEL test).
+  // Y=−0.5 = top of grass cube → auto-centerování posadí auta na zem.
+  scene.add(createMeshFor(new VOXEL_MODEL(
+    "car_0", "Auto modré", -2, -0.5, 1, "cars-0", 0.5, 0,
+    "VOXEL_MODEL — auto z MagicaVoxelu (cars-0).",
+  )));
+  scene.add(createMeshFor(new VOXEL_MODEL(
+    "car_1", "Auto červené",  2, -0.5, 1, "cars-1", 0.5, 0,
+    "VOXEL_MODEL — auto z MagicaVoxelu (cars-1).",
   )));
 }
 

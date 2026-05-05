@@ -15,6 +15,10 @@ Canonical terminologie projektu TheCubes.
 - **HOUSE** — konkrétní COMPOSITES: kvádr stěn (BoxGeometry) + jehlanová střecha (ConeGeometry, 4 segmenty). Atribut `COLOR` barví stěny; barva střechy je fixní v enginu (rezavě červená). *(M8.)*
 - **CLOUD** — konkrétní COMPOSITES: shluk 5 překrývajících se koulí (SphereGeometry) s bílou barvou. Bez vlastních atributů. Typicky vysoko nad scénou s `ANIMATE.kind = "drift"`. *(M8.)*
 - **ROCK** — konkrétní COMPOSITES: shluk 5 nízkopolygonových koulí (IcosahedronGeometry detail=0) s flat shading. Atribut `COLOR` (default `0x808080` šedá) řídí paletu tří odstínů (základ, ×0.75 tmavší, ×1.2 světlejší). Statický dekor; uzavírá pětici COMPOSITES (organický/mechanický/stavební/atmosférický/geologický). *(M8+.)*
+- **TUNNEL_ARCH** — konkrétní COMPOSITES: kamenný **kulový** oblouk (half-torus stojící jako duha). Footprint 1×1×1, opening podél X osy (vlak prochází pod ním). Atribut `COLOR` (default `0x8a8278` = stone gray) barví celý oblouk. *(Sez. 14, Scéna 2 — vstupy do tunelu.)*
+- **WAREHOUSE** — konkrétní COMPOSITES: sklad u koleje (kvádr stěn + jehlanová střecha à la HOUSE + dveře + osvětlené okno). Footprint ~2×1.4×1.5 j. Atribut `COLOR` barví stěny; střecha/dveře/okno fixní. *(Sez. 14, Scéna 2 fáze 1 — připraveno na nakládku vlaku.)*
+- **TRAIN** — konkrétní COMPOSITES: nákladní vlak (lokomotiva + 1 vagón, propojený spojkou, 8 kol). Lokomotiva = hlavní kvádr + kabina + komín. Atribut `COLOR` barví lokomotivu i kabinu; vagón a kola fixní (hnědý / černý). *(Sez. 14, Scéna 2 fáze 1 — statický; pohyb a nakládka v fázi 2/3.)*
+- **VOXEL_MODEL** — generický COMPOSITES, který asynchronně načte mesh z `.obj` (s `.mtl` materiálem a `.png` paletou), typicky export z **MagicaVoxelu**. Atributy: `ASSET` (basename v `./assets/`, např. `"cars-0"`), `SCALE` (default 0.5), `ROTATION_Y` (radiány, default 0). Engine po načtení **auto-centruje** XZ + posune Y bottom na `instance.Y` (= surface úroveň), nastaví `NearestFilter` na texturu (zachová pixel-art look). **Opaque** — `COLOR` ani internal parts nelze parametrizovat (model je in-out blob). *(Sez. 14, otevírá MagicaVoxel pipeline pro statickou dekoraci. Viz „Vizuální zdroje" níž.)*
 - **CHARACTER**, **NOODLE**, **STICKMAN** *(obsolete v TheCubes, sez. 14)* — humanoidní varianty přesunuty do samostatného projektu `./source/Stickman` (vlastní layered model + IK + gait demos + Inspector). DD-18/19/20 zůstávají v immutable logu jako historický kontext. Až bude integrace, bude reagovat přes externí asset (.glb / sibling ES module — způsob TBD).
 - **TERRAIN** *(obsolete)* — historický název pro CCUBES; přejmenováno v M3 (DD-13). Pojem „terén" se vrátí až jako *typizovaný* potomek CCUBES (ICE/GRASS/SAND) — pokud bude potřeba.
 - **TIMER** — nevizuální potomek **OBJECTS** (ne CUBES, žádná pozice). Atributy: `INTERVAL` (počet ticků mezi firem) a `ACTION = { kind, target, attr, value? }`. První skutečná reakce na `TIME.tick` (DD-04 dostal use case). Engine dispatch `ACTIONS[kind]` — aktuálně `toggle` (flip bool) a `set` (nastavit hodnotu). Registrace přes `registerBehavior(instance)` (symetrický sibling `scene.add(createMeshFor(...))` pro vizuální entity). Viz DD-17. *(M8+.)*
@@ -34,17 +38,65 @@ Canonical terminologie projektu TheCubes.
 - **drift** — `ANIMATE.kind`: lineární pohyb po jedné ose s **wrap-around** — když objekt opustí pás šířky `range`, vrátí se z opačné strany (skok). Parametry: `axis` ("x"/"y"/"z", default "x"), `speed` (j/s, default 1.0), `range` (šířka pásu v jednotkách, default 16). Pozice obíhá v intervalu `[base - range/2, base + range/2]` kolem `userData.base`. Idiom „mrak po obloze"; pro vysoko umístěné objekty je skok na hranici viewportu minimálně rušivý.
 - **pulse** — `ANIMATE.kind`: emisivní pulsace — objekt sinusově mění `material.emissiveIntensity` mezi `min` a `max` s danou `period`. Parametry: `period` (doba cyklu v s), `min` (default 0 = zhasnuto), `max` (default 1.0 = plná síla barvy), `color` (optional 0xRRGGBB; default = `material.color`). Volitelně dvojice `opacityMin`/`opacityMax` — pokud je zadán alespoň jeden, engine zapne `transparent = true` a synchronně s emissive mění i `material.opacity` (max záře ⇔ max neprůhlednost, „dýchá"). Lazy init `emissive` barvy přes `userData.pulseInit` flag. Funguje na jakémkoli mesh-u s `MeshStandardMaterial` (CCUBES, BALLOON vak, …); tiché skip pro materiály bez `emissive` (SpriteMaterial, ShadowMaterial, pole materiálů TCUBES).
 - **walk**, **sit**, **lie**, **wander**, **poseFns**, **walk_idle**, **run_idle**, **squat_lift**, **face plane** *(obsolete v TheCubes, sez. 14)* — humanoidní `ANIMATE.kind`y a podpůrné systémy odstraněny společně s CHARACTER/NOODLE/STICKMAN. Termíny budou definovány v projektu `./source/Stickman`.
-- **scene switcher** — sez. 13. URL-based reload dispatch: `?scene=N` parametr v query stringu vybírá builder fn (`buildSceneOne`, `buildSceneTwo`). HUD tlačítka v pravém horním rohu, `aria-pressed` flag pro aktivní. Reload (~100 ms) dělá cleanup zdarma. Default = 1. **Sez. 14:** Scéna 2 vyprázdněna (jen grass plane), Stickmani ze scény 2 přesunuti do projektu `./source/Stickman`.
+- **scene switcher** — sez. 13. URL-based reload dispatch: `?scene=N` parametr v query stringu vybírá builder fn (`buildSceneOne`, `buildSceneTwo`). HUD tlačítka v pravém horním rohu, `aria-pressed` flag pro aktivní. Reload (~100 ms) dělá cleanup zdarma. Default = 1. **Sez. 14:** Scéna 2 přepsána na 10×10 voxelovou diorámu z `SCENE2_LAYOUT` (~145 kostek + tunelové oblouky + auta).
 
 ## Kolize *(obsolete v TheCubes, sez. 14)*
 
 2D kolizní systém (DD-19) odstraněn společně s humanoidy. **collidable**, **isBlocked**, **stop & transition** žijí už jen v immutable DD logu jako historický kontext.
 
-## Grafika
+## Vizuální zdroje *(sez. 14)*
 
-- **Asset** — obecný pojem pro libovolný grafický zdroj (texture, sprite image, procedurální mesh, …). Zastřešuje všechny podtypy.
-- **Texture** — 2D obraz aplikovaný na **plochu** meshe. Použití: per-face TCUBES, šachovnice na mateřské CUBES.
+TheCubes scéna se buduje ze **čtyř vizuálních zdrojů**. Pravidlo (sez. 14, kandidát DD):
+- **Parametrizované entity** (atributy ovlivňují vzhled — `COLOR`, `LIT`) nebo **dynamické** (animátor mutuje internal parts) → procedurální COMPOSITES.
+- **Statická dekorace** → VOXEL_MODEL z MagicaVoxelu (rychlá iterace).
+- **VOXEL_MODEL je default** pro novou statickou geometrii; COMPOSITES je fallback pro parametrizovatelné/animované.
+
+### 1. Procedurální Three.js mesh (COMPOSITES + voxely)
+Buildery v `src/main.js` (`buildBalloon`, `buildTree`, `buildHouse`, `buildTunnelArch`, `buildWarehouse`, `buildTrain`, …) skládají Three.js primitivy (BoxGeometry, SphereGeometry, CylinderGeometry, ConeGeometry, TorusGeometry, IcosahedronGeometry) do `Group` struktur. Internal parts uložené v `group.userData.parts` pro animátor přístup.
+Voxely **CCUBES** (flat color) a **TCUBES** (per-face textury) jsou speciální případ — single Mesh s BoxGeometry, snap-to-grid v rendereru.
+**Pro:** parametrizovatelné (atributy → vzhled), dynamické (animátor přístup k parts), izomorfní s DD-11 (model je data, engine staví mesh).
+**Proti:** tedious to author — každý nový tvar = ~30-100 řádků kódu.
+
+### 2. Procedurální canvas textury (`:named-texture`)
+JS-generované pixel-art textury 16×16 px (`makePatchTexture`, `makeRailTopTexture`, šachovnice). Sdílené přes `NAMED_TEXTURE_FACTORIES` lookup v `faceMaterialFor` dispatchu (DD-14 prefix `:`). Aktuální: `":dirt"`, `":grass-top"`, `":grass-side"`, `":stone"`, `":rail-top"`.
+**Použití:** strany TCUBES (typicky podlaha Scény 2 — grass cubes).
+**Pro:** sdílené per textura (úspora paměti i GPU), pixel-art = stylová konzistence se Scénou 2 dioráma.
+**Proti:** musí se kódit nový generator pro každý typ.
+
+### 3. Canvas SPRITES
+2D obrazy generované v JS (CanvasTexture, billboard otočený ke kameře přes `THREE.Sprite`). Volitelně přidružený 3D ocásek (THREE.Mesh jehlan, dynamicky sledující SPEAKER, DD-16).
+**Použití:** SPRITES třída — dialogové bubliny s textem (`ASSET = "string"`).
+**Pro:** rychlé generování textu + dynamický pointer na mluvčí.
+**Proti:** specifické pro UI / 2D obsah.
+
+### 4. Externí 3D modely (VOXEL_MODEL)
+`.obj` + `.mtl` + `.png` soubory, typicky export z **MagicaVoxelu**. Načítány async přes `OBJLoader` + `MTLLoader` z `./assets/`. Třída **VOXEL_MODEL** (potomek COMPOSITES) — viz Model sekce výš.
+Engine auto-centruje XZ + posune Y bottom na `instance.Y`; `NearestFilter` zachová pixel-art look palety.
+**Pro:** drag-drop voxel modeling v MagicaVoxelu, žádný kód, vizuálně bohaté výsledky.
+**Proti:** opaque — model nezná `COLOR` ani internal parts; nelze dynamicky parametrizovat.
+
+### Workflow rozhodnutí
+
+| Účel | Zdroj | Příklad |
+|------|-------|---------|
+| Voxelová podlaha / terrain | TCUBES + `:named-texture` | grass/dirt/stone cubes ve Scéně 2 |
+| Statická dekorace | VOXEL_MODEL z MagicaVoxelu | strom, kámen, auto, oblouk (v plánu) |
+| Parametrizovaná entita | COMPOSITES (procedurální) | BALLOON (LIT), HOUSE (COLOR) |
+| Animovaná entita | COMPOSITES (animátor sahá na parts) | TREE (sway), CLOUD (drift), BALLOON (bob) |
+| Dialog / štítek / UI | SPRITES | bubliny stromu/krabice |
+
+### MagicaVoxel ↔ TheCubes pipeline *(sez. 14)*
+
+**TheCubes → MagicaVoxel** (export šablony): skript `tools/export-grass-vox.mjs` generuje `.vox` 16³ kostku s grass + dirt paletou. Spuštění: `node tools/export-grass-vox.mjs` → `assets/grass-cube.vox`. User otevře v MagicaVoxelu jako šablonu.
+
+**MagicaVoxel → TheCubes** (import): user vyrobí model, exportuje přes File → Export → obj (vznikne `name.obj` + `name.mtl` + `name.png`). Soubory umístí do `assets/`. V kódu: `new VOXEL_MODEL("id", "name", X, Y, Z, "name", scale, rotationY, "...")`.
+
+## Pojmy
+
+- **Asset** — soubor v `./assets/` načítaný za běhu (`.obj` + `.mtl` + `.png`). Synonymum pro „externí 3D model" v kontextu VOXEL_MODEL.
+- **Texture** — 2D obraz aplikovaný na **plochu** meshe. Použití: per-face TCUBES, šachovnice na mateřské CUBES, mapovaná textura na importovaném VOXEL_MODELu.
 - **Sprite** — 2D obraz vždy otočený **ke kameře** (billboard). Použití: SPRITES třída.
+- **Pixel-art** — vizuální styl s viditelnými „pixely". Dosahujeme přes `NearestFilter` na `CanvasTexture` (nezablurovaná interpolace) + nízké rozlišení (16×16 typicky). Sdílí se mezi procedurálními texturami (`:dirt`/`:grass-top`/…) a importovanými VOXEL_MODEL paletami.
 - **Decal** *(plánováno, možná)* — texture projektovaná na existující povrch. Zatím nepoužíváme.
 - **Label** / **Bubble** *(plánováno)* — UI sprite přivázaný k entitě (jméno, dialog). Speciální případ SPRITES.
 
