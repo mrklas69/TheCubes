@@ -70,7 +70,21 @@ export class CUBES extends OBJECTS {
  * model zůstává čistě datový, nezná Three.js (model/engine separation,
  * DD-11). Historicky se tato třída jmenovala `TERRAIN`.
  */
-export class CCUBES extends CUBES {
+/**
+ * BLOCKS = abstract parent všech 1C grid-aligned bloků geologie/terénu (DD-25
+ * kandidát — 4-vrstvá taxonomie: Bloky / Voxely / Linie / Objekty). Sdílí
+ * mezi sebou: snap-to-int v rendereru (DD-12 invariant), procedurální
+ * geometrie v engine, sdílená paleta `:named-textures` přes `faceMaterialFor`
+ * (DD-14). Konkrétní potomci se liší tvarem: krychle (TCUBES, 6 faces),
+ * trojboký hranol (TRRAMPS, 5 faces), trojboký jehlan (TTRAMPS, 4 faces).
+ *
+ * Žádné vlastní atributy — značkovací třída pro dispatch a izomorfismus.
+ */
+export class BLOCKS extends CUBES {
+  // Žádné další atributy — kategorie pro dispatch.
+}
+
+export class CCUBES extends BLOCKS {
   constructor(id, name, x, y, z, color, description = "") {
     super(id, name, x, y, z, description);
     // Barva dlaždice jako JS number 0xRRGGBB
@@ -103,7 +117,7 @@ export class CCUBES extends CUBES {
  * `??` vrátí pravý operand jen pro `null`/`undefined` (ne pro 0 nebo ""),
  * což je důležité — číslo 0 (černá 0x000000) je validní barva.
  */
-export class TCUBES extends CUBES {
+export class TCUBES extends BLOCKS {
   constructor(id, name, x, y, z, textures = {}, description = "") {
     super(id, name, x, y, z, description);
     this.TEXTURE_TOP    = textures.TOP    ?? null;
@@ -112,6 +126,112 @@ export class TCUBES extends CUBES {
     this.TEXTURE_SOUTH  = textures.SOUTH  ?? null;
     this.TEXTURE_EAST   = textures.EAST   ?? null;
     this.TEXTURE_WEST   = textures.WEST   ?? null;
+  }
+}
+
+/**
+ * TRRAMPS = Triangular Rectangular Ramp = trojboký hranol (= pravoúhlý klín)
+ * v 1C bounding boxu. Geologický blok pro stoupání mezi výškovými úrovněmi
+ * (Y=0 → Y=1 přes 1C hranu).
+ *
+ * 5 faces s per-face nátěry:
+ *  - **TEXTURE_SLOPE** — svah (= horní šikmá plocha; obdélník 1×√2).
+ *  - **TEXTURE_BOTTOM** — spodek (= podstava 1×1, naproti svahu).
+ *  - **TEXTURE_BACK** — zadní vertikální stěna (1×1, ke které svah dosahuje na vrchu).
+ *  - **TEXTURE_LEFT** — levý bok (= pravoúhlý trojúhelník na X=−0.5 v default orientaci).
+ *  - **TEXTURE_RIGHT** — pravý bok (= pravoúhlý trojúhelník na X=+0.5).
+ *
+ * `ROTATION_Y` (radiány, default 0) — rotace celého bloku kolem osy Y.
+ * Smysluplné násobky `π/2` (4 cardinální orientace svahu): 0 = svah klesá k +Z
+ * (SOUTH), `π/2` = klesá k −X (WEST), `π` = klesá k −Z (NORTH), `3π/2` = klesá k +X (EAST).
+ *
+ * Každý face dispatch přes `faceMaterialFor` (DD-14, sdílený s TCUBES) —
+ * podporuje `null` (fallback šachovnice), `number` 0xRRGGBB, hex string,
+ * `:named-texture` (`:grass-top`, `:dirt`, …), nebo emoji/text.
+ */
+export class TRRAMPS extends BLOCKS {
+  constructor(id, name, x, y, z, textures = {}, orientation = 0, description = "") {
+    super(id, name, x, y, z, description);
+    this.TEXTURE_SLOPE  = textures.SLOPE  ?? null;
+    this.TEXTURE_BOTTOM = textures.BOTTOM ?? null;
+    this.TEXTURE_BACK   = textures.BACK   ?? null;
+    this.TEXTURE_LEFT   = textures.LEFT   ?? null;
+    this.TEXTURE_RIGHT  = textures.RIGHT  ?? null;
+    // ORIENTATION = počet 90° CCW rotací od defaultu (integer 0..3, BLOCKS
+    // konvence sdílená s TTRAMPS / TTUNELS). Engine převede na rotation.y =
+    // ORIENTATION * π/2. User „+90 po směru hod. ručiček" = ORIENTATION −= 1
+    // (modulo 4). Default 0 = svah klesá k +Z (SOUTH), apex sloupec na −Z.
+    this.ORIENTATION = orientation;
+  }
+}
+
+/**
+ * TTRAMPS = Triangular Tetrahedron Ramp = trojboký jehlan (trirectangular
+ * tetrahedron) v 1C bounding boxu. Geometricky: 3 mutually perpendicular
+ * stěny sdílející roh `C`, zbývající stěna SLOPE = rovnostranný trojúhelník.
+ * Použití: rohové rampy (corner ramps), stoupání ze 3 sousedních směrů na
+ * jeden vyvýšený roh.
+ *
+ * 4 faces s per-face nátěry:
+ *  - **TEXTURE_SLOPE** — svah (rovnostranný trojúhelník mezi 3 axiálními
+ *    body, hrana délky √2).
+ *  - **TEXTURE_BOTTOM** — pravoúhlý trojúhelník na Y=−0.5 (odvěsny délky 1).
+ *  - **TEXTURE_BACK** — pravoúhlý trojúhelník na Z=−0.5 (vertikální).
+ *  - **TEXTURE_LEFT** — pravoúhlý trojúhelník na X=−0.5 (vertikální).
+ *
+ * Default orientace (`ROTATION_Y = 0`): roh `C` v lokálním (-0.5, -0.5, -0.5)
+ * (= SW-bottom-NORTH), 3 hrany směřují podél +X, +Y, +Z. SLOPE normála míří
+ * k SE-top-SOUTH rohu = (1, 1, 1)/√3.
+ *
+ * `ROTATION_Y` (radiány) — rotace celého bloku kolem osy Y. 4 cardinální
+ * orientace (násobky π/2) odpovídají 4 rohům, kde může roh `C` ležet.
+ */
+export class TTRAMPS extends BLOCKS {
+  constructor(id, name, x, y, z, textures = {}, orientation = 0, description = "") {
+    super(id, name, x, y, z, description);
+    this.TEXTURE_SLOPE  = textures.SLOPE  ?? null;
+    this.TEXTURE_BOTTOM = textures.BOTTOM ?? null;
+    this.TEXTURE_BACK   = textures.BACK   ?? null;
+    this.TEXTURE_LEFT   = textures.LEFT   ?? null;
+    // ORIENTATION = počet 90° CCW rotací (integer 0..3, sdíleno s TRRAMPS).
+    this.ORIENTATION = orientation;
+  }
+}
+
+/**
+ * TTUNELS = Tunnel Block = 1C blok s klenutým průchozím tunelem v jedné ose.
+ * Geometricky: kvádr 1×1×1 minus obdélníkový spodek + půlkruhový oblouk
+ * extrudovaný podél osy průchodu (= „od krychle odečtený válec a kvádr").
+ * Default orientace (`ORIENTATION=0`): tunel podél osy X, vstupy na +X a −X.
+ *
+ * Profil tunelu v rovině YZ (kolmé k ose průchodu):
+ *  - Spodní obdélníková část: Y=−0.5..0, Z=−0.3..+0.3 (= šířka 0.6, výška 0.5)
+ *  - Horní půlkruh: střed v (0, 0), poloměr 0.3 (= klenba sahá k Y=+0.3)
+ *  - Nad obloukem zůstává „klenba bloku" Y=+0.3..+0.5 plný materiál
+ *
+ * 4 faces / nátěry:
+ *  - **TEXTURE_TOP** — vrchní vnější stěna (typicky `:grass-top`, jako grass cube
+ *    pohled shora).
+ *  - **TEXTURE_SIDES** — vnější boční stěny (NORTH + SOUTH) + 2 vstupní stěny
+ *    s vyříznutým profilem (typicky `:grass-side`).
+ *  - **TEXTURE_WALLS** — vnitřní 2 boční stěny tunelu (na Z=±0.3, Y=−0.5..0).
+ *  - **TEXTURE_CEILING** — vnitřní klenutý strop (12 segmentů půlkruhu).
+ *
+ * Důležité: blok nemá vnější bottom ani vnitřní floor. Tunel je „průhledný
+ * dolů" — postava uvnitř i pohled odshora vidí přímo top voxelu pod tunelem
+ * (typicky grass podlaha diorámy). Vyžaduje, aby blok pod tunelem byl plný.
+ *
+ * `ORIENTATION` (integer 0..3) — rotace celého bloku kolem osy Y. 0 = osa
+ * tunelu X, 1 = osa Z (po 90° CCW), atd.
+ */
+export class TTUNELS extends BLOCKS {
+  constructor(id, name, x, y, z, textures = {}, orientation = 0, description = "") {
+    super(id, name, x, y, z, description);
+    this.TEXTURE_TOP     = textures.TOP     ?? null;
+    this.TEXTURE_SIDES   = textures.SIDES   ?? null;
+    this.TEXTURE_WALLS   = textures.WALLS   ?? null;
+    this.TEXTURE_CEILING = textures.CEILING ?? null;
+    this.ORIENTATION     = orientation;
   }
 }
 

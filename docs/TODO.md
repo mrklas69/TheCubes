@@ -154,11 +154,34 @@
 
 ### Sez. 15 → sez. 16 Příště
 
-- [ ] **Pre-build skript `tools/build-shapes.mjs`** — vstup: `assets/shapes/<name>.vox` (s abstract paletou 1–4) + `assets/surfaces/<name>.json` → výstup: `assets/built/<shape>-<surface>.{obj,mtl,png}` per kombinace. Engine spotřebovává pre-built (žádný runtime swap).
-- [ ] **8 surface JSON palet** v `assets/surfaces/`: `grass`, `dirt`, `stone`, `sand`, `ice`, `water`, `brick`, `wood`. Každá: `{ BASE, ACCENT1, ACCENT2, HIGHLIGHT }` 4 RGBA hex.
-- [ ] **Re-modelovat shapes na abstract paletu** — `cube`, `ramp`, `tunel` v MagicaVoxelu znovu, s 4 paletovými indexy (1=BASE, 2=ACCENT1, 3=ACCENT2, 4=HIGHLIGHT). Output: `assets/shapes/<name>.vox/.obj/.mtl/.png`. Surface-specific soubory smazat (až builder skript vyrobí built/).
-- [ ] **WORLD entity** — singleton/instance s `WIND { strength, direction }`, `SUN { angle }`, `CLIMATE`, `SEASON`, `DAY { length_ticks, phase }`. `tree_sway` číst `WORLD.WIND.strength * MAX_WIND_AMP` místo per-strom amplitude. Sluneční pozice z WORLD.SUN.angle.
-- [ ] **Biome palette + populate** — `BIOME_TREES[climate] = { kind: weight }`, `populateVegetation(world, region, density, variety)`. Místo hardcoded `TREE_KINDS_S2` v `buildSceneTwo`.
-- [ ] **Pixel-voxel ekvivalenty smazaných tříd** *(až bude potřeba)* — lampion (BALLOON.LIT), dům, mrak, kámen. Per DD-23: nová třída se sub-builderem v dispatch tabulce (TREE.KIND-style).
-- [ ] **GLOSSARY cleanup** — tabulka kategorií („Statická dekorace", „Parametrizovaná entita", „Animovaná entita") obsahuje smazané třídy (BALLOON/HOUSE/CLOUD) — aktualizovat na DD-23 stav.
-- [ ] **`docs/IDEAS.md` review** — projít po sez. 15 cleanup, smazat zastaralé nápady (vázané na BALLOON/HOUSE/atd).
+- [x] ~~Pre-build skript `tools/build-shapes.mjs`~~ — DROP (DD-25 sez. 16: bloky teď procedurální, MV pipeline pro standardní bloky redundantní; DD-24 zúžen na budoucí komplexní VOXEL_MODELy).
+- [x] ~~8 surface JSON palet~~ — DROP (DD-25, viz výše).
+- [x] ~~Re-modelovat shapes na abstract paletu~~ — DROP (DD-25, viz výše).
+- [ ] **WORLD entity** — singleton/instance s `WIND { strength, direction }`, `SUN { angle }`, `CLIMATE`, `SEASON`, `DAY { length_ticks, phase }`. `tree_sway` číst `WORLD.WIND.strength * MAX_WIND_AMP`. Sluneční pozice z WORLD.SUN.angle.
+- [ ] **Biome palette + populate** — `BIOME_TREES[climate] = { kind: weight }`, `populateVegetation(world, region, density, variety)`.
+- [ ] **Pixel-voxel ekvivalenty smazaných tříd** *(až bude potřeba)* — lampion (BALLOON.LIT), mrak. Plus nové: BUILDING (KIND: house/warehouse/tower) — vrstva 2 voxely (DD-25).
+- [x] **GLOSSARY cleanup** — hotovo v sez. 16 audit (F2: kompletní rewrite).
+- [x] **`docs/IDEAS.md` review** — hotovo v sez. 16 audit (F4: anotace u DONE značek).
+
+## Sezení 16 (2026-05-06)
+
+- [x] **@AUDIT:DOCS** — 7 nálezů (F1 SCENE2 smazán, F2 GLOSSARY rewrite, F3 README Status, F4 IDEAS anotace, F5 DD-22 typo „vejmuly→vešly", F6 DD setříděno vzestupně, F7 vyřešeno s F2).
+- [x] **Hover highlight refaktor** — `setEdgeHighlight` → `setHoverHighlight`. Žluté světélkování celého objektu (`mat.emissive = 0x404020`). Lazy clone-on-first-hover materiálů per mesh — sdílené materials (TREE `_treeMatCache`) zůstávají nedotčené. Originály v `userData.hoverOrigMat`, klony v `hoverHotMat`. Při on/off přepneme `child.material`.
+- [x] **DD-25 — 4-vrstvá taxonomie scény** (Bloky / Voxely / Linie / Objekty). Reviduje DD-23 v tom smyslu, že voxelová identita platí pro vrstvu 2, ne pro celou scénu. DD-24 zachován ale s omezeným rozsahem (komplexní VOXEL_MODELy, ne standardní bloky).
+- [x] **`BLOCKS` abstract parent** — značkovací třída pod CUBES. `CCUBES`, `TCUBES` refaktor: extends BLOCKS.
+- [x] **TRRAMPS** (trojboký hranol = pravoúhlý klín). 5 face atributů (`SLOPE`, `BOTTOM`, `BACK`, `LEFT`, `RIGHT`) + `ORIENTATION`. Custom BufferGeometry s 18 vertices, 8 trojúhelníků, 5 material groups. Bug fix po prvním pokusu (sez. 16): winding order pro BOTTOM/BACK/LEFT/RIGHT face byl nesprávně, geometrická normála neseděla s deklarovanou → backface culling + z-fighting. Opraveno přepočtem cross-products.
+- [x] **TTRAMPS** (trojboký jehlan = trirectangular tetrahedron). 4 face atributy (`SLOPE`, `BOTTOM`, `BACK`, `LEFT`) + `ORIENTATION`. 4 unique vertices (rohový corner + 3 axiální body), per-face non-shared = 12 vertices, 4 trojúhelníky.
+- [x] **TTUNELS** (klenutý tunel skrz 1C blok). 4 face atributy (`TOP`, `SIDES`, `WALLS`, `CEILING`) + `ORIENTATION`. Geometrie: kvádr 1×1×1 mínus „obdélník + půlkruh extrudovaný v ose" (12 segmentů na půlkruhu). Bez dna (vnější bottom + inside floor smazány) — tunel je „průhledný dolů" na top voxelu pod ním. 4 outside main + 2 entry walls (= 2 ears + shoulder + 2× 6 fan trojúhelníků kolem oblouku) + 2 inside walls + 12 inside ceiling segments.
+- [x] **`ROTATION_Y` → `ORIENTATION` enum** — refaktor TRRAMPS/TTRAMPS/TTUNELS. Integer 0..3 = počet 90° CCW rotací. Engine převádí `mesh.rotation.y = ORIENTATION * (π/2)`.
+- [x] **Smazány VOXEL_MODEL `tunel-grass` + `ramp-grass` instance** — nahrazeny TTUNELS / TRRAMPS. Asset soubory `assets/tunel-grass.{vox,obj,mtl,png}`, `assets/ramp-grass.{vox,obj,mtl,png}`, `assets/ramp-triangle-grass.{vox,obj,mtl,png}` smazány. Skript `tools/export-ramp-triangle-vox.mjs` smazán. V `assets/` zbývá jen `cube-grass.vox` (template pro DD-24) + `scene-palette.vox`.
+- [x] **TTUNELS texture bug** — z bočního pohledu byly viditelné 2 paralelní zelené pásky (TOP face `:grass-top` + grass strip uvnitř `:grass-side` boku). Opraveno: TEXTURE_SIDES změněno z `:grass-side` na `:dirt`, eliminuje druhý green strip. TEXTURE_TOP zůstává `:grass-top` (jako grass cube top).
+
+### Sez. 16 → sez. 17 Příště
+
+- [ ] **WORLD entity** (z sez. 15 přenesené).
+- [ ] **Biome populate** (z sez. 15 přenesené).
+- [ ] **BUILDING třída** (vrstva 2, DD-25) — pixel-voxel domy/sklady/věže. KIND sub-buildery analogicky s TREE.
+- [ ] **LINES vrstva 3** (DD-25) — PATH (cesty), TRACK (železnice). 1D křivky, polyline / spline render.
+- [ ] **`mtllib` reference fix v `cube-grass.obj`** *(drobnost)* — pokud existuje, ověřit že odkazuje na správný `cube-grass.mtl` (ne stará verze `grass-cube.mtl`).
+- [ ] **Editor fáze 2** — spawn/move/delete entit + registry cleanup.
+- [ ] **`ACTION.kind: increment`** *(přeneseno)* — relevantní pro TIMER+COUNTER kombinaci.

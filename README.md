@@ -6,20 +6,48 @@ Meta-sandbox s živým OOP modelem. Na začátku existuje jediná instance tří
 
 ## Status
 
-Milníky M1–M7 hotové, M8+ průběžně (sez. 6–12):
-- **M1** — statický svět s hodinami (kostka, kamera, TIME, infotip).
-- **M2** — orientační pomůcky + `CCUBES` + 3×3 duhová růžice.
-- **M3** — `COMPOSITES` + `TREE`; jednotný float souřadný systém (DD-12).
-- **M4** — `BALLOON` mimo grid + stínovací systém (shadow map, PCF soft).
-- **M5** — `SPRITES` (dialog bubble nad stromem, canvas-generovaný text).
-- **M6** — `TCUBES` (per-face textury); DD-14 dispatch podle typu atributu.
-- **M7** — chování v čase: atribut `ANIMATE` + data-driven dispatch (DD-15).
+**Aktuálně:** jediná scéna — **10×10 dioráma** s **4-vrstvou taxonomií** (sez. 16, DD-25):
 
-M8+ (průběžně): **`HOUSE`**, **`CLOUD`**, **`ROCK`** (pětice COMPOSITES); další `ANIMATE.kind`y (`rotate`, `orbit_stadium`, `pulse` s opacity, `drift` wrap-around). **SPEAKER dynamický 3D ocásek bubliny** (DD-16). **`TIMER`** + **`BALLOON.LIT` lantern** (DD-17 — diskrétní `TIME.tick` reakce přes `ACTION`). **`COUNTER`** v HUD. Edge highlight na hover. **`CHARACTER`** + wander stavový automat (DD-18) + 2D kolizní systém (DD-19).
+1. **Bloky** (1C grid, geologie) — TCUBES krychle, TRRAMPS klín, TTRAMPS jehlan, TTUNELS klenutý tunel; procedurální `BufferGeometry`, sdílená `:named-textures` paleta.
+2. **Voxely** (1V = 1/16 C, dotvarba) — TREE.KIND (10 pixel sub-builderů), plus VOXEL_MODEL (externí MV blob).
+3. **Linie** *(plánováno)* — PATH, TRACK pro cesty/koleje.
+4. **Objekty** *(plánováno)* — postavy, zvířata, stroje.
 
-**Humanoidní varianty (sez. 12, DD-20):** kromě CHARACTER (hinge-based kloubová postavička) jsou k dispozici **`NOODLE`** (plastelínová: CapsuleGeometry tělo + TubeGeometry končetiny podél CatmullRomCurve3 — walk cycle mutuje ctrl body per-frame) a **`STICKMAN`** (blokový low-poly: kvádr trup, 8×4 sphere hlava, 6-seg válce končetin, kostkové ruce/chodidla; plná 3-segmentová kostra s animovaným zápěstím/kotníkem). Všechny tři sdílejí `ANIMATE` mode slot přes `poseFns` callback mapu v `userData`.
+**Aktuální obsah scény:**
+- ~145 TCUBES kostek z `SCENE2_LAYOUT` (grass podlaha + hliněná zadní stěna s peaky + stone bloky)
+- 2 TTUNELS klenuté tunely na Z=−3 (vstupy pro vlak)
+- 1 TRRAMPS travnatá rampa, 1 TTRAMPS trojboký jehlan
+- 10 pixel stromů (`spruce`/`oak`/`birch`/`palm`/`bush`/`cypress`/`willow`/`bonsai`/`dead`/`maple`) s kymácením ve větru
+- 2 SPRITES bubliny s dynamickým 3D ocáskem
 
-Další plán: sekvenční chování (zvedání/pokládání), `STATE` atribut pro wander substate visibility (DD-21 kandidát), mobility design (rampy / graf / splines), editor fáze 2.
+**Hierarchie modelu**:
+
+```
+OBJECTS (ID, NAME, DESCRIPTION, ANIMATE)
+ ├── CUBES (X, Y, Z float)
+ │    ├── BLOCKS (1C grid)
+ │    │    ├── CCUBES (COLOR)
+ │    │    ├── TCUBES (TEXTURE × 6)
+ │    │    ├── TRRAMPS (TEXTURE × 5, ORIENTATION)
+ │    │    ├── TTRAMPS (TEXTURE × 4, ORIENTATION)
+ │    │    └── TTUNELS (TEXTURE × 4, ORIENTATION)
+ │    ├── SPRITES (ASSET, SPEAKER, SPEAKER_OFFSET_Y)
+ │    └── COMPOSITES (voxel kompozice)
+ │         ├── TREE (KIND — 10 pixel sub-builderů)
+ │         └── VOXEL_MODEL (ASSET, SCALE, ROTATION_Y)
+ ├── TIMER (INTERVAL, ACTION)
+ └── COUNTER (VALUE, INCREMENT)
+```
+
+**Aktivní `ANIMATE.kind`y:** `tree_sway`, `rotate`, `orbit_stadium`, `pulse`, `drift`.
+
+**Milníky:**
+- **M1–M7** hotové (sez. 1–5): statický svět, voxelové potomky, COMPOSITES, SPRITES, TCUBES, ANIMATE dispatch.
+- **M8+** průběžně (sez. 6–16): další `ANIMATE.kind`y, SPRITES.SPEAKER tracking (DD-16), TIMER + COUNTER (DD-17), MagicaVoxel pipeline (DD-21), pevné měřítko (DD-22), all-voxel pivot (DD-23), shape × surface separation (DD-24), 4-vrstvá taxonomie + BLOCKS rodina (DD-25).
+
+Detail v `docs/CLAUDE.md` (Status), `docs/DIARY.md` (chronologie sezení), `docs/DESIGN_DECISIONS.md` (DD-01 až DD-25).
+
+**Plán:** vrstva 2 — pixel-voxel BUILDING / ROCK_PIXEL / CLOUD; vrstva 3 — LINES (PATH, TRACK); editor fáze 2; WORLD entity (WIND/SUN/CLIMATE).
 
 ## Stack
 

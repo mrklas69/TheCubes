@@ -8,7 +8,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
-import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, VOXEL_MODEL, TIMER, COUNTER } from "./model.js";
+import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TTUNELS, SPRITES, COMPOSITES, TREE, VOXEL_MODEL, TIMER, COUNTER } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
 
 // === Renderer ===
@@ -706,7 +706,7 @@ const bubbleTails = [];
 // ne model — DD-15). Tím může ocásek sledovat i pohybující se mluvčí.
 //
 // **Cleanup TBD (napříč registry):** `meshByInstance`, `animators`,
-// `bubbleTails`, `tickHandlers` a `edgeOverlays` (v `userData`
+// `bubbleTails`, `tickHandlers` a hover material klony (v `userData.hoverHotMat`
 // na mesh rootu) se plní monotonně, žádný `removeInstance` mechanismus zatím
 // neexistuje. Pro statickou scénu OK; pro editor (Příště sez. 9 bod 3) bude
 // potřeba jednotný `destroyInstance(id)` — projde všechny registry a uklidí.
@@ -941,6 +941,15 @@ function createMeshFor(instance) {
   } else if (instance instanceof TCUBES) {
     // Voxel s per-face texturami (6 různých materiálů). Snap-to-grid.
     object3d = createTCubeFor(instance);
+  } else if (instance instanceof TRRAMPS) {
+    // Trojboký hranol (klín) s 5 per-face texturami. Snap-to-grid + rotace Y.
+    object3d = createTRRampFor(instance);
+  } else if (instance instanceof TTRAMPS) {
+    // Trojboký jehlan (trirectangular tetrahedron) se 4 per-face texturami.
+    object3d = createTTRampFor(instance);
+  } else if (instance instanceof TTUNELS) {
+    // Tunel skrz 1C blok (4 vnitřní stěny, 2 osy průchozí).
+    object3d = createTTunnelFor(instance);
   } else if (instance instanceof CCUBES) {
     // Voxel s plochou barvou (dříve TERRAIN).
     const geometry = new THREE.BoxGeometry(1, 1, 1);
@@ -1022,6 +1031,503 @@ function createTCubeFor(instance) {
   ];
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), materials);
   snapToGrid(mesh, instance);
+  return mesh;
+}
+
+// === TRRAMPS — Trojboký hranol (klín) =======================================
+//
+// 1C blok (1×1×1) s pravoúhlým trojúhelníkem v boční rovině XY. Default
+// orientace (ROTATION_Y=0): apex sloupec na −Z (NORTH), svah klesá k +Z (SOUTH).
+// Stojící divák před rampou (na +Z) tedy vidí svah klesat k němu.
+//
+// Vertices v lokálních souřadnicích (1C blok centered v origin):
+//   v0 (-0.5, -0.5, -0.5)  bottom NW
+//   v1 ( 0.5, -0.5, -0.5)  bottom NE
+//   v2 ( 0.5, -0.5,  0.5)  bottom SE
+//   v3 (-0.5, -0.5,  0.5)  bottom SW
+//   v4 (-0.5,  0.5, -0.5)  apex top NW
+//   v5 ( 0.5,  0.5, -0.5)  apex top NE
+//
+// 5 faces, každý má vlastní material (per-face dispatch přes faceMaterialFor):
+//   BOTTOM  quad (v0,v3,v2,v1) na Y=−0.5,  normála (0,−1, 0)
+//   BACK    quad (v0,v1,v5,v4) na Z=−0.5,  normála (0, 0,−1)  vertikální stěna
+//   SLOPE   quad (v3,v2,v5,v4) šikmá,      normála (0, 1, 1)/√2  svah
+//   LEFT    triangle (v0,v4,v3) na X=−0.5, normála (−1,0,0)
+//   RIGHT   triangle (v1,v2,v5) na X=+0.5, normála ( 1,0,0)
+//
+// Per-face vertices (non-shared) → flat shading bez `computeVertexNormals`
+// (každá face má vlastní normály = ostré hrany mezi facey, pixel-art look).
+// Celkem 18 vertices, 8 trojúhelníků, 5 material groups.
+
+const TRRAMP_GEOM_CACHE = (() => {
+  const SQRT2 = Math.SQRT2;
+  // Pomocné lokální vertex pozice (zkráceně).
+  const v0 = [-0.5, -0.5, -0.5];
+  const v1 = [ 0.5, -0.5, -0.5];
+  const v2 = [ 0.5, -0.5,  0.5];
+  const v3 = [-0.5, -0.5,  0.5];
+  const v4 = [-0.5,  0.5, -0.5];
+  const v5 = [ 0.5,  0.5, -0.5];
+
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const indices = [];
+  const groups = []; // { start, count, materialIndex }
+
+  // Helper: přidá quad (4 vertices, 2 trojúhelníky) s jednou normálou per face.
+  // CCW pořadí pro správnou face culling (Three.js front-face = CCW).
+  function addQuad(p0, p1, p2, p3, n, uv0, uv1, uv2, uv3, materialIndex) {
+    const startVert = positions.length / 3;
+    positions.push(...p0, ...p1, ...p2, ...p3);
+    normals.push(...n, ...n, ...n, ...n);
+    uvs.push(...uv0, ...uv1, ...uv2, ...uv3);
+    const startIdx = indices.length;
+    indices.push(startVert, startVert + 1, startVert + 2);
+    indices.push(startVert, startVert + 2, startVert + 3);
+    groups.push({ start: startIdx, count: 6, materialIndex });
+  }
+
+  function addTri(p0, p1, p2, n, uv0, uv1, uv2, materialIndex) {
+    const startVert = positions.length / 3;
+    positions.push(...p0, ...p1, ...p2);
+    normals.push(...n, ...n, ...n);
+    uvs.push(...uv0, ...uv1, ...uv2);
+    const startIdx = indices.length;
+    indices.push(startVert, startVert + 1, startVert + 2);
+    groups.push({ start: startIdx, count: 3, materialIndex });
+  }
+
+  // Pořadí materialIndex (musí ladit s `createTRRampFor` materials array):
+  // 0 = SLOPE, 1 = BOTTOM, 2 = BACK, 3 = LEFT, 4 = RIGHT.
+
+  // CCW order pro každý face = vertices v takovém pořadí, aby cross product
+  // (v[1]−v[0]) × (v[2]−v[0]) dal kladnou složku ve směru deklarované normály
+  // (Three.js front-face konvence). Bug fix proti první verzi: geometrická
+  // normála musí ladit s rendering normálou, jinak Three.js culluje nebo
+  // dochází k z-fighting.
+
+  // SLOPE — quad (v3, v2, v5, v4), normála (0, 1, 1)/√2 (svah nakloněný k +Z).
+  // UV: v3 (SW dno) = (0,0), v2 (SE dno) = (1,0), v5 (NE apex) = (1,1), v4 (NW apex) = (0,1).
+  // → Textura natažená přes 1×√2 obdélník (pixel-art stretch ~41 %, akceptovatelné).
+  addQuad(
+    v3, v2, v5, v4,
+    [0, 1 / SQRT2, 1 / SQRT2],
+    [0, 0], [1, 0], [1, 1], [0, 1],
+    0,
+  );
+
+  // BOTTOM — quad (v0, v1, v2, v3), normála (0, −1, 0).
+  // CCW při pohledu zezdola (cam na −Y looking +Y; v této orientaci je +X right, +Z up).
+  // UV: v0 = (0,0), v1 = (1,0), v2 = (1,1), v3 = (0,1).
+  addQuad(
+    v0, v1, v2, v3,
+    [0, -1, 0],
+    [0, 0], [1, 0], [1, 1], [0, 1],
+    1,
+  );
+
+  // BACK — quad (v0, v4, v5, v1), normála (0, 0, −1).
+  // Vertikální stěna na NORTH (Z=−0.5). CCW při pohledu z −Z stran (= ven z bloku).
+  // UV: v0 (W-bottom) = (0,0), v4 (W-top) = (0,1), v5 (E-top) = (1,1), v1 (E-bottom) = (1,0).
+  addQuad(
+    v0, v4, v5, v1,
+    [0, 0, -1],
+    [0, 0], [0, 1], [1, 1], [1, 0],
+    2,
+  );
+
+  // LEFT — triangle (v0, v3, v4) na X=−0.5, normála (−1, 0, 0).
+  // CCW při pohledu z −X stran. Apex sloupec v4 → UV (0, 1) = top-left textury
+  // (kde `:grass-side` má grass strip).
+  addTri(
+    v0, v3, v4,
+    [-1, 0, 0],
+    [0, 0], [1, 0], [0, 1],
+    3,
+  );
+
+  // RIGHT — triangle (v1, v5, v2) na X=+0.5, normála (1, 0, 0).
+  // CCW při pohledu z +X stran. Apex v5 → UV (1, 1) = top-right textury.
+  addTri(
+    v1, v5, v2,
+    [1, 0, 0],
+    [1, 0], [1, 1], [0, 0],
+    4,
+  );
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geom.setAttribute("normal",   new THREE.Float32BufferAttribute(normals, 3));
+  geom.setAttribute("uv",       new THREE.Float32BufferAttribute(uvs, 2));
+  geom.setIndex(indices);
+  for (const g of groups) geom.addGroup(g.start, g.count, g.materialIndex);
+  return geom;
+})();
+
+// Sestaví trojboký hranol pro TRRAMPS instanci. 5 materials (SLOPE/BOTTOM/BACK/
+// LEFT/RIGHT) přes sdílený dispatch `faceMaterialFor` (DD-14, izomorfně s TCUBES).
+// Geometrie sdílená přes cache — instance se liší pozicí a rotací.
+function createTRRampFor(instance) {
+  const materials = [
+    faceMaterialFor(instance.TEXTURE_SLOPE),   // 0
+    faceMaterialFor(instance.TEXTURE_BOTTOM),  // 1
+    faceMaterialFor(instance.TEXTURE_BACK),    // 2
+    faceMaterialFor(instance.TEXTURE_LEFT),    // 3
+    faceMaterialFor(instance.TEXTURE_RIGHT),   // 4
+  ];
+  const mesh = new THREE.Mesh(TRRAMP_GEOM_CACHE, materials);
+  snapToGrid(mesh, instance);
+  mesh.rotation.y = instance.ORIENTATION * (Math.PI / 2);
+  return mesh;
+}
+
+// === TTRAMPS — Trojboký jehlan (trirectangular tetrahedron) =================
+//
+// 1C blok s 4 vrcholy: roh `C` v lokálním (-0.5, -0.5, -0.5) + 3 axiální body
+// na koncích hran délky 1 podél +X, +Y, +Z. SLOPE = rovnostranný trojúhelník
+// mezi 3 axiálními body (hrana √2). 3 perpendicular faces leží v rovinách
+// X=−0.5 (LEFT), Y=−0.5 (BOTTOM), Z=−0.5 (BACK), všechny pravoúhlé trojúhelníky
+// se sdíleným pravým úhlem v rohu C.
+//
+// 4 faces × 3 vertices (per-face non-shared) = 12 vertices, 4 trojúhelníky.
+
+const TTRAMP_GEOM_CACHE = (() => {
+  const SQRT3 = Math.sqrt(3);
+  // 4 unique vertex pozice (lokálně, 1C blok centered v origin).
+  const C = [-0.5, -0.5, -0.5];  // sdílený roh 3 perpendicular faces
+  const X = [ 0.5, -0.5, -0.5];  // konec +X hrany
+  const Y = [-0.5,  0.5, -0.5];  // konec +Y hrany (apex top)
+  const Z = [-0.5, -0.5,  0.5];  // konec +Z hrany
+
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const indices = [];
+  const groups = [];
+
+  function addTri(p0, p1, p2, n, uv0, uv1, uv2, materialIndex) {
+    const startVert = positions.length / 3;
+    positions.push(...p0, ...p1, ...p2);
+    normals.push(...n, ...n, ...n);
+    uvs.push(...uv0, ...uv1, ...uv2);
+    const startIdx = indices.length;
+    indices.push(startVert, startVert + 1, startVert + 2);
+    groups.push({ start: startIdx, count: 3, materialIndex });
+  }
+
+  // Pořadí materialIndex (musí ladit s `createTTRampFor` materials):
+  // 0 = SLOPE, 1 = BOTTOM, 2 = BACK, 3 = LEFT.
+
+  // SLOPE — triangle (X, Y, Z), rovnostranný, normála (1, 1, 1)/√3.
+  // CCW při pohledu z venku (z opačného rohu).
+  // UV: rovnostranný v UV space — X = (0,0), Z = (1,0), Y = (0.5, 1) apex.
+  addTri(
+    X, Y, Z,
+    [1 / SQRT3, 1 / SQRT3, 1 / SQRT3],
+    [0, 0], [0.5, 1], [1, 0],
+    0,
+  );
+
+  // BOTTOM — triangle (C, X, Z) na Y=−0.5, normála (0, −1, 0).
+  // CCW při pohledu z −Y stran (cam zezdola, looking +Y; +X right, +Z up).
+  // UV: C = (0,0), X = (1,0), Z = (0,1).
+  addTri(
+    C, X, Z,
+    [0, -1, 0],
+    [0, 0], [1, 0], [0, 1],
+    1,
+  );
+
+  // BACK — triangle (C, Y, X) na Z=−0.5, normála (0, 0, −1).
+  // CCW při pohledu z −Z stran. UV: C (W-bottom) = (0,0), Y (W-top, apex) = (0,1),
+  // X (E-bottom) = (1,0). Apex v UV (0,1) → grass strip u top textury (`:grass-side`).
+  addTri(
+    C, Y, X,
+    [0, 0, -1],
+    [0, 0], [0, 1], [1, 0],
+    2,
+  );
+
+  // LEFT — triangle (C, Z, Y) na X=−0.5, normála (−1, 0, 0).
+  // CCW při pohledu z −X stran. UV: C (N-bottom) = (0,0), Z (S-bottom) = (1,0),
+  // Y (N-top, apex) = (0,1). Symetrické s BACK — apex u UV.v=1.
+  addTri(
+    C, Z, Y,
+    [-1, 0, 0],
+    [0, 0], [1, 0], [0, 1],
+    3,
+  );
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geom.setAttribute("normal",   new THREE.Float32BufferAttribute(normals, 3));
+  geom.setAttribute("uv",       new THREE.Float32BufferAttribute(uvs, 2));
+  geom.setIndex(indices);
+  for (const g of groups) geom.addGroup(g.start, g.count, g.materialIndex);
+  return geom;
+})();
+
+// Sestaví trojboký jehlan pro TTRAMPS instanci. 4 materials (SLOPE/BOTTOM/BACK/
+// LEFT). Geometrie sdílená přes cache.
+function createTTRampFor(instance) {
+  const materials = [
+    faceMaterialFor(instance.TEXTURE_SLOPE),   // 0
+    faceMaterialFor(instance.TEXTURE_BOTTOM),  // 1
+    faceMaterialFor(instance.TEXTURE_BACK),    // 2
+    faceMaterialFor(instance.TEXTURE_LEFT),    // 3
+  ];
+  const mesh = new THREE.Mesh(TTRAMP_GEOM_CACHE, materials);
+  snapToGrid(mesh, instance);
+  mesh.rotation.y = instance.ORIENTATION * (Math.PI / 2);
+  return mesh;
+}
+
+// === TTUNELS — 1C blok s klenutým tunelem ===================================
+//
+// Geometrie: kvádr 1×1×1 mínus „obdélník + půlkruh extrudovaný v ose X" (=
+// klenutý tunel se spodním obdélníkovým průchodem). Profil otvoru v rovině
+// YZ (kolmé k ose tunelu):
+//   Spodní obdélník: Y = −0.5..0,    Z = −0.3..+0.3
+//   Horní půlkruh:   střed (Y=0, Z=0), poloměr 0.3 → klenba k Y=+0.3
+//   Nad obloukem (Y=+0.3..+0.5) zůstává plný materiál — „klenba bloku".
+//
+// 4 material groups (= 4 user-faces):
+//   0 = TOP       — vnější vrchní stěna (typicky `:grass-top`)
+//   1 = SIDES     — vnější 2 boky + 2 vstupní stěny s vyříznutým profilem
+//   2 = WALLS     — vnitřní 2 boční stěny (Z=±0.3, Y=−0.5..0)
+//   3 = CEILING   — vnitřní klenutý strop (N=12 segmentů půlkruhu)
+//
+// Bez bottom outside i bez inside floor — tunel je „průhledný dolů" na top
+// voxelu pod ním (typicky grass podlaha diorámy).
+//
+// Vstupní stěny (X=±0.5) jsou triangulovány: 2 ears (sloupce mimo tunel) +
+// 1 shoulder (pásek nad obloukem) + 2 sektory klenby (fan z corner shoulder
+// k bodům půlkruhu, 6 trojúhelníků per sektor).
+//
+// Vnitřní povrchy mají normály mířící **dovnitř** tunelu (k ose průchodu),
+// aby je postava uvnitř viděla bez DoubleSide. Vnější povrchy mají normály
+// ven (standard FrontSide).
+
+const TTUNEL_GEOM_CACHE = (() => {
+  const W = 0.3;   // polovina šířky tunelu
+  const H = 0.0;   // přechod rectangular → arch (Y koordináta)
+  const R = W;     // poloměr půlkruhu = polovina šířky
+  const N = 12;    // segmentů na půlkruhu (sudé číslo, dělí se na 2 čtvrtě)
+
+  // Polokruhové body na entry plane (X = const). Parametrizace: θ ∈ [0, π],
+  //   archPt(θ) = (Z = R·cos(θ), Y = H + R·sin(θ))
+  //   θ=0:   (+R, H)        — pravý dolní (= SOUTH-bottom of arch)
+  //   θ=π/2: (0,  H+R)      — vrchol oblouku
+  //   θ=π:   (−R, H)        — levý dolní (= NORTH-bottom of arch)
+  const arch = [];
+  for (let i = 0; i <= N; i++) {
+    const θ = (i / N) * Math.PI;
+    arch.push({ z: R * Math.cos(θ), y: H + R * Math.sin(θ) });
+  }
+
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const indices = [];
+  const groups = [];
+
+  function addTri(p0, p1, p2, n, uv0, uv1, uv2, materialIndex) {
+    const start = positions.length / 3;
+    positions.push(...p0, ...p1, ...p2);
+    normals.push(...n, ...n, ...n);
+    uvs.push(...uv0, ...uv1, ...uv2);
+    const idxStart = indices.length;
+    indices.push(start, start + 1, start + 2);
+    groups.push({ start: idxStart, count: 3, materialIndex });
+  }
+
+  function addQuad(p0, p1, p2, p3, n, uv0, uv1, uv2, uv3, materialIndex) {
+    const start = positions.length / 3;
+    positions.push(...p0, ...p1, ...p2, ...p3);
+    normals.push(...n, ...n, ...n, ...n);
+    uvs.push(...uv0, ...uv1, ...uv2, ...uv3);
+    const idxStart = indices.length;
+    indices.push(start, start + 1, start + 2);
+    indices.push(start, start + 2, start + 3);
+    groups.push({ start: idxStart, count: 6, materialIndex });
+  }
+
+  // Material constants
+  const MAT_TOP     = 0;
+  const MAT_SIDES   = 1;
+  const MAT_WALLS   = 2;
+  const MAT_CEILING = 3;
+
+  // === OUTSIDE — TOP quad + 2 side quads + 2 entry walls (žádný bottom) ===
+
+  // TOP outside (Y=+0.5, normála +Y), CCW from above. Vlastní material =
+  // jako grass cube top → uživatel typicky pošle `:grass-top`.
+  addQuad(
+    [-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, -0.5],
+    [0, 1, 0],
+    [0, 0], [0, 1], [1, 1], [1, 0],
+    MAT_TOP,
+  );
+
+  // NORTH outside (Z=−0.5, normála −Z), CCW from -Z
+  addQuad(
+    [0.5, -0.5, -0.5], [-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5],
+    [0, 0, -1],
+    [0, 0], [1, 0], [1, 1], [0, 1],
+    MAT_SIDES,
+  );
+
+  // SOUTH outside (Z=+0.5, normála +Z), CCW from +Z
+  addQuad(
+    [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+    [0, 0, 1],
+    [0, 0], [1, 0], [1, 1], [0, 1],
+    MAT_SIDES,
+  );
+
+  // Helper — entry wall na X = xPlane (sign = +1 pro EAST, −1 pro WEST).
+  // Skládá se ze 2 ears + shoulder + 2 fan sektorů kolem půlkruhu.
+  function buildEntryWall(xPlane, sign) {
+    const n = [sign, 0, 0];
+
+    // Pro CCW vrtex order respektující normálu (sign·X, 0, 0) volíme:
+    //   sign = +1: vertices (Y=yA, Z=zA) → (Y=yB, Z=zB) such that
+    //              (yB−yA)·(zC−zA) − (zB−zA)·(yC−yA) > 0
+    //   sign = −1: opačné znaménko.
+    // Pro konzistenci kódu napíšeme dvě varianty pro +1 a převrátíme order
+    // u trojúhelníků/quadů pro −1.
+
+    function quadEntry(yzCorners, uvs, mat) {
+      // yzCorners = [[yA, zA], [yB, zB], [yC, zC], [yD, zD]] — pořadí pro +X CCW.
+      const verts = yzCorners.map(([y, z]) => [xPlane, y, z]);
+      if (sign === 1) {
+        addQuad(verts[0], verts[1], verts[2], verts[3], n, uvs[0], uvs[1], uvs[2], uvs[3], mat);
+      } else {
+        // Reverse winding for −X normal
+        addQuad(verts[0], verts[3], verts[2], verts[1], n, uvs[0], uvs[3], uvs[2], uvs[1], mat);
+      }
+    }
+
+    function triEntry(yzCorners, uvs, mat) {
+      const verts = yzCorners.map(([y, z]) => [xPlane, y, z]);
+      if (sign === 1) {
+        addTri(verts[0], verts[1], verts[2], n, uvs[0], uvs[1], uvs[2], mat);
+      } else {
+        addTri(verts[0], verts[2], verts[1], n, uvs[0], uvs[2], uvs[1], mat);
+      }
+    }
+
+    // 1. NORTH ear (Z=−0.5..−W, full Y) — pro +X CCW: (Y=−0.5,Z=−0.5) → (Y=+0.5,Z=−0.5) → (Y=+0.5,Z=−W) → (Y=−0.5,Z=−W)
+    quadEntry(
+      [[-0.5, -0.5], [0.5, -0.5], [0.5, -W], [-0.5, -W]],
+      [[0, 0], [0, 1], [1, 1], [1, 0]],
+      MAT_SIDES,
+    );
+
+    // 2. SOUTH ear (Z=+W..+0.5, full Y) — analogicky
+    quadEntry(
+      [[-0.5, W], [0.5, W], [0.5, 0.5], [-0.5, 0.5]],
+      [[0, 0], [0, 1], [1, 1], [1, 0]],
+      MAT_SIDES,
+    );
+
+    // 3. SHOULDER (Z=−W..+W, Y=H+R..+0.5) — pro +X CCW: (Y=H+R,Z=−W) → (Y=+0.5,Z=−W) → (Y=+0.5,Z=+W) → (Y=H+R,Z=+W)
+    quadEntry(
+      [[H + R, -W], [0.5, -W], [0.5, W], [H + R, W]],
+      [[0, 0], [0, 1], [1, 1], [1, 0]],
+      MAT_SIDES,
+    );
+
+    // 4. NORTH arch sector — fan z corner (Y=H+R, Z=−W) k arch points i ∈ [N/2, N]
+    const apexNorth = [H + R, -W];
+    for (let i = N / 2; i < N; i++) {
+      const a = arch[i];
+      const b = arch[i + 1];
+      // Pro +X CCW order trojúhelníku (apex, archPt[i], archPt[i+1]):
+      // ověřeno cross-productem že má kladnou X složku.
+      triEntry(
+        [apexNorth, [a.y, a.z], [b.y, b.z]],
+        [[0, 1], [0.7, 0.6], [0, 0]],
+        MAT_SIDES,
+      );
+    }
+
+    // 5. SOUTH arch sector — fan z corner (Y=H+R, Z=+W) k arch points i ∈ [0, N/2]
+    const apexSouth = [H + R, W];
+    for (let i = 0; i < N / 2; i++) {
+      const a = arch[i];
+      const b = arch[i + 1];
+      triEntry(
+        [apexSouth, [a.y, a.z], [b.y, b.z]],
+        [[1, 1], [0.3, 0.6], [1, 0]],
+        MAT_SIDES,
+      );
+    }
+  }
+
+  buildEntryWall(0.5, 1);   // EAST entry (X=+0.5, normála +X)
+  buildEntryWall(-0.5, -1); // WEST entry (X=−0.5, normála −X)
+
+  // === INSIDE — 2 walls + 12 ceiling segments (žádný floor — průhled dolů) ===
+
+  const ε = 0.001;
+
+  // NORTH inside wall (Z=−W+ε, Y=−0.5..H), normála +Z (mířit do tunelu)
+  addQuad(
+    [-0.5, -0.5, -W + ε], [0.5, -0.5, -W + ε], [0.5, H, -W + ε], [-0.5, H, -W + ε],
+    [0, 0, 1],
+    [0, 0], [1, 0], [1, 1], [0, 1],
+    MAT_WALLS,
+  );
+
+  // SOUTH inside wall (Z=+W−ε, Y=−0.5..H), normála −Z (mířit do tunelu)
+  addQuad(
+    [-0.5, -0.5, W - ε], [-0.5, H, W - ε], [0.5, H, W - ε], [0.5, -0.5, W - ε],
+    [0, 0, -1],
+    [0, 0], [0, 1], [1, 1], [1, 0],
+    MAT_WALLS,
+  );
+
+  // CEILING — N segmentů půlkruhu, každý jako quad mezi entry a exit walls.
+  // Inward normála per segment: směrem ke středu polokruhu (0, H, 0).
+  // Order vrcholů (i_west, (i+1)_west, (i+1)_east, i_east) → cross product
+  // dává normálu (0, ΔZ, −ΔY), což pro arch jdoucí CCW (θ rostoucí) znamená
+  // inward orientaci.
+  for (let i = 0; i < N; i++) {
+    const a = arch[i];
+    const b = arch[i + 1];
+    const θ_mid = ((i + 0.5) / N) * Math.PI;
+    const nIn = [0, -Math.sin(θ_mid), -Math.cos(θ_mid)];
+    addQuad(
+      [-0.5, a.y, a.z], [-0.5, b.y, b.z], [0.5, b.y, b.z], [0.5, a.y, a.z],
+      nIn,
+      [0, 0], [0, 1], [1, 1], [1, 0],
+      MAT_CEILING,
+    );
+  }
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geom.setAttribute("normal",   new THREE.Float32BufferAttribute(normals, 3));
+  geom.setAttribute("uv",       new THREE.Float32BufferAttribute(uvs, 2));
+  geom.setIndex(indices);
+  for (const g of groups) geom.addGroup(g.start, g.count, g.materialIndex);
+  return geom;
+})();
+
+// Sestaví klenutý tunelový blok pro TTUNELS instanci. 4 materials přes
+// sdílený `faceMaterialFor` dispatch.
+function createTTunnelFor(instance) {
+  const materials = [
+    faceMaterialFor(instance.TEXTURE_TOP),      // 0
+    faceMaterialFor(instance.TEXTURE_SIDES),    // 1
+    faceMaterialFor(instance.TEXTURE_WALLS),    // 2
+    faceMaterialFor(instance.TEXTURE_CEILING),  // 3
+  ];
+  const mesh = new THREE.Mesh(TTUNEL_GEOM_CACHE, materials);
+  snapToGrid(mesh, instance);
+  mesh.rotation.y = instance.ORIENTATION * (Math.PI / 2);
   return mesh;
 }
 
@@ -1595,22 +2101,56 @@ function buildSceneTwo(scene) {
   // SCALE 0.625 = pevná konvence: 1 MV voxel = 1 pixel textury = 1/16 TC voxelu
   // = 6.25 cm. Velikost objektu řídí MV grid; nový tunel 48³ MV → 3×3×3 TC.
   // Y=−0.5 = top of grass cube (auto-center loadera posadí mesh na surface).
-  // Vlak mezi nimi pojede podél X osy na Z = −3.
-  // Levý vchod míří vpravo (+X), pravý vchod vlevo (−X).
-  scene.add(createMeshFor(new VOXEL_MODEL(
-    "tunel_left", "Tunel vlevo", -4, -0.5, -3, "tunel-grass", 0.625, -Math.PI / 2,
-    "VOXEL_MODEL — tunelový vstup z MagicaVoxelu (vlevo, vchod míří +X).",
+  // Tunelové vstupy — TTUNELS bloky (DD-25 procedurální geometrie). Nahrazují
+  // dřívější 3×3×3 TC VOXEL_MODEL `tunel-grass` (sez. 14, DD-21). 1C velikost
+  // místo 3C — užší tunel, ale konzistentní s rodinou Bloků.
+  // Vlak jezdí podél X osy na Z = −3. Default ORIENTATION=0 = vstupy ±X.
+  // SIDES = `:dirt` (eliminuje druhý grass-strip pásek).
+  const TUNEL_TEX = {
+    TOP:     ":grass-top",
+    SIDES:   ":dirt",
+    WALLS:   ":stone",
+    CEILING: ":stone",
+  };
+  scene.add(createMeshFor(new TTUNELS(
+    "tunnel_0", "Tunel vlevo", -4, 0, -3, TUNEL_TEX, 0,
+    "TTUNELS — tunelový vstup vlevo (osa X).",
   )));
-  scene.add(createMeshFor(new VOXEL_MODEL(
-    "tunel_right", "Tunel vpravo", 3, -0.5, -3, "tunel-grass", 0.625, Math.PI / 2,
-    "VOXEL_MODEL — tunelový vstup z MagicaVoxelu (vpravo, vchod míří −X).",
+  scene.add(createMeshFor(new TTUNELS(
+    "tunnel_1", "Tunel vpravo", 3, 0, -3, TUNEL_TEX, 0,
+    "TTUNELS — tunelový vstup vpravo (osa X).",
   )));
 
-  // Travnatá rampa — voxelový model `grass-ramp` (16³ MV → 1×1×1 TC).
-  scene.add(createMeshFor(new VOXEL_MODEL(
-    "ramp_0", "Travnatá rampa", -4, -0.5, 0, "ramp-grass", 0.625, 0,
-    "VOXEL_MODEL — travnatá rampa z MagicaVoxelu (16³ vox).",
+  // Travnaté rampy — Bloky (DD-25 kandidát: 1C grid-aligned, procedurální).
+  // Per-face textury sdílí paletu s grass cube voxely (`:grass-top` svah,
+  // `:grass-side` boky/zadek, `:dirt` spodek).
+  const TRRAMP_TEX = {
+    SLOPE:  ":grass-top",
+    BOTTOM: ":dirt",
+    BACK:   ":grass-side",
+    LEFT:   ":grass-side",
+    RIGHT:  ":grass-side",
+  };
+  const TTRAMP_TEX = {
+    SLOPE:  ":grass-top",
+    BOTTOM: ":dirt",
+    BACK:   ":grass-side",
+    LEFT:   ":grass-side",
+  };
+  // TRRAMPS (trojboký hranol) — ORIENTATION=1 (= 90° CCW od defaultu) otočí
+  // apex na −X → svah stoupá v −X (= vede z grass(-4,-1,0) k peaku (-5,0,0)).
+  // Pozice (-4, 0, 0) = jeden voxel nahoru od grass podlahy (BLOCKS Y konvence).
+  scene.add(createMeshFor(new TRRAMPS(
+    "ramp_0", "Travnatá rampa Z=0", -4, 0, 0, TRRAMP_TEX, 1,
+    "TRRAMPS — trojboký hranol, svah stoupá v −X. Spojuje grass(-4,-1,0) → peak(-5,0,0).",
   )));
+  // TTRAMPS (trojboký jehlan) — ORIENTATION=0 (default) po +90° CW rotaci od
+  // sez. 16 prvního pokusu (1 → 0). Apex Y vrchol směřuje do NW-top rohu bloku.
+  scene.add(createMeshFor(new TTRAMPS(
+    "ramp_1", "Trojúhelníková rampa Z=1", -4, 0, 1, TTRAMP_TEX, 0,
+    "TTRAMPS — trojboký jehlan (corner ramp), rovnostranný svah + 3 pravoúhlé stěny.",
+  )));
+
 
   // Pixelové stromy — 10 druhů na předním řádku Z=4 (X=−5..4).
   // Y=0 = COMPOSITES center na úrovni 0.5 j nad ground; sub-buildery umisťují
@@ -1652,55 +2192,56 @@ function buildSceneTwo(scene) {
 // + scene switcher byly odstraněny při „all-voxel" pivotu.
 buildSceneTwo(scene);
 
-// === Edge highlight při hover (editor-like feedback) ===
-// Při najetí kurzoru na CUBES-potomka (kromě SPRITES) vykreslíme žluté
-// hrany meshe — jasný signál „toto je vybraná entita". Použití v budoucím
-// scéně-editoru (selekce), zatím UX zpětná vazba.
+// === Hover highlight (editor-like feedback) ===
+// Při najetí kurzoru na CUBES-potomka (kromě SPRITES) jemně zežloutne celý
+// objekt — boost emissive komponenty materiálu. Vizuálně se objekt rozsvítí
+// žlutým „světélkováním" bez ostrých hran.
 //
-// Pattern: lazy build při prvním hoveru, cache v `root.userData.edgeOverlays`.
-// Per-mesh `THREE.EdgesGeometry(geom, 20)` → hrany s dihedral úhlem > 20°
-// (BoxGeometry = 12 hran čistě; SphereGeometry = žádné, plynulé; IcosahedronGeometry
-// s flatShading = všechny facet hrany). `LineSegments` s `LineBasicMaterial`
-// (WebGL limit — tenká 1px linie, na většině driverů se neignoruje linewidth).
+// Sdílení materiálů: TREE _treeMatCache (DD-23) sdílí MeshStandardMaterial
+// mezi sourozenci stejné barvy. Pokud bychom mutovali emissive na sdíleném
+// materiálu, hover by zvýraznil všechny stromy téže barvy. Řešení:
+// **lazy clone-on-first-hover** — při prvním hoveru klonujeme materials per
+// mesh, originály držíme v userData. Při on/off přepneme `child.material`
+// mezi originálem a klonem; emissive nastavujeme jen na klonu.
 //
-// `depthTest = true` → jen **viditelné** hrany (zadní hrany skryté za plochou
-// se nekreslí). `polygonOffset: true` + negativní factor/units posune hrany
-// mírně k divákovi, aby nekoexistovaly v přesně stejném Z jako mesh plochy
-// (prevence „stípkaného" nebo mizejícího efektu hran sedících přesně na ploše).
-//
-// `raycast = () => {}` no-op → hrany nejsou raycastovatelné → hover detekci
-// (raycaster nad `firstHit`) neruší. Jinak by hover „chytal" vlastní overlay.
-//
-// SPRITES skip: 2D billboardy nemají smysluplné 3D hrany. SPRITES se SPEAKER
-// (Group s tail mesh) by jinak dostali hranatý ocásek — nežádoucí.
+// SPRITES skip: 2D billboardy s SpriteMaterial nemají emissive komponentu.
+// VOXEL_MODEL ze MagicaVoxelu má MeshLambertMaterial bez emissive — pro něj
+// fallback: emissive vlastnost dodáme dynamicky (Lambert ji neumí, ale Standard
+// ano). KISS: pokud mat.emissive neexistuje, hover je no-op pro ten material.
 
-function setEdgeHighlight(instance, on) {
+const HOVER_EMISSIVE_HEX = 0x404020;  // jemné žluté světélkování (R=0x40, G=0x40, B=0x20)
+
+function setHoverHighlight(instance, on) {
   if (!instance) return;
   if (instance instanceof SPRITES) return;
   const root = meshByInstance.get(instance.ID);
   if (!root) return;
 
-  if (!root.userData.edgeOverlays) {
-    const overlays = [];
+  // Lazy příprava clone materials při prvním zapnutí. Klon je per-mesh, takže
+  // sourozenci se sdíleným originálem zůstanou nedotknuti.
+  if (!root.userData.hoverInit) {
     root.traverse((child) => {
       if (!child.isMesh) return;
-      const edges = new THREE.EdgesGeometry(child.geometry, 20);
-      const material = new THREE.LineBasicMaterial({
-        color: 0xffff00,             // editor-yellow (konvence selekce)
-        depthTest: true,             // jen viditelné hrany
-        polygonOffset: true,         // posun vůči ploše (prevence z-fight)
-        polygonOffsetFactor: -2,
-        polygonOffsetUnits: -2,
-      });
-      const lines = new THREE.LineSegments(edges, material);
-      lines.raycast = () => {};                   // ignore v raycast
-      lines.visible = false;                      // default off; `on=true` zapne
-      child.add(lines);                           // child mesh-u → dědí transform
-      overlays.push(lines);
+      const orig = child.material;
+      const cloned = Array.isArray(orig) ? orig.map((m) => m.clone()) : orig.clone();
+      child.userData.hoverOrigMat = orig;
+      child.userData.hoverHotMat  = cloned;
     });
-    root.userData.edgeOverlays = overlays;
+    root.userData.hoverInit = true;
   }
-  for (const ov of root.userData.edgeOverlays) ov.visible = on;
+
+  root.traverse((child) => {
+    if (!child.isMesh) return;
+    if (on) {
+      child.material = child.userData.hoverHotMat;
+      const matsArr = Array.isArray(child.material) ? child.material : [child.material];
+      for (const mat of matsArr) {
+        if (mat.emissive) mat.emissive.setHex(HOVER_EMISSIVE_HEX);
+      }
+    } else {
+      child.material = child.userData.hoverOrigMat;
+    }
+  });
 }
 
 // === Infotip (hover panel s atributy instance) ===
@@ -1792,13 +2333,13 @@ canvas.addEventListener("pointermove", (event) => {
     // Edge highlight: pokud jsme přešli na jinou instanci, vypni starý
     // overlay a zapni nový. Same-instance hover → nic (overlay už svítí).
     if (instance !== lastHoveredInstance) {
-      setEdgeHighlight(lastHoveredInstance, false);
-      setEdgeHighlight(instance, true);
+      setHoverHighlight(lastHoveredInstance, false);
+      setHoverHighlight(instance, true);
       lastHoveredInstance = instance;
     }
   } else {
     hideTooltip();
-    setEdgeHighlight(lastHoveredInstance, false);
+    setHoverHighlight(lastHoveredInstance, false);
     lastHoveredInstance = null;
     lastHoveredMesh = null;
   }
@@ -1806,7 +2347,7 @@ canvas.addEventListener("pointermove", (event) => {
 // Skryj tooltip + edge highlight, když kurzor opustí canvas úplně
 canvas.addEventListener("pointerleave", () => {
   hideTooltip();
-  setEdgeHighlight(lastHoveredInstance, false);
+  setHoverHighlight(lastHoveredInstance, false);
   lastHoveredInstance = null;
 });
 
