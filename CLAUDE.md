@@ -4,19 +4,20 @@
 TheCubes je meta-sandbox s živým OOP modelem. Na začátku existuje jediná instance `OBJECTS`, rozšiřováním modelu se scéna zaplňuje. Cíl: demonstrovat současné mládeži, že tvorba je zábavnější než konzumace.
 
 ## Status
-Milníky **M1–M7 hotové**, **M8+ průběžně**. **Dvě scény** (URL switcher `?scene=N`).
+Milníky **M1–M7 hotové**, **M8+ průběžně**. **Jediná scéna** — voxelová dioráma (sez. 15 cleanup, DD-23 „all voxel" pivot).
 
-**Scéna 1** (default): středová `CUBES` (šachovnice), 8× `CCUBES` (duhová růžice), `TREE` (kývá se ve větru), `BALLOON` (pohupuje se + **lantern mode** s PointLight/fade), `HOUSE`, `CLOUD` (drift), `ROCK`, dvě `TCUBES` krabice (jedna rotuje, druhá obíhá stadium-dráhu), dvě `SPRITES` bubliny s **dynamickým 3D ocáskem** (SPEAKER tracking).
+**Scéna 2** (jediná): **10×10 voxelová dioráma** z `SCENE2_LAYOUT` (~145 TCUBES kostek — grass podlaha + hliněná zadní stěna s peaky + stone bloky). **2 tunelové vstupy** (`tunel-grass` VOXEL_MODEL, 48³ MV → 3×3×3 TC, MagicaVoxel pipeline DD-21+22). **1 grass rampa** (`ramp-grass` VOXEL_MODEL, spojuje úrovně Y=−1 a Y=0). **10 pixel stromů** na předním řádku Z=4 (TREE.KIND-y: spruce, oak, birch, palm, bush, cypress, willow, bonsai, dead, maple) — kymácení ve větru polymorfně přes `tree_sway`. **2 SPRITES bubliny** s dynamickým 3D ocáskem (SPEAKER tracking, DD-16).
 
-**Scéna 2** (sez. 14): **10×10 voxelová dioráma** z `SCENE2_LAYOUT` (~145 TCUBES kostek — grass podlaha + hliněná zadní stěna s peaky + jeden stone block) + **2 kamenné kulové oblouky** (TUNNEL_ARCH, half-torus) jako budoucí tunelové vstupy + **2 voxelová auta** (VOXEL_MODEL, MagicaVoxel pipeline). Připraveno (zatím nepoužito): WAREHOUSE, TRAIN.
+**Vizuální zdroje** (DD-21 sez. 14, **revize DD-23 sez. 15**): tři zdroje + UI — pixel-voxel COMPOSITES (TREE.KIND sub-buildery 0.125 j voxely), procedurální canvas textury (`:named` pro TCUBES voxely), externí VOXEL_MODEL z MagicaVoxelu (komplexní entity), canvas SPRITES (dialog/UI). **Žádné Cylinder/Cone/Sphere/Torus primitivy** v gameplay entitách („Kostičky" = jen voxely).
 
-**Vizuální zdroje** (DD-21 sez. 14): hybrid 4 zdrojů — procedurální COMPOSITES (parametrizované/animované entity), procedurální canvas textury (`:named` pro voxely), canvas SPRITES (dialogy), externí 3D modely VOXEL_MODEL (statická dekorace, MagicaVoxel default). Pipeline: `tools/export-grass-vox.mjs` (TheCubes → `.vox` šablona pro MagicaVoxel) + `assets/` + OBJLoader (MagicaVoxel `.obj` → VOXEL_MODEL).
+**Pipeline** (DD-21+22+24): TheCubes ↔ MagicaVoxel přes `tools/export-grass-vox.mjs` (`.vox` šablona) + `assets/` + OBJLoader. Pevné měřítko 1 MV voxel = 1/16 TC voxelu = 6.25 cm; default `SCALE: 0.625`. Velikost objektu řídí MV grid. **Shape × Surface separation** (DD-24, plánovaná pre-build pipeline): jeden tvar × N povrchů = N pre-built kombinací (`<shape>-<surface>` pojmenování).
 
 **Klávesové ovládání kamery** (sez. 14): WASD pan, Q/E rotace kolem cíle, Y/X zoom (per-frame v render loopu).
 
-**Sez. 14 cleanup:** humanoidní postavy (CHARACTER / NOODLE / STICKMAN) se přesunuly do samostatného projektu `./source/Stickman`. DD-18/19/20 zůstávají v immutable logu jako historický kontext.
+**Plynulé chování**: atribut `ANIMATE` (DD-15), aktivní `kind`y `tree_sway` (pixel + height-weighted) / `rotate` / `orbit_stadium` / `pulse` / `drift`. **Diskrétní**: `TIMER` (DD-17) → `ACTION` a `COUNTER` (VALUE + INCREMENT v HUD) — nevizuální potomci OBJECTS. Engine-derived watcher: bubble tail (DD-16). Hover → edge highlight (jen viditelné hrany).
 
-Plynulé chování: atribut `ANIMATE` (DD-15), aktivní `kind`y `balloon_bob` / `tree_sway` / `rotate` / `orbit_stadium` / `pulse` / `drift`. Diskrétní: `TIMER` (DD-17) → `ACTION = { kind, target, attr, ... }` a `COUNTER` (VALUE + INCREMENT v HUD) — oba nevizuální potomci OBJECTS, registrovaní přes `registerBehavior(instance)`. Engine-derived watchery (bubble tail DD-16, LIT fade DD-17) reagují per-frame na stav v modelu. Interakce: click na vak balónu toggle `LIT`; hover → edge highlight (jen viditelné hrany).
+**Sez. 14 cleanup:** humanoidi → `./source/Stickman` projekt. DD-18/19/20 historický kontext.
+**Sez. 15 cleanup:** smazány non-voxel třídy BALLOON, HOUSE, CLOUD, ROCK, TUNNEL_ARCH, WAREHOUSE, TRAIN + Scéna 1 + scene switcher + LIT system + balloon_bob + classic TREE varianta + cylinderBetween helpers (~720 řádků). DD-17 (BALLOON.LIT), DD-21 (hybrid) historický kontext — nahrazené DD-23 (all-voxel).
 
 ## Dokumenty
 - `README.md` — overview
@@ -33,22 +34,21 @@ Plynulé chování: atribut `ANIMATE` (DD-15), aktivní `kind`y `balloon_bob` / 
 ```
 OBJECTS (ID, NAME, DESCRIPTION, ANIMATE)
  ├── CUBES (X, Y, Z — float, voxel renderer snap-to-grid, DD-12)
- │    ├── CCUBES (COLOR)                 ← plochá barva; dřív TERRAIN
+ │    ├── CCUBES (COLOR)                 ← plochá barva
  │    ├── TCUBES (TEXTURE_TOP/BOTTOM/NORTH/SOUTH/EAST/WEST) ← per-face textury
- │    ├── SPRITES (ASSET, SPEAKER, SPEAKER_OFFSET_Y) ← 2D billboard ke kameře
- │    └── COMPOSITES (3D mesh z primitivů / externí asset)
- │         ├── TREE                       ← kmen + kužely (tree_sway)
- │         ├── BALLOON (COLOR, LIT)       ← vak + lana + koš, mimo grid (balloon_bob, lantern)
- │         ├── HOUSE (COLOR)              ← stěny + jehlanová střecha
- │         ├── CLOUD                      ← shluk koulí (drift)
- │         ├── ROCK (COLOR)               ← nízkopoly balvan
- │         ├── TUNNEL_ARCH (COLOR)        ← kamenný kulový oblouk (half-torus)
- │         ├── WAREHOUSE (COLOR)          ← sklad u koleje (Scéna 2)
- │         ├── TRAIN (COLOR)              ← lokomotiva + vagón (Scéna 2)
- │         └── VOXEL_MODEL (ASSET, SCALE, ROTATION_Y) ← async .obj+.mtl+.png z MagicaVoxelu (DD-21)
+ │    ├── SPRITES (ASSET, SPEAKER, SPEAKER_OFFSET_Y) ← 2D billboard ke kameře (UI/dialog)
+ │    └── COMPOSITES (voxel-based 3D mesh)
+ │         ├── TREE (KIND)                ← pixel-voxel jehličnany/listnáče/keř/palma/...
+ │         │                                10 KIND-ů: spruce, oak, birch, palm, bush,
+ │         │                                cypress, willow, bonsai, dead, maple
+ │         │                                (kymácení tree_sway height-weighted)
+ │         └── VOXEL_MODEL (ASSET, SCALE, ROTATION_Y) ← async .obj+.mtl+.png z MagicaVoxelu
+ │                                           (DD-21 + DD-22 měřítko)
  ├── TIMER (INTERVAL, ACTION)             ← nevizuální (DD-17)
  └── COUNTER (VALUE, INCREMENT)           ← nevizuální, řádek v HUD
 ```
+
+**Smazané třídy** (sez. 15, DD-23): BALLOON, HOUSE, CLOUD, ROCK, TUNNEL_ARCH, WAREHOUSE, TRAIN. Až bude potřeba pixel-voxel ekvivalent některé, vznikne nová třída se sub-builderem (TREE.KIND-style dispatch).
 
 `TIME.tick` = globální čítač pro diskrétní události (zatím nepoužito).
 **Plynulé animace** jdou přes atribut `ANIMATE = { kind, ...params }` (DD-15) a wall-clock v render loopu.
@@ -58,9 +58,9 @@ OBJECTS (ID, NAME, DESCRIPTION, ANIMATE)
 | Vrstva | Soubor | Obsah |
 |--------|--------|-------|
 | Entry | `index.html` | HTML shell, import map pro Three.js, HUD |
-| Model | `src/model.js` | `OBJECTS` (+`ANIMATE`), `CUBES`, `CCUBES`, `TCUBES`, `SPRITES`, `COMPOSITES`, `TREE`, `BALLOON` |
+| Model | `src/model.js` | `OBJECTS` (+`ANIMATE`), `CUBES`, `CCUBES`, `TCUBES`, `SPRITES`, `COMPOSITES`, `TREE` (KIND), `VOXEL_MODEL`, `TIMER`, `COUNTER` |
 | Model | `src/time.js` | Globální `TIME`, `advanceTime()` |
-| Boot | `src/main.js` | Three.js scéna, kamera, osvětlení, stíny, `createMeshFor` dispatch, `buildTree` + `buildBalloon`, **animators registry + `updateAnimations`**, infotip, render loop |
+| Boot | `src/main.js` | Three.js scéna, kamera, osvětlení, stíny, `createMeshFor` dispatch, **`TREE_BUILDERS`** (10 pixel sub-builderů), `buildVoxelModel` (async OBJ+MTL+PNG), animators registry + `updateAnimations`, infotip, render loop |
 
 ## Code Style
 - **Komentáře česky.** Uživatel se JS i Three.js učí — komentáře o trochu podrobnější. Vysvětlovat JS/Three-specifické konstrukce (modulový `import`, třída, `requestAnimationFrame`, perspektivní kamera, materiály…).

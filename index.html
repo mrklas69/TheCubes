@@ -26,31 +26,6 @@
     /* COUNTER řádky (dynamicky přidané divy) — lehký rozestup mezi řádky */
     #hud > div { margin-top: 2px; }
 
-    /* Scene switcher = panel v pravém horním rohu, tlačítka pro přepínání
-       mezi scénami. Reload-based (URL ?scene=N), takže každý klik = full
-       page reload — žádný in-memory cleanup registrů. */
-    #scene-switcher {
-      position: fixed; top: 10px; right: 10px;
-      display: flex; gap: 6px;
-      user-select: none;
-    }
-    #scene-switcher button {
-      background: rgba(0, 0, 0, 0.55);
-      color: #fff;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      border-radius: 6px;
-      padding: 6px 12px;
-      font-size: 13px;
-      font-family: inherit;
-      cursor: pointer;
-    }
-    #scene-switcher button:hover { background: rgba(40, 40, 60, 0.85); }
-    #scene-switcher button[aria-pressed="true"] {
-      background: rgba(255, 128, 102, 0.85);   /* coral akcent (DD-07 paleta) */
-      border-color: rgba(255, 255, 255, 0.5);
-      cursor: default;
-    }
-
 
     /* Infotip = hover panel s atributy instance pod kurzorem.
        Default skrytý; JS ho pozicuje a zobrazuje. */
@@ -101,7 +76,6 @@
   <div id="hud">
     <span class="label">TIME:</span><span id="time">0</span>
   </div>
-  <div id="scene-switcher"><!-- tlačítka jsou plněná v JS --></div>
   <div id="tooltip"></div>
   <canvas id="scene"></canvas>
 

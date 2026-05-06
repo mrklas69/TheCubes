@@ -152,7 +152,7 @@ export class SPRITES extends CUBES {
     this.SPEAKER = null;
     // SPEAKER_OFFSET_Y = vertikální posun nad pozici `SPEAKER` (instance varianta).
     // Default `0.5` cílí na vrch standardního voxelu 1×1×1 centrovaného v Y=0.
-    // Pro větší COMPOSITES (TREE, BALLOON, HOUSE) uživatel nastaví ručně —
+    // Pro větší COMPOSITES (TREE pixel varianty, VOXEL_MODEL) uživatel nastaví ručně —
     // např. `dialog.SPEAKER_OFFSET_Y = 1.8` cílí do koruny stromu. Pro
     // literální `{x,y,z}` SPEAKER nemá význam (cíl je přesně zadaný bod).
     this.SPEAKER_OFFSET_Y = 0.5;
@@ -172,82 +172,38 @@ export class SPRITES extends CUBES {
  * gridu (balón nad scénou, strom mezi kostkami, …).
  */
 export class COMPOSITES extends CUBES {
-  // Žádné další atributy — zatím jen značkovací třída pro dispatch.
-  // Konkrétní potomci (Tree, Balloon) mohou přidat vlastní atributy.
+  // Žádné další atributy — značkovací třída pro dispatch.
+  // Konkrétní potomci (TREE, VOXEL_MODEL) přidávají vlastní atributy.
 }
 
 /**
  * TREE = konkrétní COMPOSITES reprezentující strom.
  *
- * Vizualizace: kmen (válec) + tři kužely koruny v různé výšce.
- * Zatím žádné vlastní atributy — default barvy určuje engine.
- * Pokud budeš chtít paletu (SPRING/AUTUMN) nebo velikost, přidej
- * sem atributy a engine si je přečte v dispatchi.
+ * Atribut `KIND` (string) řídí dispatch v enginu na konkrétní sub-builder.
+ * Pixelové varianty (BoxGeometry voxely 0.125 j): `"spruce"` (default),
+ * `"oak"`, `"birch"`, `"palm"`, `"bush"`, `"cypress"`, `"willow"`,
+ * `"bonsai"`, `"dead"`, `"maple"`. Podporují `ANIMATE.kind: "tree_sway"`
+ * (kymácení ve větru, height-weighted per-voxel mutace).
+ *
+ * Pattern dispatchu KIND je izomorfní s `ANIMATE.kind` (DD-15) —
+ * model drží recept (string klíč), engine staví mesh.
  */
 export class TREE extends COMPOSITES {
-  // Prázdná třída — default strom. Atributy lze doplnit později.
-  // Podporovaný `ANIMATE.kind`: `tree_sway` (viz dispatch v main.js).
-}
-
-/**
- * HOUSE = konkrétní COMPOSITES reprezentující jednoduchý domek.
- *
- * Vizualizace: kvádr stěn + jehlanová střecha (ConeGeometry, 4 segmenty).
- * Atribut `COLOR` (JS number 0xRRGGBB) barví **stěny**; barva střechy je
- * fixní v enginu (rezavá červená — typický idiom střešní tašky).
- *
- * Bez `ANIMATE` je dům statický — typická dekorace scény (M8). Pohyblivá
- * varianta (např. `kind: "rotate"` na Y) by fungovala bez úprav.
- */
-export class HOUSE extends COMPOSITES {
-  constructor(id, name, x, y, z, color, description = "") {
+  constructor(id, name, x, y, z, description = "", kind = "spruce") {
     super(id, name, x, y, z, description);
-    // Barva stěn jako JS number 0xRRGGBB. Střecha má fixní barvu — pokud
-    // budeme chtít barevnou střechu, přidá se druhý atribut (např. `ROOF`).
-    this.COLOR = color;
+    this.KIND = kind;
   }
 }
 
-/**
- * ROCK = konkrétní COMPOSITES reprezentující kámen / balvan.
- *
- * Vizualizace: shluk 3–4 nízkopolygonových koulí (IcosahedronGeometry,
- * detail = 0 = 20 trojúhelníků) v šedé paletě. Flat shading dává ostré
- * faset — působí jako tesaný balvan, ne hladký kamínek. Atribut `COLOR`
- * (JS number 0xRRGGBB, default šedá v enginu) umožní variaci „bazalt /
- * žula / pískovec" bez nové třídy.
- *
- * Uzavírá základní COMPOSITES čtveřici TREE + BALLOON + HOUSE + CLOUD + ROCK
- * (organický / mechanický / stavební / atmosférický / geologický).
- *
- * Bez `ANIMATE` je kámen statický — přirozený default pro dekorační prvek.
- */
-export class ROCK extends COMPOSITES {
-  constructor(id, name, x, y, z, color = 0x808080, description = "") {
-    super(id, name, x, y, z, description);
-    // Barva kamene jako JS number 0xRRGGBB. Default 0x808080 = neutrální šedá.
-    this.COLOR = color;
-  }
-}
-
-/**
- * CLOUD = konkrétní COMPOSITES reprezentující mrak.
- *
- * Vizualizace: shluk překrývajících se koulí (SphereGeometry) s bílou barvou.
- * Bez vlastních atributů — barva i tvar jsou v enginu.
- *
- * Typicky se umisťuje vysoko nad scénou (Y > 3) s `ANIMATE.kind = "drift"`
- * (lineární pohyb po vodorovné ose s wrap-around) → „mrak letí po obloze".
- * Statický mrak je legitimní (bez ANIMATE), je to jen méně živá scéna.
- */
-export class CLOUD extends COMPOSITES {
-  // Prázdná třída — default mrak. Atributy lze doplnit později (size, hustota).
-  // Podporovaný `ANIMATE.kind`: `drift` (viz dispatch v main.js).
-}
-
+// Non-voxel třídy odstraněny v sez. 15 (DD-23 — „all voxel" pivot):
+// HOUSE, ROCK, CLOUD, BALLOON, TUNNEL_ARCH, WAREHOUSE, TRAIN. Jejich buildery
+// používaly Cylinder/Cone/Sphere/Torus/Icosahedron primitivy, což je v rozporu
+// s identitou projektu „Kostičky". Až bude potřeba pixel-voxel ekvivalent,
+// vznikne nová třída se subloaderem v TREE_BUILDERS-style dispatchu.
+//
 // Humanoidní třídy (CHARACTER, NOODLE, STICKMAN) byly přesunuty do
-// samostatného projektu ./source/Stickman (sez. 14 cleanup). DD-18/19/20
-// zůstávají v immutable logu jako historický kontext.
+// samostatného projektu ./source/Stickman (sez. 14). DD-17/18/19/20 zůstávají
+// v immutable logu jako historický kontext.
 
 /**
  * VOXEL_MODEL = obecný COMPOSITES, který načte mesh ze souboru `.obj` (s
@@ -255,10 +211,11 @@ export class CLOUD extends COMPOSITES {
  * Engine asynchronně dotáhne soubor a vyplní `Group` o načtený `Object3D`.
  *
  * Atributy:
- *  - `ASSET` — basename souboru v `./assets/` (např. `"cars-0"` → `cars-0.obj`
- *    + `cars-0.mtl` + `cars-0.png`).
- *  - `SCALE` — uniformní scale faktor (default 0.5; MagicaVoxel default
- *    1 voxel = 1 j → 0.5 znamená 2 voxely = 1 j).
+ *  - `ASSET` — basename souboru v `./assets/` (např. `"tunel"` → `tunel.obj`
+ *    + `tunel.mtl` + `tunel.png`).
+ *  - `SCALE` — uniformní scale faktor (DD-22 konvence: **0.625**, tj. 1 MV
+ *    voxel = 1/16 TC voxelu = 6.25 cm. Velikost objektu řídí MV grid; tunel
+ *    48³ MV se vyrenderuje jako 3×3×3 TC).
  *  - `ROTATION_Y` — natočení kolem Y osy v radiánech (default 0).
  *
  * Engine po načtení **auto-centruje** model v XZ a posune Y tak, aby spodek
@@ -268,94 +225,11 @@ export class CLOUD extends COMPOSITES {
  * ručně kódit COMPOSITES dispatch.
  */
 export class VOXEL_MODEL extends COMPOSITES {
-  constructor(id, name, x, y, z, asset, scale = 0.5, rotationY = 0, description = "") {
+  constructor(id, name, x, y, z, asset, scale = 0.625, rotationY = 0, description = "") {
     super(id, name, x, y, z, description);
     this.ASSET = asset;
     this.SCALE = scale;
     this.ROTATION_Y = rotationY;
-  }
-}
-
-/**
- * TUNNEL_ARCH = konkrétní COMPOSITES — kamenný portál tunelu (Π shape).
- * Dva svislé sloupy + horní příčník, vnitřek průchozí. Footprint 1×1×1
- * voxel, materiál šedý kamenný.
- *
- * Atribut `COLOR` (JS number 0xRRGGBB, default `0x8a8278` = STONE_BASE)
- * — barva sloupů + příčníku.
- *
- * Use case: Scéna 2 — vstupy do tunelu na obou koncích železniční trati.
- * Train mezi nimi projíždí. Bez `ANIMATE`.
- */
-export class TUNNEL_ARCH extends COMPOSITES {
-  constructor(id, name, x, y, z, color = 0x8a8278, description = "") {
-    super(id, name, x, y, z, description);
-    this.COLOR = color;
-  }
-}
-
-/**
- * WAREHOUSE = konkrétní COMPOSITES — sklad u železniční koleje. Kvádr stěn
- * (BoxGeometry) + jehlanová střecha (ConeGeometry, 4 segmenty, HOUSE idiom),
- * dveře a okno na čelní stěně. Footprint 2 voxely × 1 voxel; výška ~1.5j.
- *
- * Atribut `COLOR` (JS number 0xRRGGBB) barví stěny; střecha + dveře + okno
- * mají fixní barvy v enginu (izomorfismus s HOUSE — model drží jen primární
- * barvu, engine doplní paletu).
- *
- * Use case: Scéna 2 (vlaková dioráma) — sklad nakládá/vykládá náklad u kolejí.
- * Bez `ANIMATE` — statická budova.
- */
-export class WAREHOUSE extends COMPOSITES {
-  constructor(id, name, x, y, z, color, description = "") {
-    super(id, name, x, y, z, description);
-    this.COLOR = color;
-  }
-}
-
-/**
- * TRAIN = konkrétní COMPOSITES — nákladní vlak (lokomotiva + 1 vagón).
- * Lokomotiva: hlavní kvádr + kabina + komín; vagón: otevřený kvádr za
- * lokomotivou, propojený spojkou. 8 kol pod oběma vozy. Total délka ~2.6j.
- *
- * Atribut `COLOR` barví lokomotivu (kabina je ve stejné barvě); vagón má
- * fixní hnědou (izomorfismus s WAREHOUSE).
- *
- * Use case: Scéna 2 — vlak na koleji, statický ve fázi 1. Pohyb (`ANIMATE`
- * `rail`) a nakládka přijdou ve fázi 2/3.
- */
-export class TRAIN extends COMPOSITES {
-  constructor(id, name, x, y, z, color, description = "") {
-    super(id, name, x, y, z, description);
-    this.COLOR = color;
-  }
-}
-
-/**
- * BALLOON = konkrétní COMPOSITES reprezentující horkovzdušný balón.
- *
- * Vizualizace: vak (koule) + 4 lana + koš. Vak je barevný podle atributu
- * `COLOR` (JS number 0xRRGGBB, stejně jako u CCUBES) — lana a koš mají
- * fixní barvy definované v enginu.
- *
- * Jednotný souřadný systém (DD-12): balón má float pozici typicky mimo celé
- * buňky gridu (např. Y = 4 — vysoko nad scénou), zatímco CCUBES/TCUBES voxely
- * žijí na intech. Obě třídy sdílejí stejný mateřský CUBES, pouze renderer
- * snapuje voxely a ponechá COMPOSITES na floatu.
- *
- * Podporovaný `ANIMATE.kind`: `balloon_bob` (viz dispatch v main.js).
- */
-export class BALLOON extends COMPOSITES {
-  constructor(id, name, x, y, z, color, description = "") {
-    super(id, name, x, y, z, description);
-    // Barva vaku jako JS number 0xRRGGBB. Lana a koš nejsou atribut — fixní.
-    this.COLOR = color;
-    // LIT = boolean „zapnutý lampión". `false` (default) → vak tmavý, bez
-    // zdroje světla. `true` → engine rozjede emissive záři vaku a aktivuje
-    // přidružený `PointLight` (odkaz drží `group.userData.parts.light`).
-    // Přechod je per-frame exponenciálně plynulý (fade ~0.5 s), ne instantní.
-    // Toggle přes `click` na mesh balónu nebo přes TIMER.ACTION. Viz DD-17.
-    this.LIT = false;
   }
 }
 

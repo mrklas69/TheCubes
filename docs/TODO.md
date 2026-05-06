@@ -112,11 +112,11 @@
 - [x] **Sez. 14 cleanup — humanoidi pryč** — STICKMAN, NOODLE, CHARACTER třídy + buildery + pose primitives + gait animátory (`walk_idle`/`run_idle`/`squat_lift`) + wander stavový automat + 2D kolizní systém (DD-19) + face plane registry + `window.exportStickman()` smazány z `src/main.js` a `src/model.js`. Důvod: humanoidi se přesunuli do samostatného projektu `./source/Stickman` (vlastní layered model + IK + Inspector — výrazně pokročilejší než kopie v TheCubes). Scéna 1 zůstala bez postav, Scéna 2 vyprázdněna na grass plane. DD-18/19/20 zůstávají v immutable logu. Smazáno ~1170 řádků z `main.js` (3096 → 1923).
 - [ ] **Integrace externího Stickmana** — TBD způsob: `[A]` `.glb` import (Blender pipeline, sez. 13 export ostatně chyběl skeleton), `[B]` sibling ES module `../Stickman/src/...`, `[C]` jiné. Otevře novou DD při rozhodnutí.
 - [ ] **Náhradní obyvatel scény 1 / scény 2** — bez humanoidů jsou scény vizuálně chudší. Možnosti: rozšířit COMPOSITES (BIRD na obloze, BUSH/FLOWER na louce), nebo nechat dokud není integrace Stickmana.
-- [ ] **Mobility design** — *(přeneseno z předchozích sezení; bez humanoidů ztratilo akutní význam, ale rampy/heightmap/graf můžou být relevantní pro budoucí ne-humanoidní entity).* Stale horizon — rozhodnout DO/DROP příště.
-- [ ] **`ACTION.kind: increment`** — *(přeneseno; relevantní bez humanoidů — počítadlo přes TIMER)*.
-- [ ] **Editor fáze 2** — spawn/move/delete + registry cleanup. Bez humanoidů zjednodušeno (žádný wander/collision dispose).
-- [ ] CCUBES typizace (ICE/GRASS/SAND) *(možná)*.
-- [ ] **Zaoblené hrany voxelů (sez. 14 diskuse)** — `RoundedBoxGeometry` z three/addons (~5 řádků v `createTCubeFor`). Důvod: izomorfismus se zbytkem scény (stromy/balón/mraky/kameny jsou hladké/zaoblené, jen voxely tvrdé). Trade-off: pixel-art textury se na zaoblených rozích roztáhnou do gradientu → ztrátu detailu kompenzovat větší texturou (32×32, větší záplaty) nebo přejít na flat color voxely. Rozhodnout jako globální výtvarné DD (zaoblený jazyk celého projektu vs. hybrid voxel/smooth).
+- [x] ~~Mobility design~~ — DROP (sez. 15, DD-23: bez humanoidů a po all-voxel pivotu rampy řeší přes VOXEL_MODEL `ramp-grass`).
+- [ ] **`ACTION.kind: increment`** — *(přeneseno; relevantní pro TIMER+COUNTER kombinaci)*.
+- [ ] **Editor fáze 2** — spawn/move/delete + registry cleanup. Po sez. 15 cleanup ještě jednodušší (žádné humanoidní wander/collision, žádný BALLOON click).
+- [ ] CCUBES typizace (ICE/GRASS/SAND) *(možná, ale překryto DD-24 shape × surface — surface je obecnější)*.
+- [x] ~~Zaoblené hrany voxelů~~ — DROP (sez. 15, DD-23: pixel-art voxel jazyk, zaoblení by likvidovalo styl).
 
 ## Sezení 14 (2026-05-05)
 
@@ -132,10 +132,33 @@
 - [x] **Tools/exports** — 4 Node skripty: `dump-png-palette.mjs` (debug palety), `export-grass-vox.mjs` (TheCubes → MagicaVoxel grass cube template), `export-scene-palette-vox.mjs` (12-color palette swatches), `export-cars-vox.mjs` (jednoduchý sedan + truck šablona).
 - [x] **DD-21 Vizuální zdroje hybrid** — formálně zafixováno: parametrizované entity → procedurální COMPOSITES, statická dekorace → VOXEL_MODEL default. GLOSSARY rozšířen o sekci „Vizuální zdroje" s tabulkou workflow rozhodnutí. CLAUDE.md Status + hierarchie aktualizovány.
 - [x] **Stickman jako sibling projekt** — humanoidní vývoj přesunut do `./source/Stickman` (vlastní layered MVC + IK + Inspector, 13+ vlastních sezení). V TheCubes smazány všechny humanoidi (cleanup commit `7679fef`).
-- [ ] **Tunel re-coloring v MagicaVoxelu** *(user iteration)* — paleta `tunel.png` má jen 1 barvu (#5d9446 = grass). User vyrobí znovu s plnou paletou (`scene-palette.vox` jako šablona): foundation hlína, oblouk + vnitřek skála, grass povrch dle plánu.
-- [ ] **2 simplifikovaná auta z .vox** *(user iteration)* — `car-simple-0.vox` (sedan modré) + `car-simple-1.vox` (truck červené) generované — user otevře, ověří/upraví, exportuje jako `cars-0`/`cars-1`.
-- [ ] **9 voxel modelů** *(user iteration)* — 3 stromy + 3 kameny + 3 trsy trávy v MagicaVoxelu. Pojmenování: `tree-0..2`, `rock-0..2`, `grass-0..2`. Pak instance v buildSceneTwo.
-- [ ] **Železnice mezi tunely** — 6 rail-top voxelů Z=−3, X=−3..2 (mezi `tunel_left` a `tunel_right`). Connect to TUNNEL_ARCH/VOXEL_MODEL position.
-- [ ] **Vlak na koleji + animace** — fáze 2 (statický → pohyb po koleji s zastávkou u skladu).
-- [ ] **Cargo loading/unloading** — fáze 3, otevírá novou DD (sequenční chování + cargo entity reparenting). Diskuse: 1 sklad + tunely jako trade portály (cargo se objeví na peronu, vlak ho odveze a vrátí jiné).
-- [ ] **VOXEL_MODEL pro Scénu 1** *(volitelné)* — postupná migrace TREE/ROCK/HOUSE atd. na VOXEL_MODEL pokud bude třeba bohatší vizuál. Zatím status quo (fungují parametrizovaně).
+- [x] ~~Tunel re-coloring~~ — hotovo sez. 15 (`tunel-grass.vox` 48³ MV s plnou paletou, vyexportováno).
+- [x] ~~2 simplifikovaná auta z .vox~~ — DROP (sez. 15, DD-23: cars smazány, vrátí se jen pokud bude potřeba).
+- [x] ~~9 voxel modelů (stromy/kameny/trsy)~~ — pivot (sez. 15, DD-23): stromy řešeny pixel-voxel TREE.KIND-y (10 druhů), kameny + trsy přijdou jako další KIND-y nebo VOXEL_MODELy podle potřeby.
+- [x] ~~Železnice mezi tunely~~ — implementováno (6 rail TCUBES) → odebráno (sez. 15, user request). Textura `:rail-top` zůstává v kódu jako template.
+- [x] ~~Vlak na koleji + animace~~ — DROP (sez. 15, DD-23: TRAIN třída smazána).
+- [x] ~~Cargo loading/unloading~~ — DROP (sez. 15, DD-23: WAREHOUSE+TRAIN smazány).
+- [x] ~~VOXEL_MODEL pro Scénu 1~~ — N/A (sez. 15, DD-23: Scéna 1 smazána).
+
+## Sezení 15 (2026-05-06)
+
+- [x] **Železnice mezi tunely** *(implementováno + roll-back)* — 6 rail TCUBES voxelů na Z=−3, X=−3..2. `makeRailBlock` helper + FACTORIES dispatch. User po chvíli požádal o odebrání — vráceno na grass voxely, helper i FACTORIES entry odstraněny. Textura `:rail-top` v `NAMED_TEXTURE_FACTORIES` zachována jako template.
+- [x] **`tunel-grass.vox` rename + smazání stale 16³** — z `tunel.vox` (16³ monochrom) → `tunel-grass.vox` (48³ MV s plnou paletou). User vyexportoval `tunel-grass.{obj,mtl,png}` v MagicaVoxelu.
+- [x] **`export-grass-vox.mjs` přepis** — generuje 16³ kostku s povrchovými voxely odpovídajícími texturám (TOP `:grass-top`, BOTTOM `:dirt`, 4 boky `:grass-side` 14 px dirt + 2 px grass strip). Paleta 8 barev. Output: `cube-grass.vox`.
+- [x] **10 pixel stromů** na předním řádku Z=4 — TREE třída rozšířena o `KIND` parametr; dispatch v `buildTree(group, instance)` přes `TREE_BUILDERS` lookup. KIND-y: `spruce`, `oak`, `birch`, `palm`, `bush`, `cypress`, `willow`, `bonsai`, `dead`, `maple`. Pixel size 0.125 j (= 1/8 TC voxelu = 12.5 cm). Helpery: `treeMat` cache, `treeVoxel`, `treeBlock`, `treeDiamond`. Sdílená BoxGeometry + materiály per barva.
+- [x] **Animace větru pro pixel stromy** — `tree_sway` polymorfně rozšířen: classic větev smazána (s buildTreeClassic), pixel větev = per-children mutace s height-weighted amplitudou (`heightFactor = max(0, base.y + 0.5)`). Random fáze (`phaseX/Z`) per strom + nesoudělné periody → desync. Amplituda 0.16 j (= ~16 cm posun špičky, 4× původního návrhu).
+- [x] **DD-22 — Pevné měřítko + Y konvence** — 1 TC voxel = 1 m, 1 MV voxel = 1/16 TC = 6.25 cm, default `SCALE: 0.625`. `instance.Y = world Y bottom of mesh = gy + 0.5` (top voxelu). Tabulka `Y vs grid_Y` v GLOSSARY.
+- [x] **Grass rampa import** (`ramp-grass.vox/obj/mtl/png`, 16³ MV → 1×1×1 TC). Position (-4, -0.5, 0) — stojí na grass voxelu (-4,-1,0), vrch zarovnaný s top of grass (-5,0,0). Stoupá v -X směru. (Dříve grass-ramp; rename per DD-24.)
+- [x] **DD-23 — All-voxel pivot („Kostičky")** — smazány non-voxel třídy: BALLOON, HOUSE, CLOUD, ROCK, TUNNEL_ARCH, WAREHOUSE, TRAIN + Scéna 1 + scene switcher (URL ?scene=N) + LIT system (registerLit, updateLit, PointLight fade) + balloon_bob animátor + classic TREE varianta + cylinderBetween helpers + click handler. Cca **720 řádků smazáno** (`main.js` 2596 → 1919; `model.js` 7 tříd zmizelo). HTML scene-switcher CSS + DOM odebrán. Auto assets a `tools/export-cars-vox.mjs` smazány. ANIMATORS jen `tree_sway` (pixel) / `rotate` / `orbit_stadium` / `pulse` / `drift`.
+- [x] **DD-24 — Shape × Surface separation** — VOXEL_MODELy s jednolitým povrchem rozděleny na shape (1 MV s abstract paletou 4 indexy: BASE/ACCENT1/ACCENT2/HIGHLIGHT) + surface (JSON paleta 4 RGBA). Plánovaný pre-build skript. Pojmenování `<shape>-<surface>` (kebab-case lowercase). Sez. 15 rename: `grass-cube` → `cube-grass`, `grass-ramp.*` → `ramp-grass.*`, `tunel-grass` zůstává. `.mtl` interní reference `map_Kd` taky aktualizován.
+
+### Sez. 15 → sez. 16 Příště
+
+- [ ] **Pre-build skript `tools/build-shapes.mjs`** — vstup: `assets/shapes/<name>.vox` (s abstract paletou 1–4) + `assets/surfaces/<name>.json` → výstup: `assets/built/<shape>-<surface>.{obj,mtl,png}` per kombinace. Engine spotřebovává pre-built (žádný runtime swap).
+- [ ] **8 surface JSON palet** v `assets/surfaces/`: `grass`, `dirt`, `stone`, `sand`, `ice`, `water`, `brick`, `wood`. Každá: `{ BASE, ACCENT1, ACCENT2, HIGHLIGHT }` 4 RGBA hex.
+- [ ] **Re-modelovat shapes na abstract paletu** — `cube`, `ramp`, `tunel` v MagicaVoxelu znovu, s 4 paletovými indexy (1=BASE, 2=ACCENT1, 3=ACCENT2, 4=HIGHLIGHT). Output: `assets/shapes/<name>.vox/.obj/.mtl/.png`. Surface-specific soubory smazat (až builder skript vyrobí built/).
+- [ ] **WORLD entity** — singleton/instance s `WIND { strength, direction }`, `SUN { angle }`, `CLIMATE`, `SEASON`, `DAY { length_ticks, phase }`. `tree_sway` číst `WORLD.WIND.strength * MAX_WIND_AMP` místo per-strom amplitude. Sluneční pozice z WORLD.SUN.angle.
+- [ ] **Biome palette + populate** — `BIOME_TREES[climate] = { kind: weight }`, `populateVegetation(world, region, density, variety)`. Místo hardcoded `TREE_KINDS_S2` v `buildSceneTwo`.
+- [ ] **Pixel-voxel ekvivalenty smazaných tříd** *(až bude potřeba)* — lampion (BALLOON.LIT), dům, mrak, kámen. Per DD-23: nová třída se sub-builderem v dispatch tabulce (TREE.KIND-style).
+- [ ] **GLOSSARY cleanup** — tabulka kategorií („Statická dekorace", „Parametrizovaná entita", „Animovaná entita") obsahuje smazané třídy (BALLOON/HOUSE/CLOUD) — aktualizovat na DD-23 stav.
+- [ ] **`docs/IDEAS.md` review** — projít po sez. 15 cleanup, smazat zastaralé nápady (vázané na BALLOON/HOUSE/atd).

@@ -8,7 +8,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
-import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, BALLOON, HOUSE, CLOUD, ROCK, TUNNEL_ARCH, WAREHOUSE, TRAIN, VOXEL_MODEL, TIMER, COUNTER } from "./model.js";
+import { CUBES, CCUBES, TCUBES, SPRITES, COMPOSITES, TREE, VOXEL_MODEL, TIMER, COUNTER } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
 
 // === Renderer ===
@@ -436,51 +436,29 @@ function oscPhase(t, period, offset = 0) {
   return (TAU * t) / period + offset;
 }
 
-// Balón se mírně pohupuje nahoru/dolů. Vak a koš oscilují **nezávisle**
-// (různé periody + fázový posun π/2) — koš působí jako „pérující" vůči vaku.
-// Lana se každý frame přepnou mezi aktuálními pozicemi vak/koš (geometrie
-// `cylinderBetween` je unit-height, délka přes `scale.y`).
-function animateBalloonBob(group, anim, t) {
-  const parts = group.userData.parts;
-  if (!parts) return;
-
-  const bagDy    = anim.bagAmp    * Math.sin(oscPhase(t, anim.bagPeriod));
-  const basketDy = anim.basketAmp * Math.sin(oscPhase(t, anim.basketPeriod, Math.PI / 2));
-
-  parts.bag.position.y    = parts.bagBaseY    + bagDy;
-  parts.basket.position.y = parts.basketBaseY + basketDy;
-
-  // Přepočítej 4 lana podle aktuálních Y vaku/koše. Scratch vektory `_a`,
-  // `_b` reuse-ujeme v každé iteraci — žádná nová alokace per frame.
-  const basketRopeY = parts.basket.position.y + parts.ropeBasketOffset;
-  const bagRopeY    = parts.bag.position.y    + parts.ropeBagOffset;
-  parts.ropes.forEach((ropeMesh, i) => {
-    const [cx, cz] = parts.ropeCorners[i];
-    _a.set(cx, basketRopeY, cz);
-    _b.set(cx * 1.3, bagRopeY, cz * 1.3);
-    updateCylinderBetween(ropeMesh, _a, _b);
-  });
-}
-
-// Strom se kývá ve větru. 3 kužely koruny dostanou X/Z offset jako
-// kombinaci dvou sinusů s **různými periodami** (X: periodX, Z: periodZ) —
-// nesoudělné periody dávají iluzi náhodnosti (elipsovitý pohyb), ne čistého
-// kyvadla. Amplituda × koeficient výšky → spodní kužel se pohne míň, špička
-// víc. Kmen zůstává statický (simuluje tuhý kmen s flexibilní korunou).
+// Strom se kývá ve větru. Per-voxel snapshot pozice (lazy init), pak
+// per-frame offset škálovaný **výškou voxelu** — kmen u země má heightFactor
+// ≈ 0 → statický; špička koruny ≈ 0.9 → maximální výchylka. Random fáze
+// (anim.phaseX/Z) → desync mezi stromy stejného druhu. Dvě nesoudělné periody
+// (X/Z) → elipsovitý pohyb, ne 1D kyvadlo.
 function animateTreeSway(group, anim, t) {
-  const parts = group.userData.parts;
-  if (!parts) return;
-
-  // Dvě nezávislé fáze, jedna pro každou osu. Fázový posun π/3 na Z aby
-  // kužely ve chvíli t=0 nezačínaly z nuly v obou osách současně.
-  const phaseX = oscPhase(t, anim.periodX);
-  const phaseZ = oscPhase(t, anim.periodZ, Math.PI / 3);
-
-  parts.cones.forEach((cone, i) => {
-    const coef = parts.heightCoefs[i];
-    cone.position.x = anim.amplitude * coef * Math.sin(phaseX);
-    cone.position.z = anim.amplitude * coef * Math.sin(phaseZ);
-  });
+  const phaseX = oscPhase(t, anim.periodX, anim.phaseX ?? 0);
+  const phaseZ = oscPhase(t, anim.periodZ, (anim.phaseZ ?? 0) + Math.PI / 3);
+  const sx = anim.amplitude * Math.sin(phaseX);
+  const sz = anim.amplitude * Math.sin(phaseZ);
+  for (const child of group.children) {
+    if (!child.userData.swayBase) {
+      child.userData.swayBase = {
+        x: child.position.x,
+        y: child.position.y,
+        z: child.position.z,
+      };
+    }
+    const base = child.userData.swayBase;
+    const heightFactor = Math.max(0, base.y + 0.5);
+    child.position.x = base.x + sx * heightFactor;
+    child.position.z = base.z + sz * heightFactor;
+  }
 }
 
 // Rovnoměrná rotace kolem jedné z os. Na rozdíl od `balloon_bob` / `tree_sway`
@@ -563,7 +541,7 @@ function animateOrbitStadium(object3d, anim, t) {
 // kolísá mezi `min` a `max`. Třetí dimenze `ANIMATE` patternu: po
 // **transformaci** (`rotate`, `orbit_stadium`) a **dílech** (`balloon_bob`,
 // `tree_sway`) přijde mutace **materiálu**. Funguje na libovolném mesh-u
-// s `MeshStandardMaterial` (CCUBES, BALLOON vak, jednostranné TCUBES plochy…).
+// s `MeshStandardMaterial` (CCUBES, jednostranné TCUBES plochy…).
 //
 // Parametry:
 //  - `period` — doba jednoho cyklu pulsu (s)
@@ -645,8 +623,8 @@ function animateDrift(object3d, anim, t) {
 
 // 2D kolizní systém (DD-19) odstraněn v sez. 14 — jediný konzument byly
 // humanoidní postavy (CHARACTER/NOODLE/STICKMAN), které se přesunuly do
-// samostatného projektu ./source/Stickman. Statické dekorace (TREE/HOUSE/
-// ROCK/CLOUD) se mezi sebou nemůžou srážet, takže registry je zbytečný.
+// samostatného projektu ./source/Stickman. Statické voxelové dekorace se
+// mezi sebou nesrážejí — kolizní registry zbytečný.
 
 // Humanoidní pose primitives + gait animátory + wander stavový automat
 // odstraněny v sez. 14 (přesun do projektu ./source/Stickman). Smazáno:
@@ -663,7 +641,6 @@ function animateDrift(object3d, anim, t) {
 // Umožňuje i validaci při registraci — překlep v `ANIMATE.kind` odhalíme
 // boot-time warnem, ne tichým no-op v render loopu.
 const ANIMATORS = {
-  balloon_bob:    animateBalloonBob,
   tree_sway:      animateTreeSway,
   rotate:         animateRotate,
   orbit_stadium:  animateOrbitStadium,
@@ -729,7 +706,7 @@ const bubbleTails = [];
 // ne model — DD-15). Tím může ocásek sledovat i pohybující se mluvčí.
 //
 // **Cleanup TBD (napříč registry):** `meshByInstance`, `animators`,
-// `bubbleTails`, `litEntities`, `tickHandlers` a `edgeOverlays` (v `userData`
+// `bubbleTails`, `tickHandlers` a `edgeOverlays` (v `userData`
 // na mesh rootu) se plní monotonně, žádný `removeInstance` mechanismus zatím
 // neexistuje. Pro statickou scénu OK; pro editor (Příště sez. 9 bod 3) bude
 // potřeba jednotný `destroyInstance(id)` — projde všechny registry a uklidí.
@@ -936,45 +913,9 @@ function registerBehavior(instance) {
   console.warn(`Neznámá nevizuální třída: ${instance.constructor.name}`);
 }
 
-// === Lit entities: fade sync pro BALLOON.LIT ===
-// Engine watcher — per-frame lerpuje `emissiveIntensity` vaku a `intensity`
-// PointLight-u směrem k cíli podle `instance.LIT` bool. Exponenciální
-// konvergence (`1 − exp(−k·dt)`) dává plynulý „fade in / fade out" pocit
-// lampionu — ne skok. Rate `k = 5` → ~92 % cesty za 0.5 s.
-//
-// Proč ne `ANIMATE.kind = "lit"`? LIT je **stav**, ne recept. ANIMATE jede
-// nezávisle na atributu, zatímco fade je *reakcí* na změnu bool atributu
-// (click nebo TIMER). Stejná kategorie jako bubble tail (DD-16) —
-// engine-derived behavior, ne user recipe.
-const litEntities = [];
-
-const LIT_MAX_EMISSIVE = 2.0;    // HDR — s tone mappingem vypadá jako „září"
-const LIT_MAX_LIGHT    = 30.0;   // PointLight.intensity — dramatické stíny
-const LIT_FADE_RATE    = 5.0;    // exponenciální rate; ~0.5 s do 92 %
-
-function registerLit(instance, envelope, light) {
-  // `current` drží aktuální interpolovanou intenzitu (0..1). Cíl je
-  // `instance.LIT ? 1 : 0`. `envelope`/`light` jsou Three.js refy, aby
-  // watcher nemusel procházet scénu.
-  litEntities.push({ instance, envelope, light, current: 0 });
-}
-
-function updateLit(dt) {
-  // `factor = 1 − e^(−k·dt)` = „kolik cesty mezi current a target urazit
-  // za tento frame". Pro dt = 1/60 a k = 5: factor ≈ 0.080.
-  const factor = 1 - Math.exp(-LIT_FADE_RATE * dt);
-  for (const e of litEntities) {
-    const target = e.instance.LIT ? 1 : 0;
-    e.current += (target - e.current) * factor;
-    // Apply na obě vizuální stránky: materiálová záře vaku (HDR) + fyzický
-    // světelný zdroj (stíny). Obě sledují stejnou křivku — vizuálně synced.
-    e.envelope.material.emissiveIntensity = e.current * LIT_MAX_EMISSIVE;
-    e.light.intensity                     = e.current * LIT_MAX_LIGHT;
-  }
-}
-
-// Face plane systém (canvas výrazy před hlavou STICKMANa) odstraněn v sez. 14
-// — STICKMAN se přesunul do projektu ./source/Stickman.
+// LIT fade system (BALLOON.LIT) odstraněn v sez. 15 (DD-23) — BALLOON třída
+// + lampion idiom byly non-voxel a šly pryč při „all-voxel" pivotu. Až bude
+// potřeba osvětlitelný pixel-voxel objekt, zavedeme znovu.
 
 // === Vizualizační dispatch: instance → Three.js Object3D ===
 // Podle konkrétní třídy instance rozhodujeme, jaký vizuál sestrojit.
@@ -1046,16 +987,6 @@ function createMeshFor(instance) {
   // bez SPEAKER (levné — Map put, vlastní spotřeba jen když jiný mesh míří
   // na tuto instanci).
   meshByInstance.set(instance.ID, object3d);
-  // LIT-capable třídy registrujeme pro fade watcher tady (ne uvnitř `buildX`),
-  // aby registrace engine-derived behaviorů držela jedinou úroveň detailu —
-  // stejně jako `registerAnimator` a `meshByInstance.set`. Refy na konkrétní
-  // díly (vak, PointLight) čteme z `group.userData.parts`, které `buildBalloon`
-  // naplnil. Rozšíření na další LIT třídu (STREETLAMP, FIRE_PIT) = jen další
-  // `instanceof` větev zde, ne rozsypané `registerLit` volání v `buildX`.
-  if (instance instanceof BALLOON) {
-    const { bag, light } = object3d.userData.parts;
-    registerLit(instance, bag, light);
-  }
   return object3d;
 }
 
@@ -1152,368 +1083,44 @@ function createSpriteFor(instance) {
 // (kontejner pro více mesh-children — Three.js s nimi pracuje jako s celkem).
 // Pozice je spojitá (float) — bez snap-to-grid.
 //
-// Dispatch uvnitř podle konkrétní podtřídy COMPOSITES (zatím jen TREE).
-// Když přibude Balloon atp., přidá se další větev.
+// Dispatch podle konkrétní podtřídy COMPOSITES. Po DD-23 (sez. 15) zůstávají
+// jen voxel-based: TREE (pixel KIND-y) a VOXEL_MODEL (externí MV).
 function createCompositeFor(instance) {
   const group = new THREE.Group();
   group.position.set(instance.X, instance.Y, instance.Z);
 
   if (instance instanceof TREE) {
-    buildTree(group);
-  } else if (instance instanceof BALLOON) {
-    buildBalloon(group, instance);
-  } else if (instance instanceof HOUSE) {
-    buildHouse(group, instance);
-  } else if (instance instanceof CLOUD) {
-    buildCloud(group);
-  } else if (instance instanceof ROCK) {
-    buildRock(group, instance);
-  } else if (instance instanceof TUNNEL_ARCH) {
-    buildTunnelArch(group, instance);
+    buildTree(group, instance);
   } else if (instance instanceof VOXEL_MODEL) {
     buildVoxelModel(group, instance);
-  } else if (instance instanceof WAREHOUSE) {
-    buildWarehouse(group, instance);
-  } else if (instance instanceof TRAIN) {
-    buildTrain(group, instance);
   }
 
-  // userData.instance + shadow flagy nastaví až `createMeshFor` jednotně
-  // pro celý řetězec (traverze Group).
   return group;
 }
 
-// Pomocný helper — postaví válec (CylinderGeometry) mezi dvěma body `a` a `b`.
-// Three.js CylinderGeometry je default orientovaný podél osy +Y (vertikálně);
-// musíme ho (1) roztáhnout na správnou délku, (2) natočit ve směru b − a
-// a (3) umístit jeho střed na midpoint mezi a a b.
-//
-// `Vector3.subVectors(b, a)` = vrátí nový vektor b − a (směr + délka).
-// `Quaternion.setFromUnitVectors(from, to)` = vytvoří kvaternion, který
-// otáčí z jednotkového vektoru `from` do jednotkového vektoru `to`.
-// `position.copy(a).lerp(b, 0.5)` = nejprve zkopíruj a, pak lineární
-// interpolace k b s parametrem 0.5 → výsledek je přesný midpoint.
-function cylinderBetween(a, b, radius, material) {
-  // Geometrie má **jednotkovou výšku** (height = 1); skutečnou délku zajistí
-  // `scale.y` v `updateCylinderBetween`. Tím lze stejný mesh reuse-ovat pro
-  // animované lana (délka se mění za běhu) i pro statické (nastaví se jednou).
-  const geom = new THREE.CylinderGeometry(radius, radius, 1, 8);
-  const mesh = new THREE.Mesh(geom, material);
-  updateCylinderBetween(mesh, a, b);
-  return mesh;
-}
-
-// Přestaví existující válec mezi body `a` a `b` — použito při tvorbě i
-// při každém frame u animovaných lan. Mutuje `mesh.position`,
-// `mesh.quaternion`, `mesh.scale.y`. Reuse `_dir` + `_up` scratch vektorů
-// → žádné per-frame alokace.
-function updateCylinderBetween(mesh, a, b) {
-  _dir.subVectors(b, a);                     // `_dir` = b − a, délka vektoru
-  const length = _dir.length();
-  mesh.scale.y = length;                     // jednotková výška × délka
-  if (length > 0) {
-    // Normalizace in-place — délku už známe, dělíme přímo (ušetří další
-    // Math.sqrt, které by proběhlo v `normalize()`).
-    _dir.divideScalar(length);
-    mesh.quaternion.setFromUnitVectors(_up, _dir);
-  }
-  mesh.position.copy(a).lerp(b, 0.5);        // střed válce = midpoint
-}
-
-// Procedurální strom z ~5 primitivů. Všechny pozice v lokálních souřadnicích
-// Group (0,0,0 = base). Strom stojí tak, aby jeho základna seděla na Y = -0.5
-// (stejně jako kostky 1×1×1 centrované v Y=0).
-function buildTree(group) {
-  // --- Kmen ---
-  // CylinderGeometry(radiusTop, radiusBottom, height, radialSegments)
-  // Lehce kónický kmen — šířka 0.18 dole, 0.12 nahoře, výška 0.9.
-  const trunkGeom = new THREE.CylinderGeometry(0.12, 0.18, 0.9, 10);
-  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4423 }); // hnědá
-  const trunk = new THREE.Mesh(trunkGeom, trunkMat);
-  // Kmen s polovinou výšky nahoru = jeho základna sedí na Y = -0.5
-  trunk.position.y = -0.5 + 0.45;
-  group.add(trunk);
-
-  // --- Koruna: tři kužely narůstajícího/zužujícího se průměru ---
-  // ConeGeometry(radius, height, radialSegments)
-  const coneColor = 0x2d7a3a; // sytá listová zelená
-  const coneMat = new THREE.MeshStandardMaterial({ color: coneColor });
-
-  // Největší (spodní) kužel
-  const cone1 = new THREE.Mesh(new THREE.ConeGeometry(0.55, 0.7, 12), coneMat);
-  cone1.position.y = -0.5 + 0.9 + 0.35; // nad kmen
-  group.add(cone1);
-
-  // Střední kužel — posunutý výš, užší
-  const cone2 = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.6, 12), coneMat);
-  cone2.position.y = -0.5 + 0.9 + 0.35 + 0.45;
-  group.add(cone2);
-
-  // Špička — nejužší, nejvyšší
-  const cone3 = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.5, 12), coneMat);
-  cone3.position.y = -0.5 + 0.9 + 0.35 + 0.45 + 0.4;
-  group.add(cone3);
-
-  // Reference na kužely + váhy výšky pro animaci `tree_sway`. Koeficient
-  // roste zdola nahoru — spodní kužel se pohne nejmíň, špička nejvíc,
-  // což simuluje ohybový profil kmene („S-flex"). Kmen je statický, takže
-  // ho neukládáme.
-  group.userData.parts = {
-    cones: [cone1, cone2, cone3],
-    heightCoefs: [0.3, 0.6, 1.0],
-  };
-}
-
-// Procedurální horkovzdušný balón. Lokální coords: spodek koše na Y = 0.
-// Skládá se z koše (kvádr), vaku (koule lehce protažená nahoru) a 4 lan
-// (válce z rohů koše k spodku vaku). Celkem 6 primitivů. Viz DD-13.
-//
-// `instance` má atribut COLOR (JS number 0xRRGGBB) — aplikujeme ho na vak.
-// Lana a koš mají fixní „provazovou" a „košíkovou" barvu.
-function buildBalloon(group, instance) {
-  // --- Koš ---
-  // BoxGeometry(width, height, depth) s proutěnou barvou
-  const basketMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b });
-  const basket = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.4), basketMat);
-  // Střed koše = +0.15 (aby spodek ležel na Y = 0 lokálně)
-  const basketBaseY = 0.15;
-  basket.position.y = basketBaseY;
-  group.add(basket);
-
-  // --- Vak ---
-  // SphereGeometry(radius, widthSegments, heightSegments).
-  // Widthsegments/heightsegments = kolik polí má síť — vyšší hodnoty = hladší
-  // koule (víc trojúhelníků). 16×12 je kompromis mezi kvalitou a náklady.
-  // Vak má navíc `emissive` nastavené na vlastní COLOR (lampion po rozsvícení
-  // září vlastní barvou); `emissiveIntensity = 0` při bootu → start tmavý.
-  // Fade watcher (DD-17 — BALLOON.LIT) tuto hodnotu per-frame lerpuje.
-  const envelopeMat = new THREE.MeshStandardMaterial({
-    color: instance.COLOR,
-    emissive: new THREE.Color(instance.COLOR),
-    emissiveIntensity: 0,
-  });
-  const envelope = new THREE.Mesh(
-    new THREE.SphereGeometry(0.55, 16, 12),
-    envelopeMat,
-  );
-  // Lehké vertikální protažení pro klasický hruškovitý tvar balónu
-  envelope.scale.y = 1.15;
-  // Střed vaku Y = 1.3 → spodek vaku na Y ≈ 0.67 (1.3 − 0.55·1.15)
-  const bagBaseY = 1.3;
-  envelope.position.y = bagBaseY;
-  group.add(envelope);
-
-  // --- PointLight uvnitř vaku (lampion) ---
-  // Barva laděná k vaku, ale mírně teplejší (žloutnutí směrem k warm white)
-  // — čistý orange by zabarvil celou scénu do ohnivé, lehce posunutý
-  // k 0xffb060 dává „lantern/ohňový" pocit bez přebarvení.
-  // Intenzita = 0 (watcher ji přepočítá podle LIT); distance 20 j pokryje
-  // celou scénu s rezervou (pozice balónu (1,3,2), okraj gridu ±5 → ~9 j
-  // nejdelší úhlopříčka, zbytek falloff mezi decay=2); decay 2 je fyzikálně
-  // korektní kvadratický pokles, ale s vyšší max intenzitou (30) lampion
-  // svítí na celou scénu, ne jen bezprostřední okolí.
-  // castShadow = true — **druhá shadow mapa** vedle slunce, objekty vrhají
-  // další stíny (záměr uživatele). Cube camera pro 6 směrů = 6× render pass;
-  // mapSize 1024² dává ostřejší stíny (svítivější lampion víc ukazuje artefakty).
-  const light = new THREE.PointLight(0xffb060, 0, 20, 2);
-  light.castShadow = true;
-  light.shadow.mapSize.set(1024, 1024);
-  light.shadow.camera.near = 0.1;
-  light.shadow.camera.far  = 20;
-  // Mírný bias proti shadow acne / peter-panning (stejný důvod jako u slunce).
-  light.shadow.bias       = -0.0005;
-  light.shadow.normalBias =  0.02;
-  // Light jako **child vaku** (ne sourozenec v `group`): při pohupování
-  // (`animateBalloonBob` mutuje `envelope.position.y`) se světlo pohupuje
-  // spolu s vakem → lantern efekt zůstává centrovaný. Lokální pozice (0,0,0)
-  // = střed envelope; scale.y = 1.15 na envelope nemá vliv (scale × 0 = 0).
-  envelope.add(light);
-
-  // --- 4 lana ---
-  // Uchycení hluboko uvnitř koše (Y = 0.1, pod vrškem) a hluboko uvnitř vaku
-  // (Y = 1.0, ve spodní třetině koule). Lana pak prostupují stěnami obou
-  // objektů — vypadá to jako "lana skrze kůži", ne "lana přilepená zvenku".
-  // Ukládáme **relativní offset** vůči základní Y koše/vaku: při pohupování
-  // se uchycení posune spolu s rodičem a zůstane „ve" stěně.
-  const ropeMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a });
-  const ropeStartY = 0.1;                           // uvnitř koše
-  const ropeEndY   = 1.0;                           // uvnitř vaku
-  const ropeBasketOffset = ropeStartY - basketBaseY; // −0.05
-  const ropeBagOffset    = ropeEndY   - bagBaseY;    // −0.3
-  const corners = [
-    [ 0.18,  0.18],   // +X, +Z
-    [-0.18,  0.18],   // −X, +Z
-    [-0.18, -0.18],   // −X, −Z
-    [ 0.18, -0.18],   // +X, −Z
-  ];
-  // Lana si budeme pamatovat jako pole meshů — animátor je potom za běhu
-  // přepočítá (dynamická délka při pohupování vaku/koše). Reuse scratch `_a`,
-  // `_b` aby `cylinderBetween` nedostalo per-call alokace.
-  const ropes = corners.map(([cx, cz]) => {
-    _a.set(cx,        ropeStartY, cz);
-    _b.set(cx * 1.3,  ropeEndY,   cz * 1.3);
-    const rope = cylinderBetween(_a, _b, 0.015, ropeMat);
-    group.add(rope);
-    return rope;
-  });
-
-  // Reference na části uložíme do userData skupiny — `animateBalloonBob` je
-  // za běhu přepočítává (bag Y, basket Y, přepnutí lan).
-  group.userData.parts = {
-    bag: envelope,
-    bagBaseY,
-    basket,
-    basketBaseY,
-    ropes,
-    ropeCorners: corners,
-    ropeBasketOffset,
-    ropeBagOffset,
-    light,
-  };
-}
-
-// Procedurální domek — kvádr stěn + jehlanová střecha. Lokální souřadnice
-// Group: střed kvádru v Y=0 (jako kostky 1×1×1). Barva stěn z `instance.COLOR`,
-// střecha fixně rezavě červená („pálená taška").
-//
-// Rozměry: stěny 1.2×1.0×1.2 (šířka × výška × hloubka), střecha jehlan
-// 4-segmentový s poloměrem ≈ √2/2 × šířka stěn, výška 0.8. `rotation.y = π/4`
-// natočí jehlan tak, aby jeho 4 hrany protnuly rohy stěn (default orientace
-// by měla hranu uprostřed strany kvádru → vypadalo by zkroucené).
-//
-// Jehlan místo sedlové střechy: `ConeGeometry(r, h, 4)` je 1 primitiv (proti
-// 2 BoxGeometry prismatu) a vypadá pohádkově symetricky z libovolného směru.
-function buildHouse(group, instance) {
-  const wallsMat = new THREE.MeshStandardMaterial({ color: instance.COLOR });
-  const wallsW = 1.2, wallsH = 1.0, wallsD = 1.2;
-  const walls = new THREE.Mesh(
-    new THREE.BoxGeometry(wallsW, wallsH, wallsD),
-    wallsMat,
-  );
-  // Střed stěn na Y=0 (vyčnívají od −0.5 do +0.5, stejně jako kostky) — dům
-  // opticky „sedí" na gridu bez odsazení.
-  walls.position.y = 0;
-  group.add(walls);
-
-  // --- Střecha ---
-  // ConeGeometry(radius, height, radialSegments). 4 segmenty = čtyřboký jehlan.
-  // Poloměr √2/2 × wallsW ≈ 0.849 zajistí, že 4 hrany jehlanu (vzdálené
-  // `radius` od osy) trefí rohy stěn (úhlopříčka čtvercového půdorysu dělená 2
-  // = √2/2 × strana).
-  const roofColor = 0x9b3a2a; // rezavě červená — idiom pálené tašky
-  const roofMat = new THREE.MeshStandardMaterial({ color: roofColor });
-  const roofR = (Math.SQRT2 / 2) * wallsW;
-  const roofH = 0.8;
-  const roof = new THREE.Mesh(
-    new THREE.ConeGeometry(roofR, roofH, 4),
-    roofMat,
-  );
-  // Střecha sedí přesně na vrchu stěn (Y = wallsH/2 = 0.5) + polovina výšky
-  // střechy (0.4) → střed střechy na Y = 0.9.
-  roof.position.y = wallsH / 2 + roofH / 2;
-  // Default ConeGeometry se 4 segmenty má hranu na +X; otočení o π/4 (45°)
-  // kolem Y posune hrany do rohů kvádru — vizuálně „správně" posazená střecha.
-  roof.rotation.y = Math.PI / 4;
-  group.add(roof);
-}
-
-// Procedurální mrak — shluk 5 překrývajících se koulí s bílou barvou.
-// Koule mají různé velikosti a lehce offset pozice, aby výsledek vypadal
-// jako shluk oblačnosti, ne geometrická sestava. Vše v lokálních
-// souřadnicích Group (0,0,0 = střed mraku).
-//
-// KISS: pevná geometrie (žádný RNG), seed-free — mrak vypadá pokaždé stejně.
-// Pokud budeme chtít variabilní mraky, přidá se `seed` atribut do CLOUD.
-function buildCloud(group) {
-  const cloudMat = new THREE.MeshStandardMaterial({ color: 0xf0f0f0 });
-  // Pole [x, y, z, radius] — 5 kusů, centrální největší, okolní menší a
-  // posunuté ven. Proporce 0.9 × 2.0 × 0.9 (šířka × výška × hloubka) dává
-  // horizontálně protažený mrak, jak se sluší.
-  const puffs = [
-    [ 0.0,  0.0,  0.0, 0.45],   // centrální
-    [-0.55, -0.05, 0.05, 0.35],  // levá
-    [ 0.55, -0.05, -0.05, 0.35], // pravá
-    [-0.20, 0.20, 0.10, 0.30],   // levá horní
-    [ 0.25, 0.18, -0.10, 0.30],  // pravá horní
-  ];
-  puffs.forEach(([px, py, pz, r]) => {
-    const puff = new THREE.Mesh(
-      new THREE.SphereGeometry(r, 12, 10),
-      cloudMat,
-    );
-    puff.position.set(px, py, pz);
-    group.add(puff);
-  });
-}
-
-// Procedurální balvan — shluk 5 nízkopolygonových koulí v šedé paletě.
-// IcosahedronGeometry(radius, detail=0) = 20 trojúhelníků, default hladké
-// normály. `flatShading: true` v materiálu přepne na **per-face** normály
-// → ostré facety, „tesaný kámen" vzhled (na rozdíl od hladkého kamínku).
-// Materiál je per-kus (3 barvy z palety odvozené od `instance.COLOR`), aby
-// balvany působily jako geologicky sourodé, ale ne identicky naklonované.
-//
-// KISS: pevná geometrie (žádný RNG), seed-free — stejný pattern jako CLOUD.
-// Rotace jsou pevné funkce indexu (determinický pseudo-random vzhled).
-function buildRock(group, instance) {
-  // Paleta tří odstínů z `instance.COLOR`: základní, tmavší (×0.75), světlejší
-  // (×1.2). Pro každý odstín **jediný sdílený materiál** (3 materiály pro 5
-  // mesh-ů, ne 5 unikátních) — GPU state batching friendlier při vyšším počtu
-  // kamenů ve scéně. Shared materials jsou bezpečné, dokud je nemutujeme
-  // per-instance; balvan je statický (žádný ANIMATE), takže invariant drží.
-  const base = new THREE.Color(instance.COLOR);
-  const materials = [
-    new THREE.MeshStandardMaterial({ color: base.clone(),                         flatShading: true }),
-    new THREE.MeshStandardMaterial({ color: base.clone().multiplyScalar(0.75),    flatShading: true }),
-    new THREE.MeshStandardMaterial({ color: base.clone().multiplyScalar(1.2),     flatShading: true }),
-  ];
-  // [x, y, z, radius, materialIndex] — 1 centrální + 2 velké okrajové + 2 malé
-  // odštěpky. Y hodnoty záporné → kameny „zapuštěné" do země (působí jako
-  // vyčnívající, ne levitující). Scéna Y=-0.5 je země, centrální balvan
-  // s r=0.45 sahá od −0.6 do +0.3 (přesah pod zemí = 0.1).
-  const puffs = [
-    [ 0.0,  -0.15,  0.0,  0.45, 0],  // centrální
-    [ 0.4,  -0.25, -0.1,  0.32, 1],  // vpravo vzadu (tmavší)
-    [-0.35, -0.30,  0.1,  0.30, 2],  // vlevo vpředu (světlejší)
-    [ 0.1,  -0.35,  0.4,  0.18, 1],  // malý odštěpek vpředu
-    [-0.1,   0.15, -0.25, 0.22, 0],  // nahoře, jako „kloboučka"
-  ];
-  puffs.forEach(([px, py, pz, r, mi], i) => {
-    const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 0), materials[mi]);
-    rock.position.set(px, py, pz);
-    // Pevné (ne náhodné) natočení závislé na indexu — deterministicky rozbije
-    // vizuální symetrii icosahedronů (které by bez rotace vypadaly stejně).
-    rock.rotation.set(0.3 * i, 0.7 * i + 0.2, 0.5 * i - 0.3);
-    group.add(rock);
-  });
-}
-
-// VOXEL_MODEL builder — async načte `.obj` (s `.mtl` a paletou `.png`) z
-// `./assets/${ASSET}.obj`. Po dotazení mesh: aplikuje SCALE, auto-centruje
-// XZ + posune Y bottom na 0 (= grass top při instance.Y=−0.5), nastaví
-// shadows + NearestFilter texture (zachová pixel-art look).
-//
-// Async: builder se vrací sync s prázdným Group; mesh se přidá až po dokončení
-// HTTP requestu na .mtl + .obj. Group je stále referencovaný, takže update
-// scény proběhne automaticky v dalším render frame.
+// VOXEL_MODEL builder (DD-21 + DD-22) — async načte `.obj` + `.mtl` + `.png`
+// z `./assets/`, aplikuje scale (default 0.625 = 1 MV voxel = 1/16 TC voxelu),
+// rotaci kolem Y, auto-centruje v XZ a posune Y tak, aby spodek mesh seděl
+// přesně na `instance.Y`. Pixel-art filter (NearestFilter) na všechny textury.
 function buildVoxelModel(group, instance) {
   const mtlLoader = new MTLLoader().setPath("./assets/");
   mtlLoader.load(`${instance.ASSET}.mtl`, (materials) => {
     materials.preload();
     const objLoader = new OBJLoader().setMaterials(materials).setPath("./assets/");
     objLoader.load(`${instance.ASSET}.obj`, (object) => {
-      // Aplikuj scale jako první (transform je bottom-up: scale → rotate → translate)
+      // Pořadí transformací (Three.js skládá scale → rotation → position):
+      // nejprve uniform scale, pak rotace kolem Y. Pak změříme bbox výsledku
+      // a posuneme do auto-centra.
       object.scale.setScalar(instance.SCALE);
       object.rotation.y = instance.ROTATION_Y;
       object.updateMatrixWorld(true);
-      // Auto-center v XZ + bottom na Y=0 (cílí na instance.Y = surface úroveň)
       const bbox = new THREE.Box3().setFromObject(object);
       object.position.set(
-        -(bbox.min.x + bbox.max.x) / 2,
-        -bbox.min.y,
-        -(bbox.min.z + bbox.max.z) / 2,
+        -(bbox.min.x + bbox.max.x) / 2,    // auto-center X
+        -bbox.min.y,                        // bottom snap k Y=0 lokálně
+        -(bbox.min.z + bbox.max.z) / 2,    // auto-center Z
       );
-      // Shadows + pixel-art filter na všechny mesh-e v importu
+      // Pixel-art filter + shadows na všechny mesh-e v importu
       object.traverse((child) => {
         if (!child.isMesh) return;
         child.castShadow = true;
@@ -1530,414 +1137,268 @@ function buildVoxelModel(group, instance) {
   }, undefined, (err) => console.error(`MTL load failed: ${instance.ASSET}.mtl`, err));
 }
 
-// TUNNEL_ARCH builder — kamenný kulový (zaoblený) oblouk. Half-torus stojící
-// jako duha: nohy na zemi, oblouk nahoře, vlak prochází zespodu podél X osy.
-//
-// TorusGeometry: ring v XY plane, thetaLength=π → horní polovina kruhu.
-// Rotace Y o π/2 přepne ring do YZ plane → opening (void uvnitř oblouku) pro
-// průchod podél X. Translate Y na −0.5 → nohy na ground level.
-// Vertikální stretch 1.7× pro elegantnější (Roman-style) proporce.
-function buildTunnelArch(group, instance) {
-  const stoneMat = new THREE.MeshStandardMaterial({ color: instance.COLOR });
-  const RING_R = 0.42;   // poloměr středu trubky → outer width = 2×(R+tube) ≈ 1
-  const TUBE_R = 0.08;   // tloušťka oblouku
-  const arch = new THREE.Mesh(
-    new THREE.TorusGeometry(RING_R, TUBE_R, 8, 24, Math.PI), stoneMat,
+// Strom — dispatch podle `instance.KIND` na konkrétní sub-builder.
+// Pattern izomorfní s ANIMATORS lookup tabulkou (DD-15) — model drží recept
+// (string), engine staví mesh. Default `"spruce"` (jehličnatý smrk).
+function buildTree(group, instance) {
+  const kind = instance.KIND ?? "spruce";
+  const builder = TREE_BUILDERS[kind];
+  if (!builder) {
+    console.warn(`[TREE] Unknown KIND "${kind}", fallback na "spruce".`);
+    TREE_BUILDERS.spruce(group);
+    return;
+  }
+  builder(group);
+}
+
+// === Pixel-voxel helpery pro varianty TREE.KIND ===
+// Velikost 1 pixelu = 0.125 j (= 1/8 TC voxelu = 12.5 cm). Strom 12-16 vrstev
+// → 1.5-2 m vysoký. Sdílená BoxGeometry + cache materiálů per barva (DRY).
+const TREE_PX = 0.125;
+const _treeBoxGeom = new THREE.BoxGeometry(TREE_PX, TREE_PX, TREE_PX);
+const _treeMatCache = new Map();
+function treeMat(color) {
+  let m = _treeMatCache.get(color);
+  if (!m) {
+    m = new THREE.MeshStandardMaterial({ color });
+    _treeMatCache.set(color, m);
+  }
+  return m;
+}
+
+// Pixel-voxel na grid pozici (gx, gy, gz). gy=0 = první vrstva nad zemí.
+// Lokální Y center = -0.5 + (gy + 0.5) * TREE_PX → bottom face voxelu sedí
+// přesně na Y=-0.5 (= ground level v lokálním coords groupy COMPOSITES).
+function treeVoxel(group, gx, gy, gz, color) {
+  const m = new THREE.Mesh(_treeBoxGeom, treeMat(color));
+  m.position.set(
+    (gx + 0.5) * TREE_PX,
+    -0.5 + (gy + 0.5) * TREE_PX,
+    (gz + 0.5) * TREE_PX,
   );
-  arch.rotation.y = Math.PI / 2;
-  arch.position.y = -0.5;
-  arch.scale.y = 1.7;    // elliptický stretch — vyšší než širší
-  group.add(arch);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  group.add(m);
 }
 
-// WAREHOUSE builder — sklad u koleje (Scéna 2). Kvádr stěn + jehlanová střecha
-// (HOUSE idiom) + dveře a okno na čelní (-Z) stěně. Konvence: instance.Y = 0
-// znamená spodek stěn na world Y = −0.5 (= horní plocha grass voxelů). Footprint
-// 2j × ~1.4j, výška stěn 1.5j + střecha 0.7j → vrchol v world Y ≈ 1.7.
-function buildWarehouse(group, instance) {
-  const wallMat = new THREE.MeshStandardMaterial({ color: instance.COLOR });
-  const roofMat = new THREE.MeshStandardMaterial({ color: 0x4a3020 });   // tmavě hnědá
-  const doorMat = new THREE.MeshStandardMaterial({ color: 0x2a1810 });
-  const winMat  = new THREE.MeshStandardMaterial({
-    color: 0xffe8a0, emissive: 0x664422, emissiveIntensity: 0.4,         // teplé světlo zevnitř
-  });
-
-  const W = 2.0;          // šířka (X)
-  const D = 1.4;          // hloubka (Z)
-  const H = 1.5;          // výška stěn (Y)
-  const ROOF_H = 0.7;
-  const GROUND = -0.5;    // top of grass voxel = world Y −0.5
-
-  // Stěny — BoxGeometry s base v Y=GROUND (instance.Y posune celý group)
-  const walls = new THREE.Mesh(new THREE.BoxGeometry(W, H, D), wallMat);
-  walls.position.y = GROUND + H / 2;
-  group.add(walls);
-
-  // Dveře — tmavý plát na −Z stěně (čelo směřující ke koleji v Z=−4)
-  const door = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.95), doorMat);
-  door.position.set(-0.5, GROUND + 0.475, -D / 2 - 0.001);
-  group.add(door);
-
-  // Okno — světlý plát vpravo od dveří, mírně výš (působí osvětleně)
-  const win = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.4), winMat);
-  win.position.set(0.5, GROUND + 0.95, -D / 2 - 0.001);
-  group.add(win);
-
-  // Střecha — 4-stranný jehlan (ConeGeometry s 4 segmenty, HOUSE pattern).
-  // ConeGeometry default: vrchol v +Y, base v −Y, radius je půl diagonály base.
-  // Rotace Y o π/4 narovná stěny jehlanu rovnoběžně s X/Z osami.
-  const roofRadius = Math.hypot(W / 2, D / 2) * 0.95;   // diagonála základny
-  const roof = new THREE.Mesh(new THREE.ConeGeometry(roofRadius, ROOF_H, 4), roofMat);
-  roof.position.y = GROUND + H + ROOF_H / 2;
-  roof.rotation.y = Math.PI / 4;
-  group.add(roof);
-}
-
-// TRAIN builder — lokomotiva + 1 nákladní vagón. Konvence: instance.Y = 0
-// znamená kola sedí na rail topu (world Y = 0.5) — interní wheel.position.y =
-// railTop + wheelRadius. Train heading: lokomotiva vpřed (+X). Vagón vzadu (−X).
-function buildTrain(group, instance) {
-  const bodyMat    = new THREE.MeshStandardMaterial({ color: instance.COLOR });
-  const cabMat     = new THREE.MeshStandardMaterial({ color: 0x442218 });   // tmavší než tělo
-  const cargoMat   = new THREE.MeshStandardMaterial({ color: 0x6a4a2a });   // hnědý vagón
-  const wheelMat   = new THREE.MeshStandardMaterial({ color: 0x222222 });
-  const chimneyMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a });
-
-  const RAIL_TOP   = 0.5;          // world Y koleje (top voxelu Y=0)
-  const WHEEL_R    = 0.16;
-  const WHEEL_THK  = 0.06;
-  const FRAME_BOT  = RAIL_TOP + 2 * WHEEL_R;   // spodek lokomotivy/vagónu
-
-  // --- Lokomotiva (vpředu, X > 0) ---
-  const LOCO_LEN = 1.2;
-  const LOCO_W   = 0.55;
-  const LOCO_H   = 0.55;
-  const LOCO_X   = 0.65;            // střed lokomotivy v X
-  const loco = new THREE.Mesh(new THREE.BoxGeometry(LOCO_LEN, LOCO_H, LOCO_W), bodyMat);
-  loco.position.set(LOCO_X, FRAME_BOT + LOCO_H / 2, 0);
-  group.add(loco);
-
-  // Kabina — užší box vzadu na lokomotivě (zadní třetina, vyšší)
-  const CAB_LEN = 0.45;
-  const CAB_H   = 0.4;
-  const cab = new THREE.Mesh(new THREE.BoxGeometry(CAB_LEN, CAB_H, LOCO_W), cabMat);
-  cab.position.set(LOCO_X - LOCO_LEN / 2 + CAB_LEN / 2,
-                   FRAME_BOT + LOCO_H + CAB_H / 2, 0);
-  group.add(cab);
-
-  // Komín — krátký válec na předku lokomotivy
-  const chimney = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.07, 0.07, 0.32, 10), chimneyMat,
-  );
-  chimney.position.set(LOCO_X + LOCO_LEN / 2 - 0.2,
-                       FRAME_BOT + LOCO_H + 0.16, 0);
-  group.add(chimney);
-
-  // --- Vagón (vzadu, X < 0) ---
-  const CAR_LEN = 0.95;
-  const CAR_W   = LOCO_W;
-  const CAR_H   = 0.5;
-  const CAR_X   = -0.55;
-  const car = new THREE.Mesh(new THREE.BoxGeometry(CAR_LEN, CAR_H, CAR_W), cargoMat);
-  car.position.set(CAR_X, FRAME_BOT + CAR_H / 2, 0);
-  group.add(car);
-
-  // Spojka mezi lokomotivou a vagónem — krátká tyč
-  const link = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.05, 0.06), wheelMat);
-  link.position.set((LOCO_X - LOCO_LEN / 2 + CAR_X + CAR_LEN / 2) / 2,
-                    FRAME_BOT + 0.1, 0);
-  group.add(link);
-
-  // --- Kola — po 2 párech pod lokomotivou a vagónem ---
-  // CylinderGeometry default osa Y; pro kola s osou rovnoběžnou s Z (= napříč
-  // směrem jízdy) rotujeme kolem X o π/2.
-  function addWheel(x, z) {
-    const wheel = new THREE.Mesh(
-      new THREE.CylinderGeometry(WHEEL_R, WHEEL_R, WHEEL_THK, 12), wheelMat,
-    );
-    wheel.position.set(x, RAIL_TOP + WHEEL_R, z);
-    wheel.rotation.x = Math.PI / 2;
-    group.add(wheel);
-  }
-  // Lokomotiva — 2 páry: pod přední třetinou + zadní třetinou
-  for (const x of [LOCO_X + 0.3, LOCO_X - 0.3]) {
-    addWheel(x,  LOCO_W / 2 + 0.02);
-    addWheel(x, -LOCO_W / 2 - 0.02);
-  }
-  // Vagón — 2 páry
-  for (const x of [CAR_X + 0.25, CAR_X - 0.25]) {
-    addWheel(x,  CAR_W / 2 + 0.02);
-    addWheel(x, -CAR_W / 2 - 0.02);
+// Vyplnění obdélníkového bloku v gridu — wraps `treeVoxel` přes 3D smyčku.
+function treeBlock(group, gx0, gy0, gz0, w, h, d, color) {
+  for (let dx = 0; dx < w; dx++) {
+    for (let dy = 0; dy < h; dy++) {
+      for (let dz = 0; dz < d; dz++) {
+        treeVoxel(group, gx0 + dx, gy0 + dy, gz0 + dz, color);
+      }
+    }
   }
 }
 
-// === Scéna 1: úvodní svět ===
-// Wrap stávajícího setupu do funkce — umožňuje URL-driven přepínač scén.
-// Reload stránky s `?scene=N` → dispatch na patřičný builder. Cleanup
-// registrů je „zdarma" díky reloadu (žádný in-memory dispose).
-function buildSceneOne(scene) {
+// Diamond-cutoff vrstva v rovině XZ (|dx|+|dz| ≤ radius) na výšce gy.
+// Pro spruce/oak/maple koruny — měkčí, kulatější siluetu než plný 5×5.
+function treeDiamond(group, cx, gy, cz, radius, color) {
+  for (let dx = -radius; dx <= radius; dx++) {
+    for (let dz = -radius; dz <= radius; dz++) {
+      if (Math.abs(dx) + Math.abs(dz) > radius) continue;
+      treeVoxel(group, cx + dx, gy, cz + dz, color);
+    }
+  }
+}
 
-// === Model: 3×3 grid dlaždic v rovině Y=0 + strom ===
-// Centrální buňka (0,0,0) = mateřská CUBES (šachovnice jako default DD-07).
-// Okolních 8 buněk = CCUBES s různými barvami — první potomek demonstrující
-// override vizualizace (dříve TERRAIN, přejmenováno v sez. 3 — DD-13).
-// Vpravo na (3, 0, 0) = TREE (COMPOSITES) — demonstrace 3D mesh z primitivů.
-
-// Středová kostka — jediná mateřská CUBES ve scéně
-const centralCube = new CUBES(
-  "cube_0001",
-  "Středová kostka",
-  0, 0, 0,
-  "Mateřská CUBES — vizuální default (šachovnice)."
-);
-scene.add(createMeshFor(centralCube));
-
-// 8 CCUBES dlaždic kolem středu. Paleta = výrazná duha po obvodu,
-// počínaje levým horním rohem (z = -1) po směru hodinových ručiček.
-// Každý záznam má { x, z, color, name }; Y je vždy 0 (všechny v jedné rovině).
-// Každý záznam má { x, z, color, name } a volitelně `animate` (recept pro
-// `ANIMATE`). Červená dlaždice pulsuje emisivně (heartbeat-like, period 2 s)
-// jako demo `pulse` animátoru — třetí dimenze `ANIMATE` patternu (mutace
-// materiálu po transformacích a dílech). Tyrkysová pulsuje pomaleji a slabší
-// — desynchronizovaná s červenou (různé periody ukážou, že animátory běží
-// nezávisle per-instance, ne sdílený clock).
-const ccubeDefs = [
-  { x: -1, z: -1, color: 0xff3b30, name: "Červená dlaždice",
-    animate: { kind: "pulse", period: 2.0, min: 0, max: 0.9 } },
-  { x:  0, z: -1, color: 0xff9500, name: "Oranžová dlaždice" },
-  { x:  1, z: -1, color: 0xffcc00, name: "Žlutá dlaždice" },
-  { x:  1, z:  0, color: 0x34c759, name: "Zelená dlaždice" },
-  { x:  1, z:  1, color: 0x00c7be, name: "Tyrkysová dlaždice",
-    animate: { kind: "pulse", period: 3.5, min: 0.05, max: 0.6,
-               opacityMin: 0.25, opacityMax: 1.0 } },
-  { x:  0, z:  1, color: 0x007aff, name: "Modrá dlaždice" },
-  { x: -1, z:  1, color: 0x7b61ff, name: "Fialová dlaždice" },
-  { x: -1, z:  0, color: 0xff2d92, name: "Růžová dlaždice" },
-];
-
-// forEach = iterace přes pole. Druhý parametr callbacku je index.
-// `padStart(4, "0")` doplní vedoucí nuly → "0001", "0002", …
-ccubeDefs.forEach((def, i) => {
-  const id = `ccube_${String(i + 1).padStart(4, "0")}`;
-  const instance = new CCUBES(id, def.name, def.x, 0, def.z, def.color);
-  if (def.animate) instance.ANIMATE = def.animate;
-  scene.add(createMeshFor(instance));
-});
-
-// Strom vedle růžice — COMPOSITES (3D mesh z primitivů, DD-13).
-// Pozice (3, 0, 0) = mimo 3×3 grid, ale stále na celých souřadnicích
-// (float systém to umožňuje, ale pro čistotu prvních ukázek držíme int).
-const tree1 = new TREE(
-  "tree_0001",
-  "Strom",
-  3, 0, 0,
-  "COMPOSITES — kmen (válec) + 3 kužely koruny.",
-);
-// Strom se kývá ve větru. Dvě nesoudělné periody (3.5 a 2.7 s) dávají
-// elipsovitý pohyb (ne čisté 1D kyvadlo). Amplituda 0.08 m × koeficient
-// výšky kuželu → špička (~1.6 m) viditelně opisuje malou elipsu, spodní
-// kužel se téměř nehne.
-tree1.ANIMATE = {
-  kind: "tree_sway",
-  periodX: 3.5,
-  periodZ: 2.7,
-  amplitude: 0.08,
+// === TREE_KIND barvy ===
+const TREE_C = {
+  trunkOak:    0x6b4423,
+  trunkDark:   0x4a3520,
+  trunkBirch:  0xeae5d8,
+  trunkBirchSpot: 0x222222,
+  trunkPalm:   0x8a6a3a,
+  trunkDead:   0x8c8278,
+  leafSpruce:  0x2a5a2a,
+  leafOak:     0x4a8a3a,
+  leafBirch:   0x9aae3a,    // žluto-zelená
+  leafCypress: 0x254520,    // tmavě zelená
+  leafBush:    0x5a8a3a,
+  leafPalm:    0x3a8430,
+  leafCoco:    0x8a6a3a,
+  leafWillow:  0x6a8a3a,    // olive
+  leafBonsai:  0xa84030,    // červená
+  leafBonsaiAlt: 0xc06b3a,  // oranžová akcent
+  leafMaple1:  0xd06028,
+  leafMaple2:  0xc04020,
+  leafMaple3:  0xe0a020,
 };
-scene.add(createMeshFor(tree1));
 
-// Balón nad scénou — BALLOON (COMPOSITES) na **float** pozici mimo grid.
-// Demonstrace DD-12: jednotný souřadný systém, snap-to-grid se neuplatňuje.
-// Pozice (1, 3, 2): výška snížena o 1/4 proti dřívějšímu Y=4, aby stín
-// balónu nesplýval se stínem stromu. Paprsek slunce (směr (1,-1,-1)/√3)
-// z této pozice dopadne na zem v bodě:
-//    t = 3√3 → (1+3, 0, 2-3) = (4, 0, -1) — před patou stromu (který
-// je v (3, 0, 0)), s čistou mezerou mezi oběma stíny.
-const balloon1 = new BALLOON(
-  "balloon_0001",
-  "Balón",
-  1, 3, 2,
-  0xff6b35,                                  // sytá oranžová pro vak
-  "COMPOSITES mimo grid — vak, 4 lana, koš.",
-);
-// Balón se pomalu pohupuje (vak 4 s / 0.15 m), koš pruží nezávisle s kratší
-// periodou a menší amplitudou → vizuální dojem „balón plave, koš dohání".
-// Fázový posun π/2 na `basketPeriod` desynchronizuje oba sinusy, takže lana
-// viditelně mění délku. `ANIMATE` nastavit **před** `createMeshFor` —
-// registrace animátora proběhne tam.
-balloon1.ANIMATE = {
-  kind: "balloon_bob",
-  bagPeriod: 4,
-  bagAmp: 0.15,
-  basketPeriod: 1.5,
-  basketAmp: 0.05,
+// === Sub-buildery — všechny pixel-voxel (DD-23, sez. 15) ===
+
+// Smrk — úzký jehlan, tmavě zelená koruna ve 3 vrstvách diamond.
+function buildTreeSpruce(group) {
+  // Kmen 1×4 tmavě hnědá
+  treeBlock(group, 0, 0, 0, 1, 4, 1, TREE_C.trunkDark);
+  // Koruna 3 patra zužující se
+  treeDiamond(group, 0, 4, 0, 2, TREE_C.leafSpruce);   // 5×5 diamond (13)
+  treeDiamond(group, 0, 5, 0, 2, TREE_C.leafSpruce);
+  treeDiamond(group, 0, 6, 0, 1, TREE_C.leafSpruce);   // 3×3 diamond (5)
+  treeDiamond(group, 0, 7, 0, 1, TREE_C.leafSpruce);
+  treeVoxel(group, 0, 8, 0, TREE_C.leafSpruce);        // špička
+  treeVoxel(group, 0, 9, 0, TREE_C.leafSpruce);
+}
+
+// Dub — kulatá listnatá koruna, kratší kmen.
+function buildTreeOak(group) {
+  treeBlock(group, 0, 0, 0, 1, 3, 1, TREE_C.trunkOak);
+  // Koruna ~5×4×5 zaoblená
+  treeDiamond(group, 0, 3, 0, 2, TREE_C.leafOak);
+  treeBlock(group, -2, 4, -2, 5, 1, 5, TREE_C.leafOak);
+  treeBlock(group, -2, 5, -2, 5, 1, 5, TREE_C.leafOak);
+  treeDiamond(group, 0, 6, 0, 2, TREE_C.leafOak);
+  treeBlock(group, -1, 7, -1, 3, 1, 3, TREE_C.leafOak);
+  treeVoxel(group, 0, 8, 0, TREE_C.leafOak);
+}
+
+// Bříza — bílo-černý kmen vyšší, žluto-zelená oválná koruna.
+function buildTreeBirch(group) {
+  treeBlock(group, 0, 0, 0, 1, 6, 1, TREE_C.trunkBirch);
+  // Černé skvrny na kmeni
+  treeVoxel(group, 0, 1, 0, TREE_C.trunkBirchSpot);
+  treeVoxel(group, 0, 3, 0, TREE_C.trunkBirchSpot);
+  // Koruna oválná
+  treeDiamond(group, 0, 5, 0, 1, TREE_C.leafBirch);
+  treeBlock(group, -1, 6, -1, 3, 1, 3, TREE_C.leafBirch);
+  treeBlock(group, -1, 7, -1, 3, 1, 3, TREE_C.leafBirch);
+  treeVoxel(group, 0, 8, 0, TREE_C.leafBirch);
+}
+
+// Palma — vysoký tenký kmen + 4 listové paprsky + 2 kokos.
+function buildTreePalm(group) {
+  treeBlock(group, 0, 0, 0, 1, 8, 1, TREE_C.trunkPalm);
+  // Listy — 4 paprsky ven, na výšce 8
+  treeBlock(group, 1, 8, 0, 3, 1, 1, TREE_C.leafPalm);   // východ
+  treeBlock(group, -3, 8, 0, 3, 1, 1, TREE_C.leafPalm);  // západ
+  treeBlock(group, 0, 8, 1, 1, 1, 3, TREE_C.leafPalm);   // jih
+  treeBlock(group, 0, 8, -3, 1, 1, 3, TREE_C.leafPalm);  // sever
+  // Špička listů ohnutá o 1 dolů
+  treeVoxel(group, 3, 7, 0, TREE_C.leafPalm);
+  treeVoxel(group, -3, 7, 0, TREE_C.leafPalm);
+  treeVoxel(group, 0, 7, 3, TREE_C.leafPalm);
+  treeVoxel(group, 0, 7, -3, TREE_C.leafPalm);
+  // Kokos pod listy
+  treeVoxel(group, 1, 7, 1, TREE_C.leafCoco);
+  treeVoxel(group, -1, 7, -1, TREE_C.leafCoco);
+}
+
+// Keř — bez kmene, jen kulatá koruna nízká.
+function buildTreeBush(group) {
+  treeDiamond(group, 0, 0, 0, 2, TREE_C.leafBush);
+  treeBlock(group, -2, 1, -2, 5, 1, 5, TREE_C.leafBush);
+  treeDiamond(group, 0, 2, 0, 2, TREE_C.leafBush);
+  treeBlock(group, -1, 3, -1, 3, 1, 3, TREE_C.leafBush);
+  treeVoxel(group, 0, 4, 0, TREE_C.leafBush);
+}
+
+// Cypřiš — úzký vysoký jehličnan, sloupec + boční rozšíření, tmavě zelený.
+function buildTreeCypress(group) {
+  // Centrální sloupec
+  treeBlock(group, 0, 0, 0, 1, 10, 1, TREE_C.leafCypress);
+  // Boční rozšíření + (1 voxel ven N/S/E/W) ve výškách 1..8
+  for (let gy = 1; gy <= 8; gy++) {
+    treeVoxel(group, 1, gy, 0, TREE_C.leafCypress);
+    treeVoxel(group, -1, gy, 0, TREE_C.leafCypress);
+    treeVoxel(group, 0, gy, 1, TREE_C.leafCypress);
+    treeVoxel(group, 0, gy, -1, TREE_C.leafCypress);
+  }
+}
+
+// Vrba — kmen + kulatá koruna + visící větve (sloupce dolů z okrajů koruny).
+function buildTreeWillow(group) {
+  treeBlock(group, 0, 0, 0, 1, 4, 1, TREE_C.trunkOak);
+  // Koruna hlavní
+  treeDiamond(group, 0, 4, 0, 2, TREE_C.leafWillow);
+  treeBlock(group, -2, 5, -2, 5, 1, 5, TREE_C.leafWillow);
+  treeDiamond(group, 0, 6, 0, 2, TREE_C.leafWillow);
+  treeVoxel(group, 0, 7, 0, TREE_C.leafWillow);
+  // Visící větve — 4× sloupec dolů z okrajů (gy=2..3 pod úrovní hlavní koruny)
+  for (let gy = 2; gy <= 3; gy++) {
+    treeVoxel(group, 2, gy, 0, TREE_C.leafWillow);
+    treeVoxel(group, -2, gy, 0, TREE_C.leafWillow);
+    treeVoxel(group, 0, gy, 2, TREE_C.leafWillow);
+    treeVoxel(group, 0, gy, -2, TREE_C.leafWillow);
+  }
+}
+
+// Bonsai — malý zkroucený S-kmen + drobná červená koruna.
+function buildTreeBonsai(group) {
+  // S-kmen: spodní 2 vlevo, horní 2 vpravo
+  treeVoxel(group, 0, 0, 0, TREE_C.trunkDark);
+  treeVoxel(group, 0, 1, 0, TREE_C.trunkDark);
+  treeVoxel(group, 1, 2, 0, TREE_C.trunkDark);
+  treeVoxel(group, 1, 3, 0, TREE_C.trunkDark);
+  // Drobná koruna nad horním koncem kmene
+  treeDiamond(group, 1, 4, 0, 1, TREE_C.leafBonsai);
+  treeVoxel(group, 1, 5, 0, TREE_C.leafBonsaiAlt);
+  treeVoxel(group, 2, 4, 0, TREE_C.leafBonsaiAlt);
+}
+
+// Suchý strom — vysoký šedý kmen, 2-3 holé větve, žádná koruna.
+function buildTreeDead(group) {
+  treeBlock(group, 0, 0, 0, 1, 9, 1, TREE_C.trunkDead);
+  // Větev vpravo (gy=5)
+  treeVoxel(group, 1, 5, 0, TREE_C.trunkDead);
+  treeVoxel(group, 2, 5, 0, TREE_C.trunkDead);
+  treeVoxel(group, 2, 6, 0, TREE_C.trunkDead);
+  // Větev vlevo nahoře (gy=7)
+  treeVoxel(group, -1, 7, 0, TREE_C.trunkDead);
+  treeVoxel(group, -2, 7, 0, TREE_C.trunkDead);
+  // Větvička dopředu (gy=6)
+  treeVoxel(group, 0, 6, 1, TREE_C.trunkDead);
+  treeVoxel(group, 0, 6, 2, TREE_C.trunkDead);
+}
+
+// Javor — kmen + podzimní oranžovo-červená koruna s mix barev.
+function buildTreeMaple(group) {
+  treeBlock(group, 0, 0, 0, 1, 4, 1, TREE_C.trunkOak);
+  // Koruna 5×3×5 s namixovanými podzimními barvami (deterministic via gx+gz parita)
+  const mapleColors = [TREE_C.leafMaple1, TREE_C.leafMaple2, TREE_C.leafMaple3];
+  function mapleColorAt(gx, gz) {
+    return mapleColors[((gx + gz + 100) % 3 + 3) % 3];
+  }
+  // gy=4 — diamond r=2
+  for (let dx = -2; dx <= 2; dx++) {
+    for (let dz = -2; dz <= 2; dz++) {
+      if (Math.abs(dx) + Math.abs(dz) > 2) continue;
+      treeVoxel(group, dx, 4, dz, mapleColorAt(dx, dz));
+    }
+  }
+  // gy=5 — full 5×5
+  for (let dx = -2; dx <= 2; dx++) {
+    for (let dz = -2; dz <= 2; dz++) {
+      treeVoxel(group, dx, 5, dz, mapleColorAt(dx, dz + 1));
+    }
+  }
+  // gy=6 — 3×3
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dz = -1; dz <= 1; dz++) {
+      treeVoxel(group, dx, 6, dz, mapleColorAt(dx + 1, dz));
+    }
+  }
+  treeVoxel(group, 0, 7, 0, TREE_C.leafMaple3);
+}
+
+// === Dispatch tabulka KIND → builder ===
+const TREE_BUILDERS = {
+  spruce:  buildTreeSpruce,
+  oak:     buildTreeOak,
+  birch:   buildTreeBirch,
+  palm:    buildTreePalm,
+  bush:    buildTreeBush,
+  cypress: buildTreeCypress,
+  willow:  buildTreeWillow,
+  bonsai:  buildTreeBonsai,
+  dead:    buildTreeDead,
+  maple:   buildTreeMaple,
 };
-scene.add(createMeshFor(balloon1));
 
-// Krabice s obsahem — TCUBES (per-face textury, DD-13). Pozice (-3, 0, 0)
-// zrcadlově ke stromu. TOP = 🌳 (obsah), BOTTOM = 🪵 (dno), 4 strany = 📦
-// (stejný obsah). Demo plného vyplnění všech 6 stran.
-const tbox1 = new TCUBES(
-  "tbox_0001",
-  "Krabice s obsahem",
-  -3, 0, 0,
-  { TOP: "🌳", BOTTOM: "🪵", NORTH: "📦", SOUTH: "📦", EAST: "📦", WEST: "📦" },
-  "TCUBES — emoji per-face. TOP strom, BOTTOM poleno, strany krabice.",
-);
-// Krabice se pomalu otáčí kolem Y (jedno plné otočení za 6 s). Dokazuje, že
-// `ANIMATE` funguje i mimo COMPOSITES — `animateRotate` sahá přímo na
-// `object3d.rotation`, nevyžaduje `userData.parts`.
-tbox1.ANIMATE = { kind: "rotate", axis: "y", period: 6 };
-scene.add(createMeshFor(tbox1));
 
-// Částečně texturovaná kostka — TCUBES (-3, 0, 2). Vyplněný jen TOP (⭐),
-// zbývající 5 stran null → fallback šachovnice (DD-07). Demo, že nevyplněná
-// strana sedí na stejném vizuálním idiomu jako mateřská CUBES.
-const tbox2 = new TCUBES(
-  "tbox_0002",
-  "Hvězda na vrchu",
-  -3, 0, 2,
-  { TOP: "⭐" },
-  "TCUBES — jen TOP vyplněný, ostatní strany fallback na šachovnici.",
-);
-// Kostka obíhá oválnou dráhu kolem své výchozí pozice (stadium: 2 rovné
-// úseky × 2 půlkruhy). L=2, R=0.8 → rozsah X [-4.8, -1.2], Z [1.2, 2.8]
-// (v gridu, neprotíná tbox_0001 na Z=0). Heading plynule sleduje tečnu
-// dráhy → NORTH strana vždy ukazuje dopředu jako auto na trati.
-tbox2.ANIMATE = {
-  kind: "orbit_stadium",
-  length: 2,
-  radius: 0.8,
-  period: 10,
-};
-scene.add(createMeshFor(tbox2));
+// === Scéna 2: 10×10 voxelová dioráma ===
+// Po DD-23 (sez. 15) je toto jediná scéna v TheCubes — vše voxelové.
 
-// Domek za růžicí — HOUSE (COMPOSITES). Pozice (0, 0, -3): středově
-// v ose Z, za mateřskou CUBES + severní řadou dlaždic (ty jsou na Z=-1).
-// Stěny bledě béžové (0xe8d4a8, wheat-like), střecha fixně rezavá v enginu.
-// Statický — žádný ANIMATE. Dokončuje základní COMPOSITES trio (TREE +
-// BALLOON + HOUSE).
-const house1 = new HOUSE(
-  "house_0001",
-  "Domek",
-  0, 0, -3,
-  0xe8d4a8,
-  "COMPOSITES — stěny (kvádr) + jehlanová střecha (4-segment cone).",
-);
-scene.add(createMeshFor(house1));
-
-// Mrak vysoko nad scénou — CLOUD (COMPOSITES) s `drift` animací.
-// Pozice base (0, 4.5, -2): nad scénou mírně dozadu. Drift po ose X, speed
-// 0.6 j/s, range 16 → pozice obíhá od -8 do +8. Cyklus 26.7 s; skok
-// wrap-around na hranicích viewportu je v default kamera perspektivě
-// minimálně rušivý. Y a Z zůstávají fixní (mrak letí horizontálně).
-const cloud1 = new CLOUD(
-  "cloud_0001",
-  "Mrak",
-  0, 4.5, -2,
-  "COMPOSITES — shluk 5 koulí. Drift po ose X s wrap-around.",
-);
-cloud1.ANIMATE = {
-  kind: "drift",
-  axis: "x",
-  speed: 0.6,
-  range: 16,
-};
-scene.add(createMeshFor(cloud1));
-
-// Balvan vlevo vzadu — ROCK (COMPOSITES). Pozice (-3, 0, -2): mimo dráhu
-// tbox_0002 (ta obíhá Z ∈ [1.2, 2.8]) a za mateřskou CUBES. Barva 0x9b8871
-// = teplá šedohnědá (pískovec) — světlejší než domek, tmavší než mrak,
-// přirozeně zapadá do palety. Statický (bez ANIMATE) — balvany nemají
-// ambice se hýbat. Uzavírá pětici COMPOSITES (TREE / BALLOON / HOUSE /
-// CLOUD / ROCK): organický, mechanický, stavební, atmosférický, geologický.
-const rock1 = new ROCK(
-  "rock_0001",
-  "Balvan",
-  -3, 0, -2,
-  0x9b8871,
-  "COMPOSITES — shluk 5 nízkopolygonových koulí (flat-shaded icosahedronů).",
-);
-scene.add(createMeshFor(rock1));
-
-// (Sez. 14: humanoidní postavy — char_0001..char_0004, wander automat —
-// přesunuty do projektu ./source/Stickman. Scéna 1 dál ukazuje statické
-// dekorace + animátory ne-humanoidních entit.)
-
-// TIMER — první nevizuální potomek OBJECTS ve scéně (DD-17). Každých 5 ticků
-// (= 5 s) toggle-uje `balloon1.LIT`. Kombinuje se s click-to-toggle handlerem
-// — oba mechanismy mění stejný stav, fade watcher propaguje do emissive +
-// PointLight. Po zapnutí „lantern mode": vak září, objekty ve scéně dostanou
-// druhý zdroj stínů (vedle slunce) → dramatická večerní atmosféra.
-const timer1 = new TIMER(
-  "timer_0001",
-  "Timer lampionu",
-  5,
-  "Nevizuální OBJECTS — každých 5 ticků toggle balloon.LIT (DD-17).",
-);
-timer1.ACTION = { kind: "toggle", target: balloon1, attr: "LIT" };
-registerBehavior(timer1);
-
-// COUNTER — druhý nevizuální potomek OBJECTS (sez. 9). Není ve 3D scéně,
-// ale engine mu přidá řádek do HUD vedle `TIME`. Každý tick `VALUE +=
-// INCREMENT` (= 1 / s). Demonstruje, že nevizuální entita může být
-// plně observable jinou cestou než 3D renderováním (HUD DOM).
-//
-// COUNTER.VALUE je obyčejné datové pole — TIMER.ACTION { kind: "set",
-// target: counter, attr: "VALUE", value: 0 } by ho mohl kdykoli resetovat.
-const counter1 = new COUNTER(
-  "counter_0001",
-  "Skóre",
-  0,   // start hodnota
-  1,   // increment per tick
-  "Nevizuální OBJECTS — skóre v HUD, +1 každý tick.",
-);
-registerBehavior(counter1);
-
-// Dialog bubble mluvícího stromu — SPRITES (2D billboard, DD-13) + dynamický
-// 3D ocásek (M8+). Pozice (4.6, 2.7, 1.2) je **mimo osu stromu** (4.6 vs.
-// tree.X=3, Z=1.2 vs. tree.Z=0) — demonstruje, že ocásek míří diagonálně
-// na mluvčího, ne jen kolmo dolů. Statický ocásek v tomto případě (strom
-// mění jen pozice kuželů v `userData.parts`, ne kořenovou `object3d.position`,
-// proto `resolveSpeakerTarget` vrací stabilní bod).
-const dialog1 = new SPRITES(
-  "dialog_0001",
-  "Bublina stromu",
-  4.6, 2.7, 1.2,
-  "Ahoj! Jsem mluvící strom.",
-  "SPRITES — bublina mimo osu stromu, dynamický 3D ocásek míří na mluvčího.",
-);
-dialog1.SPEAKER = tree1;
-// Strom má vrch koruny v ~Y = 1.85. Přepíšeme default 0.5 (pro voxel) na 1.8,
-// aby tail mířil do horní třetiny koruny, ne do kmene.
-dialog1.SPEAKER_OFFSET_Y = 1.8;
-scene.add(createMeshFor(dialog1));
-
-// Druhá bublina — demo dynamického trackingu pohyblivého cíle. SPEAKER =
-// `tbox2` (obíhá po stadium-dráze kolem své základny (-3, 0, 2)). Protože
-// `animateOrbitStadium` mutuje `object3d.position` (ne `instance.X/Y/Z`),
-// `resolveSpeakerTarget` čte aktuální world position přes `meshByInstance`
-// → ocásek se po scéně „žene" za krabicí. Bublina je pevně nad středem
-// orbity ve výšce ~3 j (dostatečně vysoko, aby neprotínala dráhu krabice
-// L=2, R=0.8 v Y=0).
-const dialog2 = new SPRITES(
-  "dialog_0002",
-  "Bublina krabice",
-  -3, 3.2, 2,
-  "Hej! Koukni, jak obíhám!",
-  "SPRITES — dynamický ocásek sleduje orbitující krabici tbox_0002.",
-);
-dialog2.SPEAKER = tbox2;
-// Krabice je voxel 1×1×1 → default SPEAKER_OFFSET_Y (0.5) míří přesně na vrch.
-scene.add(createMeshFor(dialog2));
-
-}   // konec buildSceneOne
-
-// === Scéna 2: 10×10 dioráma (postupně budovaná, s interaktivním builderem) ===
-// Připraveno v kódu (čeká na zavolání): textura `:rail-top`; třídy WAREHOUSE,
-// TRAIN; buildery `buildWarehouse`, `buildTrain`.
-
-// Helpery pro 3 typy voxelových bloků — sjednocený pattern (izomorfismus).
-// Volány z `buildSceneTwo` (statický seed) i z builderu (interaktivní spawn).
 // Helpery pro 3 typy voxelových bloků — sdílený pattern (izomorfismus DD-14).
 function makeStoneBlock(id, x, y, z) {
   return new TCUBES(id, `Skála (${x}, ${y}, ${z})`, x, y, z, {
@@ -2130,58 +1591,66 @@ function buildSceneTwo(scene) {
     scene.add(createMeshFor(FACTORIES[kind](id, x, y, z)));
   }
 
-  // Tunelové oblouky — voxelový model `tunel` (MagicaVoxel, 16³ vox).
-  // Scale 0.625 = 1 MagicaVoxel cube (1.6 j) → 1 TheCubes voxel (1 j).
+  // Tunelové oblouky — voxelový model `tunel` (MagicaVoxel).
+  // SCALE 0.625 = pevná konvence: 1 MV voxel = 1 pixel textury = 1/16 TC voxelu
+  // = 6.25 cm. Velikost objektu řídí MV grid; nový tunel 48³ MV → 3×3×3 TC.
   // Y=−0.5 = top of grass cube (auto-center loadera posadí mesh na surface).
   // Vlak mezi nimi pojede podél X osy na Z = −3.
-  // Levý vchod míří vpravo (+X), pravý vchod vlevo (−X). Pokud je default
-  // orientace modelu jiná, swap či doplň offset.
+  // Levý vchod míří vpravo (+X), pravý vchod vlevo (−X).
   scene.add(createMeshFor(new VOXEL_MODEL(
-    "tunel_left", "Tunel vlevo", -4, -0.5, -3, "tunel", 0.625, -Math.PI / 2,
+    "tunel_left", "Tunel vlevo", -4, -0.5, -3, "tunel-grass", 0.625, -Math.PI / 2,
     "VOXEL_MODEL — tunelový vstup z MagicaVoxelu (vlevo, vchod míří +X).",
   )));
   scene.add(createMeshFor(new VOXEL_MODEL(
-    "tunel_right", "Tunel vpravo", 3, -0.5, -3, "tunel", 0.625, Math.PI / 2,
+    "tunel_right", "Tunel vpravo", 3, -0.5, -3, "tunel-grass", 0.625, Math.PI / 2,
     "VOXEL_MODEL — tunelový vstup z MagicaVoxelu (vpravo, vchod míří −X).",
   )));
 
-  // Auta — voxel modely z MagicaVoxelu (sez. 14, první VOXEL_MODEL test).
-  // Y=−0.5 = top of grass cube → auto-centerování posadí auta na zem.
+  // Travnatá rampa — voxelový model `grass-ramp` (16³ MV → 1×1×1 TC).
   scene.add(createMeshFor(new VOXEL_MODEL(
-    "car_0", "Auto modré", -2, -0.5, 1, "cars-0", 0.5, 0,
-    "VOXEL_MODEL — auto z MagicaVoxelu (cars-0).",
+    "ramp_0", "Travnatá rampa", -4, -0.5, 0, "ramp-grass", 0.625, 0,
+    "VOXEL_MODEL — travnatá rampa z MagicaVoxelu (16³ vox).",
   )));
-  scene.add(createMeshFor(new VOXEL_MODEL(
-    "car_1", "Auto červené",  2, -0.5, 1, "cars-1", 0.5, 0,
-    "VOXEL_MODEL — auto z MagicaVoxelu (cars-1).",
-  )));
-}
 
-
-// === Scene dispatch podle URL ===
-// `?scene=N` parametr vybírá builder. Default = 1. Reload stránky dělá
-// kompletní cleanup zdarma (Three.js scene + všechny engine registry).
-const SCENE_BUILDERS = { "1": buildSceneOne, "2": buildSceneTwo };
-const requestedScene = new URLSearchParams(location.search).get("scene") || "1";
-const sceneBuilder = SCENE_BUILDERS[requestedScene] || buildSceneOne;
-sceneBuilder(scene);
-
-// === Scene switcher: HUD tlačítka v pravém horním rohu ===
-// Reload-based přepínač. Aktivní scéna má `aria-pressed="true"` (vizuální
-// odlišení v CSS). Klik = `location.search` → reload s novým parametrem.
-const switcherEl = document.getElementById("scene-switcher");
-if (switcherEl) {
-  Object.keys(SCENE_BUILDERS).forEach((id) => {
-    const btn = document.createElement("button");
-    btn.textContent = `Scéna ${id}`;
-    btn.setAttribute("aria-pressed", id === requestedScene ? "true" : "false");
-    btn.addEventListener("click", () => {
-      if (id === requestedScene) return;
-      location.search = `?scene=${id}`;
-    });
-    switcherEl.appendChild(btn);
+  // Pixelové stromy — 10 druhů na předním řádku Z=4 (X=−5..4).
+  // Y=0 = COMPOSITES center na úrovni 0.5 j nad ground; sub-buildery umisťují
+  // pixely od lokální Y=−0.5 (= top of grass voxel = world ground level).
+  const TREE_KINDS_S2 = [
+    ["spruce",  "Smrk"],
+    ["oak",     "Dub"],
+    ["birch",   "Bříza"],
+    ["palm",    "Palma"],
+    ["bush",    "Keř"],
+    ["cypress", "Cypřiš"],
+    ["willow",  "Vrba"],
+    ["bonsai",  "Bonsaj"],
+    ["dead",    "Suchý strom"],
+    ["maple",   "Javor"],
+  ];
+  TREE_KINDS_S2.forEach(([kind, name], i) => {
+    const tree = new TREE(
+      `tree_s2_${kind}`, name, -5 + i, 0, 4,
+      `TREE — pixelová varianta „${kind}".`, kind,
+    );
+    // Vítr — náhodná fáze + drobně rozladěné periody → 10 stromů se kymácí
+    // nezávisle (bez desyncu by tvořily synchronní „taneční" pohyb).
+    // amplitude 0.16 j ≈ 16 cm posun špičky (~10° ohnutí) — slušný vánek.
+    tree.ANIMATE = {
+      kind:      "tree_sway",
+      periodX:   3.5 + Math.random() * 1.5,
+      periodZ:   2.7 + Math.random() * 1.0,
+      amplitude: 0.16,
+      phaseX:    Math.random() * Math.PI * 2,
+      phaseZ:    Math.random() * Math.PI * 2,
+    };
+    scene.add(createMeshFor(tree));
   });
 }
+
+
+// Po DD-23 (sez. 15) zůstává jen Scéna 2 — voxelová dioráma. Scéna 1
+// + scene switcher byly odstraněny při „all-voxel" pivotu.
+buildSceneTwo(scene);
 
 // === Edge highlight při hover (editor-like feedback) ===
 // Při najetí kurzoru na CUBES-potomka (kromě SPRITES) vykreslíme žluté
@@ -2262,7 +1731,7 @@ function escapeHtml(str) {
 function formatValue(key, val) {
   // Nullish → pomlčka (izomorfně pro jakýkoli atribut, ne jen TEXTURE_*)
   if (val == null) return "—";
-  // COLOR na CCUBES/BALLOON; TEXTURE_* na TCUBES. Oba případ: number → hex.
+  // COLOR na CCUBES; TEXTURE_* na TCUBES. Oba případ: number → hex.
   if (typeof val === "number" && (key === "COLOR" || key.startsWith("TEXTURE_"))) {
     return "#" + val.toString(16).padStart(6, "0");
   }
@@ -2341,32 +1810,9 @@ canvas.addEventListener("pointerleave", () => {
   lastHoveredInstance = null;
 });
 
-// === Click handler: toggle interakce s entitami ===
-// Událost `click` (ne `pointerdown`) se spouští jen při down+up bez drag —
-// elegantně odlišuje „kliknutí na entitu" od „tah OrbitControls kamery".
-// Reuse stávajícího raycasteru + pointer vektoru (alokace mimo hot path).
-//
-// Dispatch podle třídy: zatím jediný handled case = klik na BALLOON → toggle
-// `instance.LIT`. Fade watcher (DD-17) stav propaguje do emissive + PointLight.
-// Pokud přibude víc interaktivních tříd, refaktor na `INTERACTIONS = { ClassName: fn }`
-// tabulku — izomorfně s `ACTIONS` / `ANIMATORS` patternem.
-// Pomocný raycast helper — sdílený mezi LMB click a RMB contextmenu.
-function raycastFirstInstance(event) {
-  pointer.x =  (event.clientX / window.innerWidth)  * 2 - 1;
-  pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
-  raycaster.setFromCamera(pointer, camera);
-  const hits = raycaster.intersectObjects(scene.children, true);
-  return hits.find((h) => h.object.userData?.instance);
-}
-
-canvas.addEventListener("click", (event) => {
-  const firstHit = raycastFirstInstance(event);
-  if (!firstHit) return;
-  const instance = firstHit.object.userData.instance;
-  if (instance instanceof BALLOON) {
-    instance.LIT = !instance.LIT;
-  }
-});
+// Click handler odstraněn v sez. 15 (DD-23) — jediná interakce byla toggle
+// BALLOON.LIT, ta zmizela s BALLOON třídou. Až bude nová interaktivní entita,
+// refaktor na `INTERACTIONS = { ClassName: fn }` dispatch.
 
 // === Klávesové ovládání kamery ===
 // WASD = horizontální pan (W/S podél kamerového „forward" promítnutého na XZ
@@ -2472,9 +1918,6 @@ function animate() {
   // četli aktuální `object3d.position` případných pohybujících se mluvčí
   // (tbox_0002 orbituje, …).
   updateBubbleTails();
-  // Fade watcher pro BALLOON.LIT — exponenciální lerp `emissive` a
-  // `PointLight.intensity` podle `instance.LIT` stavu (DD-17).
-  updateLit(dt);
   updateKeyboardCamera(dt);
   renderer.render(scene, camera);
 }

@@ -166,3 +166,88 @@ Pixel-art styl (NearestFilter na všech texturách + 16×16 rozlišení v `:name
 **Pipeline TheCubes ↔ MagicaVoxel** (sez. 14):
 - TheCubes → MagicaVoxel: skript `tools/export-grass-vox.mjs` generuje `.vox` šablonu (16³ kostka s naší paletou).
 - MagicaVoxel → TheCubes: File → Export → obj → drop do `assets/` → instance VOXEL_MODEL.
+
+
+## DD-22 — Pevné měřítko voxelových modelů + Y konvence
+
+Měřítko VOXEL_MODEL je **pevně zafixované** napříč projektem, aby všechny entity sdílely stejnou pixelizaci a vejmuly se navzájem realisticky:
+
+- **1 TC voxel = 1 m** (Minecraft konvence; grass/dirt/stone podlaha = metrový blok).
+- **1 MV voxel = 1 pixel textury = 1/16 TC voxelu = 6.25 cm**.
+- **`VOXEL_MODEL.SCALE` default = `0.625`** — kombinuje s MagicaVoxel default exportem (0.1 per voxel) na výsledný 16 MV → 1 TC. Scale parametr používat **jen výjimečně** pro úmyslnou re-škálu (mini-mode, hero-mode).
+- **Velikost objektu řídí počet voxelů v MV gridu**, ne scale. Tunel 48³ MV → 3×3×3 TC. Postava 8×5×28 MV → 0.5×0.31×1.75 m.
+
+**Y konvence (auto-snap loaderu):**
+- `instance.Y` = **world Y spodní hrany mesh** (po auto-centeru a bottom-snap v `buildVoxelModel`). Ne grid souřadnice voxelu, ne mesh center.
+- Aby voxel model **stál na grass voxelu** s grid souřadnicí `(gx, gy, gz)`, použij `instance.Y = gy + 0.5` (= top toho voxelu, world Y).
+- Standardní podlaha diorámy je grass voxely na `gy = -1` (top na world Y = -0.5) → `instance.Y = -0.5`.
+- Stojí-li model na vyvýšené úrovni (např. grass na `gy = 0`, top world Y = 0.5) → `instance.Y = 0.5`.
+
+**Důvod:** Konzistentní pixelizace napříč entitami zaručuje, že auto vedle postavy nejsou nesourodých velikostí (jako v sez. 14 cars scale 0.5 vs tunel scale 0.625) a že modely stojí na podlaze, ne se vznášejí ani se nezarývají do ní.
+
+**Důsledek:**
+- Aktuální MV exporty bez explicitního scale parametru se vyrenderují přesně tak velké, jak byly modelovány (`16³ MV` = `1 m³ = 1 TC voxel`).
+- Při umisťování se pamatuje na `Y = grid_Y + 0.5` (top voxelu, ne center).
+- Validace ramp/přechodů: aby model spojoval výškové úrovně, MV grid musí přesně odpovídat výškovému rozdílu (rampa 1 m vysoká = 16 MV voxelů na výšku → spojuje sousední TC úrovně).
+
+
+## DD-23 — Procedurální pixel-voxel default („Kostičky = jen voxely")
+
+Identita projektu „TheCubes" / „Kostičky" → **vizuální jazyk je výhradně voxelový**. Žádné Cylinder, Cone, Sphere, Torus, Icosahedron pro core gameplay entity. Tato izomorfie zaručuje, že každý objekt sdílí stejnou pixelizaci a stylový jazyk s podlahou diorámy.
+
+**Pravidlo dispatche** (revize DD-21):
+- **Vegetace, kameny, mraky, prostředí** → **procedurální pixel-voxel COMPOSITES** (BoxGeometry voxely 0.125 j velikosti, sub-buildery dispatchované přes `KIND` string).
+- **Komplexní specifické entity** (vozidla, stroje, charakteristické landmarky, postavy s detaily) → **externí VOXEL_MODEL** z MagicaVoxelu.
+- **Voxelová podlaha** → **TCUBES + `:named-texture`** (DD-14, beze změny).
+- **Dialog / UI** → **SPRITES** (DD-16, beze změny — 2D billboard je legitimní spec-case pro UI overlay, ne gameplay entitu).
+
+**Důvod:** Procedurální drtí asset-based tam, kde je entita rodinná šablona (10 stromů z parametrizovaného generátoru) nebo kde variabilita je hodnotná (les ze 100 stromů ze 4 KIND-ů × random). Externí MV vyhrává, kde je tvar specifický a komplex (bagr, vlak, postava s obličejem). Hybrid ze sez. 14 (DD-21) byl správný směr; sez. 15 ho **zúžil** na pixel-voxel-only — žádné Cylinder/Cone/Torus primitivy.
+
+**Důsledek:**
+- Sez. 15 cleanup: smazány třídy BALLOON, HOUSE, CLOUD, ROCK, TUNNEL_ARCH, WAREHOUSE, TRAIN + jejich primitivové buildery + Scéna 1 + LIT system + scene switcher (~720 řádků).
+- TREE.KIND default = `"spruce"` (pixel jehličnatý). Classic varianta s kuželi smazána.
+- Až bude potřeba pixel-voxel ekvivalent některé smazané třídy (lampion, dům, kámen, mrak) — vznikne nová třída se sub-builderem v `TREE_BUILDERS`-style dispatchu.
+- DD-17 (BALLOON.LIT) zachován v immutable logu, ale není aktivní — vrátí se až s pixel-voxel lampion ekvivalentem.
+
+
+## DD-24 — Shape × Surface separation pro VOXEL_MODELy
+
+VOXEL_MODELy s **jednolitým povrchem** (cube, ramp, tunel, schody, zeď, sloup, …) se rozdělují na ortogonální dimenze:
+- **Shape** = geometrický tvar (1 MV soubor s **abstract paletou**)
+- **Surface** = vzhled povrchu (paleta 4 RGBA + drobná textura: grass, dirt, stone, sand, ice, water, brick, wood)
+
+Každá kombinace `shape × surface` vznikne **pre-build skriptem** — generuje `assets/built/<shape>-<surface>.{obj,mtl,png}` per kombinaci. Engine spotřebovává pre-built soubory beze změny (`VOXEL_MODEL.ASSET = "ramp-grass"`).
+
+**MV abstract paleta konvence** (4 indexy):
+- `1` = BASE (dominantní barva povrchu, ~85 % voxelů)
+- `2` = ACCENT1 (drobné variace, ~7 %)
+- `3` = ACCENT2 (drobné variace, ~5 %)
+- `4` = HIGHLIGHT (ojedinělé akcenty, ~3 %)
+
+Shape se modeluje v MV s 4 paletovými indexy (barvy mohou být v MV libovolné — slouží jen pro autora, pre-build skript je swapne).
+
+**Surface paleta** = JSON v `assets/surfaces/<name>.json`:
+```json
+{
+  "BASE":     "#5d9446",
+  "ACCENT1":  "#4e823c",
+  "ACCENT2":  "#3e6a32",
+  "HIGHLIGHT": "#6ea054"
+}
+```
+
+**Pojmenování** — sjednoceno na **`<shape>-<surface>`** (kebab-case lowercase, izomorfně s `:grass-top` / `:rail-top` v NAMED_TEXTURE_FACTORIES). Příklady: `cube-grass`, `ramp-stone`, `tunel-grass`, `cube-brick`, `wall-wood`. Sez. 15 rename: `grass-cube` → `cube-grass`, `grass-ramp` → `ramp-grass`.
+
+**Co kvalifikuje pro shape × surface:**
+- ✓ Terénní prvky a stavební bloky (jednolitý povrch)
+- ✗ Vozidla a stroje (multi-color: kola, sklo, světlomety)
+- ✗ Postavy (multi-color: hlava, tělo, oblečení)
+- ✗ Stromy (řešeno přes TREE.KIND sub-buildery, kmen+listy = 2 palety)
+
+**Důvod:** Bez separace = N×M MV souborů per kombinace (8 shapes × 8 surfaces = 64 souborů). Se separací = N+M assetů (8 shapes + 8 surface JSONů + 1 generator). Plus **konzistentní paleta napříč shapes** (grass cube + grass ramp + grass tunel mají stejné odstíny).
+
+**Důsledek:**
+- Při tvorbě nového shape: modeluje se jen jednou (s abstract paletou) → automaticky 8 variant po pre-buildu.
+- Při tvorbě nového surface: jeden JSON → automaticky N variant existujících shapes.
+- Aktuální 5–10 plánovaných shapes × 8 surfaces (`grass`, `dirt`, `stone`, `sand`, `ice`, `water`, `brick`, `wood`) = 40–80 pre-built kombinací.
+- Multi-color entity (vozidla, postavy) zůstávají **monolitní VOXEL_MODELy** s vlastní paletou per soubor.

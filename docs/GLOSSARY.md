@@ -91,6 +91,39 @@ Engine auto-centruje XZ + posune Y bottom na `instance.Y`; `NearestFilter` zacho
 
 **MagicaVoxel → TheCubes** (import): user vyrobí model, exportuje přes File → Export → obj (vznikne `name.obj` + `name.mtl` + `name.png`). Soubory umístí do `assets/`. V kódu: `new VOXEL_MODEL("id", "name", X, Y, Z, "name", scale, rotationY, "...")`.
 
+### Měřítko a Y konvence VOXEL_MODELu *(DD-22)*
+
+**Pevné měřítko** — 1 TC voxel = 1 m, 1 MV voxel = 1/16 TC voxelu = **6.25 cm**, `SCALE` default `0.625`. Velikost objektu řídí počet voxelů v MV gridu, ne scale parametr. Tunel 48³ MV → 3×3×3 TC; postava 8×5×28 MV → 0.5×0.31×1.75 m.
+
+**Y = world Y spodní hrany mesh** (auto-snap loaderu v `buildVoxelModel`) — **ne** grid souřadnice voxelu, ne center mesh. Aby model **stál** na grass voxelu s grid souřadnicí `(gx, gy, gz)`, použij `instance.Y = gy + 0.5` (top toho voxelu).
+
+| Kde model stojí | Grid `gy` | `instance.Y` |
+|---|---|---|
+| Standardní podlaha diorámy (grass top na world Y=−0.5) | −1 | **−0.5** |
+| Vyvýšená úroveň o 1 voxel (grass top na world Y=0.5) | 0 | **0.5** |
+| Vyvýšená úroveň o 2 voxely | 1 | **1.5** |
+
+**Pravidlo:** `instance.Y = gy + 0.5`, kde `gy` je grid souřadnice voxelu, na kterém model leží.
+
+**Důsledek pro vícevrstvé entity** (rampy, schody): MV grid musí výškou přesně odpovídat výškovému rozdílu, který má model spojovat. Rampa 1 m vysoká = 16 MV voxelů → spojuje sousední TC úrovně.
+
+### Shape × Surface separation *(DD-24)*
+
+VOXEL_MODELy s **jednolitým povrchem** se rozdělují na ortogonální dimenze:
+- **Shape** (tvar) — 1 MV soubor s **abstract paletou** (4 indexy: BASE, ACCENT1, ACCENT2, HIGHLIGHT). Příklady: `cube`, `ramp`, `tunel`, `wall`, `stairs`.
+- **Surface** (povrch) — paleta 4 RGBA barev v JSON (`assets/surfaces/<name>.json`). Příklady: `grass`, `dirt`, `stone`, `sand`, `ice`, `water`, `brick`, `wood`.
+
+**Pre-build skript** *(plánovaný)* generuje per kombinaci `assets/built/<shape>-<surface>.{obj,mtl,png}` — engine spotřebovává pre-built soubory beze změny.
+
+**Pojmenování** — `<shape>-<surface>` (kebab-case lowercase). Příklady: `cube-grass`, `ramp-stone`, `tunel-grass`, `cube-brick`. Izomorfní s `:named-texture` patternem (`:grass-top`, `:rail-top`).
+
+**Nekvalifikuje pro shape × surface:**
+- Vozidla a stroje (multi-color detaily — kola, sklo, světlomety)
+- Postavy (multi-color — hlava, tělo, oblečení)
+- Stromy (kmen + listy = 2 palety, řešeno přes TREE.KIND sub-buildery)
+
+→ Tyto entity zůstávají **monolitní VOXEL_MODELy** s vlastní paletou per soubor.
+
 ## Pojmy
 
 - **Asset** — soubor v `./assets/` načítaný za běhu (`.obj` + `.mtl` + `.png`). Synonymum pro „externí 3D model" v kontextu VOXEL_MODEL.
