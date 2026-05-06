@@ -181,7 +181,36 @@
 - [ ] **WORLD entity** (z sez. 15 přenesené).
 - [ ] **Biome populate** (z sez. 15 přenesené).
 - [ ] **BUILDING třída** (vrstva 2, DD-25) — pixel-voxel domy/sklady/věže. KIND sub-buildery analogicky s TREE.
-- [ ] **LINES vrstva 3** (DD-25) — PATH (cesty), TRACK (železnice). 1D křivky, polyline / spline render.
+- [~] **LINES vrstva 3** (DD-25) — PATH hotovo (sez. 17, DD-27); TRACK (železnice) plánováno.
 - [ ] **`mtllib` reference fix v `cube-grass.obj`** *(drobnost)* — pokud existuje, ověřit že odkazuje na správný `cube-grass.mtl` (ne stará verze `grass-cube.mtl`).
 - [ ] **Editor fáze 2** — spawn/move/delete entit + registry cleanup.
 - [ ] **`ACTION.kind: increment`** *(přeneseno)* — relevantní pro TIMER+COUNTER kombinaci.
+
+## Sezení 17 (2026-05-06)
+
+- [x] **DD-26 sjednocená `ORIENTATION`** napříč BLOCKS i COMPOSITES — float ∈ [0, 360) ve stupních. Engine `* (Math.PI / 180)`. Refaktor: BLOCKS enum 0..3 → stupně (migrace `ramp_0` z 1 → 90), `LOG/VOXEL_MODEL.ROTATION_Y` (rad) atribut smazán, `BLOCKS` + `COMPOSITES` base třídy explicit constructor s default 0. Engine ramp/tunel from `* (π/2)` → `* (π/180)`. `populateNorthernScene` přiřadí každé dekoraci `rng() * 360` rotaci.
+- [x] **DD-27 PATH třída** (1. potomek vrstvy 3 LINES) — `extends CUBES` s `KIND` (default `"dirt"`) + `POINTS` (array of `[x, y, z]` ve world coords). Engine `createPathFor`: `THREE.CatmullRomCurve3` typ catmullrom tension 0.5, 64 vzorků, plochý strip mesh BufferGeometry s positions/uvs/indices. Šířka 0.5 j, Y offset +0.005 j proti z-fightingu, repeating texture UV scale 8× podél délky. `pathTexture(kind)` cache. Dispatch v `createMeshFor` (před SPRITES).
+- [x] **`:path-dirt` named-texture** — kropenatý šum 240 záplat 1-2 px šedých odstínů (#7a7a78 base + 6 accents). 4 iterace (hnědý dirt → šedý štěrk se 3 px stopami → 1 px stopy → bez stop, kropenatý šum 35 → 240 záplat).
+- [x] **Cesta z tunnel_0**: 5 bodů — `(-3.5, -3) → (-1.5, -3) → (0.5, -1) → (2.5, 1) → (4.5, 1)`. Rovný vstup/výstup podél X (Three.js Catmull-Rom reflection fallback v krajních bodech: tangenta = `P[1] − P[0]`; když Z se shoduje, tangenta čistě +X). Jeden inflexní bod ve středu (esíčko).
+- [x] **`pathOccupiedCells(points)`** — vzorkuje curve 128×, vrátí Set grid buněk (X, Z). Předáno do `populateNorthernScene` jako `pathBlocked` parameter. Žádné dekorace v cestě.
+- [x] **Procedurální severská dekorace** — 3 nové třídy COMPOSITES: `GRASS_TUFT` (KIND-y micro/short/fern), `ROCK_PIXEL` (micro/small/medium/mossy), `LOG` (stump/birch/pine). Sdílí `treeVoxel`/`treeBlock`/`treeMat` helpery (DRY). `populateNorthernScene` — mulberry32(42) deterministická RNG, severský mix (smrk×5/birch×2/dead/bonsai). Vícevoxelové × 0.75, micro vrstva 1×1×1 voxely (oblázky/stéblo/pařízek) doplňuje hustotu. Cca 60% grass topu pokryto. Stone top jen drobné kameny (small + micro), dirt top suchý strom + kameny.
+- [x] **Y konvence fix** — pixel-voxel COMPOSITES `instance.Y = t.y + 1` (= 0.5 j nad surface = group origin nad povrchem; mesh bottom svět = surface). DD-22 popisuje konvenci pro VOXEL_MODEL (auto-center bottom-snap loader), pixel-voxel větev má vlastní `treeVoxel` lokální offset -0.5. Otevřený dluh — DD-22 vs. pixel-voxel.
+- [x] **Random ORIENTATION na všech dekoracích** — `populateNorthernScene` přiřadí každé instanci `rng() * 360`. Stromy/keře/kameny/kmeny rotované organicky, žádný mřížkový vzhled.
+- [x] **Zjednodušení grass blok** — boky/spodek `:dirt` (jednolitá hlína). Aplikováno i na rampy (TRRAMPS/TTRAMPS BACK/LEFT/RIGHT na `:dirt`). Pravidlo BLOCKS rodiny: **vrch `:grass-top`, jinak `:dirt`**. Smazáno: `makeGrassSideTexture`, `:grass-side` v `NAMED_TEXTURE_FACTORIES`, `GRASS_STRIP_PX`.
+- [x] **`buildSceneTwo` → `buildScene`** + **`SCENE2_LAYOUT` → `SCENE_LAYOUT`** rename — po sez. 15 cleanup zbyl stale „Two" suffix (Scéna 1 + scene switcher byly smazány).
+- [x] **Voda — implementace + cleanup** — `:water-top` + `:water-side` + `makeWaterTexture` factory, `faceMaterialFor` special-case (transparent: true, opacity 0.7), `noShadow` heuristika v `createTCubeFor` (transparent → blok nevrhá stín). 2×2 jezírko v middle scény (X = -1..0, Z = 2..3) na grass úrovni Y=-1, dirt dno Y=-2. Test OK, ale uživatel po chvíli „nejsem si jistý" → kompletní cleanup (~70 řádků). Architektura zachována pro budoucí pokus.
+- [x] **Q/E kamerová rotace fix** — explicitní `_kbWorldY = (0,1,0)` (eliminuje potenciální drift `camera.up`) + `camera.lookAt(controls.target)` po mutaci pozice (jinak quaternion lag z OrbitControls damping). Žádný shift do strany.
+- [x] **Infotip POINTS uzávorkováno** — `formatValue` special-case pro PATH `POINTS` array → `(-3.5, -0.5, -3) → (0.5, -0.5, -1) → (4.5, -0.5, 1)`.
+- [x] **Mikro voxely 1×1×1** — nové KIND-y `micro` na ROCK_PIXEL/GRASS_TUFT/LOG.stump. 1 voxel = 0.125 j (≈ 12.5 cm). Vícevoxelové dekorace × 0.75, micro vrstva přidaná → bohatší organický posyp.
+- [x] **`tree_sway` amplituda × 0.25** — z 0.16 → 0.04 (vítr méně dramatický).
+
+### Sez. 17 → sez. 18 Příště
+
+- [ ] **WORLD entity** *(přeneseno z sez. 15)* — singleton/instance s `WIND { strength, direction }`, `SUN { angle }`, `CLIMATE`, `SEASON`, `DAY`. `tree_sway` číst `WORLD.WIND.strength * MAX_AMP`.
+- [ ] **Biome populate** *(přeneseno)* — `BIOME_TREES[climate] = { kind: weight }` + `populateVegetation(world, region, density, variety)`.
+- [ ] **BUILDING třída** *(přeneseno)* — pixel-voxel domy/sklady/věže.
+- [ ] **TRACK třída** (LINES vrstva 3, sourozenec PATH) — koleje pro vlak. Poté zvážit `LINES` abstract base třídu.
+- [ ] **DD-22 vs. pixel-voxel Y konvence** — `@AUDIT:CODE` nebo nové DD; sjednotit `treeVoxel` helper offset s VOXEL_MODEL auto-center logikou.
+- [ ] **`mtllib` reference fix** *(drobnost)*.
+- [ ] **Editor fáze 2** *(přeneseno)*.
+- [ ] **`ACTION.kind: increment`** *(přeneseno)*.

@@ -18,9 +18,14 @@ Canonical terminologie projektu TheCubes. Stav po sez. 15 (DD-23 „Kostičky = 
 - **TTRAMPS** (triangular triangular ramps = trirectangular tetrahedron) — potomek BLOCKS = trojboký jehlan se 3 mutually perpendicular pravoúhlými stěnami sdílejícími roh `C`, čtvrtá stěna SLOPE = rovnostranný trojúhelník (hrana √2). 4 face atributy: `TEXTURE_SLOPE`, `TEXTURE_BOTTOM`, `TEXTURE_BACK`, `TEXTURE_LEFT`. Plus `ORIENTATION`. Použití: rohové rampy (corner ramps), stoupání ze 3 sousedních směrů na jeden vyvýšený roh. *(Sez. 16, DD-25.)*
 - **TTUNELS** (tunnel blocks) — potomek BLOCKS = 1C blok s klenutým průchozím tunelem v jedné ose. Geometricky: kvádr 1×1×1 mínus „obdélník + půlkruh extrudovaný v ose průchodu" („od krychle odečtený válec a kvádr"). 4 face atributy: `TEXTURE_TOP` (vrchní vnější stěna, typicky `:grass-top`), `TEXTURE_SIDES` (boční vnější stěny + 2 entry walls s vyříznutým profilem), `TEXTURE_WALLS` (vnitřní 2 boční stěny), `TEXTURE_CEILING` (vnitřní klenutý strop, 12 segmentů). **Bez dna** — tunel je „průhledný dolů" na top voxelu pod ním. Plus `ORIENTATION`. *(Sez. 16, DD-25.)*
 
-### Atribut ORIENTATION
+### Atribut ORIENTATION (DD-26)
 
-`ORIENTATION` (integer 0..3) na TRRAMPS/TTRAMPS/TTUNELS = počet 90° CCW rotací bloku kolem osy Y od defaultu. Engine převádí na `mesh.rotation.y = ORIENTATION * (π/2)`. 4 stavy odpovídají 4 cardinálním směrům. User „+1 CW" = `ORIENTATION −= 1` (mod 4). *(Sez. 16, DD-25.)*
+`ORIENTATION` — float ∈ [0, 360) ve **stupních**, rotace kolem Y osy. **Sjednoceno** napříč BLOCKS i COMPOSITES rodinou (sez. 17, DD-26). Engine převádí: `mesh.rotation.y = ORIENTATION * (Math.PI / 180)`. Default 0.
+
+- **BLOCKS rodina** (TRRAMPS, TTRAMPS, TTUNELS) — v praxi jen násobky 90° (cardinální orientace svahu / osy tunelu): 0, 90, 180, 270. User „+90 CW" = `ORIENTATION −= 90` (mod 360).
+- **COMPOSITES rodina** (TREE, GRASS_TUFT, ROCK_PIXEL, LOG, VOXEL_MODEL) — typicky náhodná pro organický vzhled (`populateNorthernScene` přiřadí `rng() * 360` každé dekoraci).
+
+Historicky (před DD-26, sez. 16) byla `BLOCKS.ORIENTATION` integer enum 0..3 a `LOG/VOXEL_MODEL.ROTATION_Y` v radiánech. DD-26 sjednotil. Migrace `ramp_0` z 1 → 90.
 
 ### Ostatní potomky CUBES
 
@@ -30,7 +35,14 @@ Canonical terminologie projektu TheCubes. Stav po sez. 15 (DD-23 „Kostičky = 
 ### Konkrétní COMPOSITES
 
 - **TREE** — pixel-voxel strom složený z BoxGeometry voxelů velikosti `0.125 j` (= 1/8 TC voxelu = 12.5 cm). Atribut `KIND` (string, default `"spruce"`) řídí dispatch přes `TREE_BUILDERS` lookup tabulku v engine — izomorfně s `ANIMATORS[kind]` (DD-15). 10 KIND-ů: `spruce`, `oak`, `birch`, `palm`, `bush`, `cypress`, `willow`, `bonsai`, `dead`, `maple`. Sdílená cache `_treeBoxGeom` + `_treeMatCache` (paleta `TREE_C`). Kymácení ve větru přes `tree_sway` animátor (height-weighted, DD-15 a níž). *(M3, sez. 15 přepis na pixel-voxel.)*
-- **VOXEL_MODEL** — generický COMPOSITES, který asynchronně načte mesh z `.obj` (s `.mtl` materiálem a `.png` paletou), typicky export z **MagicaVoxelu**. Atributy: `ASSET` (basename v `./assets/`, např. `"tunel-grass"`), `SCALE` (default **`0.625`** — DD-22), `ROTATION_Y` (radiány, default 0). Engine po načtení **auto-centruje** XZ + posune Y bottom na `instance.Y` (= surface úroveň, viz DD-22 Y konvence), nastaví `NearestFilter` na texturu (zachová pixel-art look). **Opaque** — `COLOR` ani internal parts nelze parametrizovat (model je in-out blob). *(Sez. 14, otevírá MagicaVoxel pipeline. Viz „Vizuální zdroje" níž.)*
+- **GRASS_TUFT** — pixel-voxel chomáč trávy / kapradiny na zemi (vrstva 2 DD-25). KIND-y: `micro` (1×1×1 voxel), `short` (3-4 voxely trsu), `fern` (5-listá kapradina). *(Sez. 17.)*
+- **ROCK_PIXEL** — pixel-voxel kámen / balvan. Náhrada za sez. 15 smazanou ROCK třídu (icosahedron, DD-23). KIND-y: `micro` (1 voxel oblázek), `small` (5 voxelů shluk), `medium` (10 voxelů cluster), `mossy` (medium s mechovou záplatou). *(Sez. 17.)*
+- **LOG** — pixel-voxel padlý kmen / pařez. KIND-y: `stump` (1 voxel pařízek), `birch` (bílá kůra s černými skvrnami, 6 voxelů), `pine` (hnědý kmen s tmavšími prstenci, 5 voxelů). Natočení v ploše XZ řídí ORIENTATION (DD-26). *(Sez. 17.)*
+- **VOXEL_MODEL** — generický COMPOSITES, který asynchronně načte mesh z `.obj` (s `.mtl` materiálem a `.png` paletou), typicky export z **MagicaVoxelu**. Atributy: `ASSET` (basename v `./assets/`, např. `"tunel-grass"`), `SCALE` (default **`0.625`** — DD-22). Rotaci kolem Y řídí zděděný `ORIENTATION` (DD-26, stupně). Engine po načtení **auto-centruje** XZ + posune Y bottom na `instance.Y` (= surface úroveň, viz DD-22 Y konvence), nastaví `NearestFilter` na texturu (zachová pixel-art look). **Opaque** — `COLOR` ani internal parts nelze parametrizovat (model je in-out blob). *(Sez. 14, otevírá MagicaVoxel pipeline. Viz „Vizuální zdroje" níž.)*
+
+### Linie (LINES vrstva 3, DD-25)
+
+- **PATH** — 1D křivka jako plochý strip mesh. Potomek CUBES (= LINES rodina abstract base třída zatím nezavedena, čeká na druhého sourozence TRACK). Atributy: `KIND` (string, default `"dirt"`) řídí texturu povrchu, `POINTS` (pole `[x, y, z]` kontrolních bodů ve world coords). `instance.X/Y/Z` se nepoužívá (cesta žije v world coords; constructor volá `super(0, 0, 0, ...)`). Engine `createPathFor`: `THREE.CatmullRomCurve3` (typ `catmullrom`, tension 0.5), 64 vzorků, generuje strip BufferGeometry s positions/uvs/indices. Šířka 0.5 j, Y offset +0.005 j proti z-fightingu, repeating texture UV scale 8× podél délky. **Rovný směr v krajních bodech** — Three.js v non-closed Catmull-Rom curvě používá v krajních bodech reflexi sousedního, tj. tangenta v `P[0]` = `P[1] − P[0]`; pokud `P[0].Z = P[1].Z`, tangenta je čistě podél X (= rovný vstup/výstup). `pathOccupiedCells(points)` vzorkuje curve 128× a vrátí Set grid buněk → `populateNorthernScene` skipne dekorace v koridoru cesty. *(Sez. 17, DD-27.)*
 
 ### Nevizuální potomky OBJECTS
 
@@ -79,11 +91,13 @@ JS-generované pixel-art textury 16×16 px. Sdílené přes `NAMED_TEXTURE_FACTO
 
 - `:dirt` — hliněná textura (paleta DIRT_*, patches base + 1–2 px záplaty).
 - `:grass-top` — travnatý povrch (paleta GRASS_*, patches).
-- `:grass-side` — kompozit 14 px dirt + 2 px grass strip nahoře (boční stěna grass voxelu).
 - `:stone` — kamenná textura (paleta STONE_*).
 - `:rail-top` — kolejnice. Template, není použitá v aktuální scéně (sez. 14 vznikla, sez. 15 železnice odebrána, generator zachován jako reference).
+- `:path-dirt` — štěrková cesta (sez. 17). Kropenatý šum 240 záplat 1-2 px šedých odstínů + jeden hnědý ton. Použito v `pathTexture()` dispatchu.
 
-**Použití:** strany TCUBES (typicky podlaha diorámy — grass voxely v `SCENE2_LAYOUT`).
+Pravidlo BLOCKS rodiny po sez. 17: **vrch `:grass-top`, jinak `:dirt`** napříč grass blok / TRRAMPS / TTRAMPS / TTUNELS. Sez. 17 smazán `:grass-side` (kompozit dirt+grass strip) — pixel-art look hutnější bez tenkého grass stripu na bocích.
+
+**Použití:** strany TCUBES (typicky podlaha diorámy — grass voxely v `SCENE_LAYOUT`).
 **Pro:** sdílené per textura (úspora paměti i GPU), pixel-art = stylová konzistence s VOXEL_MODELy.
 **Proti:** musí se kódit nový generator pro každý typ.
 
@@ -108,7 +122,7 @@ Engine auto-centruje XZ + posune Y bottom na `instance.Y` (DD-22 Y konvence); `N
 
 | Účel | Zdroj | Příklad v aktuální scéně |
 |------|-------|---------|
-| Voxelová podlaha / terrain | TCUBES + `:named-texture` | `SCENE2_LAYOUT` (~145 grass/dirt/stone voxelů) |
+| Voxelová podlaha / terrain | TCUBES + `:named-texture` | `SCENE_LAYOUT` (~145 grass/dirt/stone voxelů) |
 | Statická dekorace s jednolitým povrchem | VOXEL_MODEL (DD-24 shape × surface) | `tunel-grass` (3×3×3 TC), `ramp-grass` (1×1×1 TC) |
 | Komplexní specifická entita | VOXEL_MODEL (multi-color paleta) | (zatím žádná — bagr/jelen plánováno) |
 | Vegetace / kameny / mraky | pixel-voxel COMPOSITES | TREE 10 KIND-ů na předním řádku |
@@ -116,7 +130,7 @@ Engine auto-centruje XZ + posune Y bottom na `instance.Y` (DD-22 Y konvence); `N
 
 ### MagicaVoxel ↔ TheCubes pipeline *(sez. 14)*
 
-**TheCubes → MagicaVoxel** (export šablony): skript `tools/export-grass-vox.mjs` generuje 16³ kostku s povrchovými voxely odpovídajícími TheCubes texturám (TOP `:grass-top`, BOTTOM `:dirt`, 4 boky `:grass-side`). Output: `assets/cube-grass.vox`. Spuštění: `node tools/export-grass-vox.mjs`.
+**TheCubes → MagicaVoxel** (export šablony): skript `tools/export-grass-vox.mjs` generuje 16³ kostku s povrchovými voxely odpovídajícími TheCubes texturám (TOP `:grass-top`, jinak `:dirt`). Output: `assets/cube-grass.vox`. Spuštění: `node tools/export-grass-vox.mjs`. **Pozn.** skript stále generuje 14+2 px grass-strip na bočních stěnách (zachován historický pattern); aktuální runtime již používá jednolitý `:dirt` (sez. 17).
 
 **MagicaVoxel → TheCubes** (import): user vyrobí model, exportuje přes File → Export → obj (vznikne `name.obj` + `name.mtl` + `name.png`). Soubory umístí do `assets/`. V kódu: `new VOXEL_MODEL("id", "name", X, Y, Z, "name", scale, rotationY, "...")`.
 
@@ -189,5 +203,5 @@ VOXEL_MODELy s **jednolitým povrchem** se rozdělují na ortogonální dimenze:
   - *Sez. 8:* dynamický 3D ocásek SPRITES (DD-16 — `SPEAKER` + `SPEAKER_OFFSET_Y`, tracking přes `meshByInstance`).
   - *Sez. 9:* TIMER + COUNTER (DD-17 — diskrétní `TIME.tick` reakce přes `ACTION`) + edge highlight.
   - *Sez. 10–13:* humanoidní rodina CHARACTER/NOODLE/STICKMAN s wander/poseFns/gait animátory (DD-18/19/20) — **přesunuto sez. 14 do sibling projektu `./source/Stickman`**. DD-18/19/20 zůstávají v immutable logu jako historický kontext.
-  - *Sez. 14:* 10×10 voxelová dioráma (`SCENE2_LAYOUT`), klávesové ovládání kamery, **MagicaVoxel pipeline** (DD-21 — VOXEL_MODEL třída + async OBJ+MTL+PNG loader).
+  - *Sez. 14:* 10×10 voxelová dioráma (`SCENE_LAYOUT`), klávesové ovládání kamery, **MagicaVoxel pipeline** (DD-21 — VOXEL_MODEL třída + async OBJ+MTL+PNG loader).
   - *Sez. 15:* **Pevné měřítko** (DD-22), **all-voxel pivot** (DD-23 — smazáno 7 non-voxel tříd + Scéna 1 + scene switcher + LIT + balloon_bob + classic TREE, ~720 řádků), **shape × surface separation** (DD-24 — pre-build skript plánovaný), **pixel-voxel TREE.KIND** dispatch (10 sub-builderů).

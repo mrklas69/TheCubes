@@ -71,17 +71,23 @@ export class CUBES extends OBJECTS {
  * DD-11). Historicky se tato třída jmenovala `TERRAIN`.
  */
 /**
- * BLOCKS = abstract parent všech 1C grid-aligned bloků geologie/terénu (DD-25
- * kandidát — 4-vrstvá taxonomie: Bloky / Voxely / Linie / Objekty). Sdílí
- * mezi sebou: snap-to-int v rendereru (DD-12 invariant), procedurální
- * geometrie v engine, sdílená paleta `:named-textures` přes `faceMaterialFor`
- * (DD-14). Konkrétní potomci se liší tvarem: krychle (TCUBES, 6 faces),
- * trojboký hranol (TRRAMPS, 5 faces), trojboký jehlan (TTRAMPS, 4 faces).
+ * BLOCKS = abstract parent všech 1C grid-aligned bloků geologie/terénu (DD-25:
+ * 4-vrstvá taxonomie scény, vrstva 1). Sdílí mezi sebou: snap-to-int v rendereru
+ * (DD-12), procedurální geometrie v engine, sdílená paleta `:named-textures`
+ * přes `faceMaterialFor` (DD-14). Potomci se liší tvarem: krychle (TCUBES,
+ * 6 faces), klín (TRRAMPS, 5 faces), jehlan (TTRAMPS, 4 faces), tunel (TTUNELS).
  *
- * Žádné vlastní atributy — značkovací třída pro dispatch a izomorfismus.
+ * `ORIENTATION` (DD-26 sez. 17) — float ∈ [0, 360) ve **stupních**, rotace
+ * kolem Y osy. Default 0. Engine převádí `mesh.rotation.y = ORIENTATION * π/180`.
+ * Pro rampy/tunely se v praxi používají násobky 90° (cardinální orientace
+ * svahu / osy tunelu), ale typ je float — sdílený s COMPOSITES, kde dekorace
+ * mívají náhodnou rotaci pro organický vzhled.
  */
 export class BLOCKS extends CUBES {
-  // Žádné další atributy — kategorie pro dispatch.
+  constructor(id, name, x, y, z, description = "") {
+    super(id, name, x, y, z, description);
+    this.ORIENTATION = 0;
+  }
 }
 
 export class CCUBES extends BLOCKS {
@@ -141,9 +147,10 @@ export class TCUBES extends BLOCKS {
  *  - **TEXTURE_LEFT** — levý bok (= pravoúhlý trojúhelník na X=−0.5 v default orientaci).
  *  - **TEXTURE_RIGHT** — pravý bok (= pravoúhlý trojúhelník na X=+0.5).
  *
- * `ROTATION_Y` (radiány, default 0) — rotace celého bloku kolem osy Y.
- * Smysluplné násobky `π/2` (4 cardinální orientace svahu): 0 = svah klesá k +Z
- * (SOUTH), `π/2` = klesá k −X (WEST), `π` = klesá k −Z (NORTH), `3π/2` = klesá k +X (EAST).
+ * `ORIENTATION` (DD-26) — stupně ∈ [0, 360). 4 cardinální orientace svahu:
+ * 0° = svah klesá k +Z (SOUTH), 90° = k −X (WEST), 180° = k −Z (NORTH),
+ * 270° = k +X (EAST). User „+90 po směru hod. ručiček" = ORIENTATION −= 90
+ * (modulo 360).
  *
  * Každý face dispatch přes `faceMaterialFor` (DD-14, sdílený s TCUBES) —
  * podporuje `null` (fallback šachovnice), `number` 0xRRGGBB, hex string,
@@ -157,10 +164,6 @@ export class TRRAMPS extends BLOCKS {
     this.TEXTURE_BACK   = textures.BACK   ?? null;
     this.TEXTURE_LEFT   = textures.LEFT   ?? null;
     this.TEXTURE_RIGHT  = textures.RIGHT  ?? null;
-    // ORIENTATION = počet 90° CCW rotací od defaultu (integer 0..3, BLOCKS
-    // konvence sdílená s TTRAMPS / TTUNELS). Engine převede na rotation.y =
-    // ORIENTATION * π/2. User „+90 po směru hod. ručiček" = ORIENTATION −= 1
-    // (modulo 4). Default 0 = svah klesá k +Z (SOUTH), apex sloupec na −Z.
     this.ORIENTATION = orientation;
   }
 }
@@ -179,12 +182,12 @@ export class TRRAMPS extends BLOCKS {
  *  - **TEXTURE_BACK** — pravoúhlý trojúhelník na Z=−0.5 (vertikální).
  *  - **TEXTURE_LEFT** — pravoúhlý trojúhelník na X=−0.5 (vertikální).
  *
- * Default orientace (`ROTATION_Y = 0`): roh `C` v lokálním (-0.5, -0.5, -0.5)
+ * Default orientace (`ORIENTATION = 0`): roh `C` v lokálním (-0.5, -0.5, -0.5)
  * (= SW-bottom-NORTH), 3 hrany směřují podél +X, +Y, +Z. SLOPE normála míří
  * k SE-top-SOUTH rohu = (1, 1, 1)/√3.
  *
- * `ROTATION_Y` (radiány) — rotace celého bloku kolem osy Y. 4 cardinální
- * orientace (násobky π/2) odpovídají 4 rohům, kde může roh `C` ležet.
+ * `ORIENTATION` (DD-26, stupně ∈ [0, 360)) — rotace celého bloku kolem osy Y.
+ * 4 cardinální orientace (násobky 90°) odpovídají 4 rohům, kde může roh `C` ležet.
  */
 export class TTRAMPS extends BLOCKS {
   constructor(id, name, x, y, z, textures = {}, orientation = 0, description = "") {
@@ -193,7 +196,6 @@ export class TTRAMPS extends BLOCKS {
     this.TEXTURE_BOTTOM = textures.BOTTOM ?? null;
     this.TEXTURE_BACK   = textures.BACK   ?? null;
     this.TEXTURE_LEFT   = textures.LEFT   ?? null;
-    // ORIENTATION = počet 90° CCW rotací (integer 0..3, sdíleno s TRRAMPS).
     this.ORIENTATION = orientation;
   }
 }
@@ -213,7 +215,7 @@ export class TTRAMPS extends BLOCKS {
  *  - **TEXTURE_TOP** — vrchní vnější stěna (typicky `:grass-top`, jako grass cube
  *    pohled shora).
  *  - **TEXTURE_SIDES** — vnější boční stěny (NORTH + SOUTH) + 2 vstupní stěny
- *    s vyříznutým profilem (typicky `:grass-side`).
+ *    s vyříznutým profilem (typicky `:dirt`).
  *  - **TEXTURE_WALLS** — vnitřní 2 boční stěny tunelu (na Z=±0.3, Y=−0.5..0).
  *  - **TEXTURE_CEILING** — vnitřní klenutý strop (12 segmentů půlkruhu).
  *
@@ -221,8 +223,8 @@ export class TTRAMPS extends BLOCKS {
  * dolů" — postava uvnitř i pohled odshora vidí přímo top voxelu pod tunelem
  * (typicky grass podlaha diorámy). Vyžaduje, aby blok pod tunelem byl plný.
  *
- * `ORIENTATION` (integer 0..3) — rotace celého bloku kolem osy Y. 0 = osa
- * tunelu X, 1 = osa Z (po 90° CCW), atd.
+ * `ORIENTATION` (DD-26, stupně ∈ [0, 360)) — rotace bloku kolem osy Y. 0° =
+ * osa tunelu X (default), 90° = osa Z, atd.
  */
 export class TTUNELS extends BLOCKS {
   constructor(id, name, x, y, z, textures = {}, orientation = 0, description = "") {
@@ -292,8 +294,13 @@ export class SPRITES extends CUBES {
  * gridu (balón nad scénou, strom mezi kostkami, …).
  */
 export class COMPOSITES extends CUBES {
-  // Žádné další atributy — značkovací třída pro dispatch.
-  // Konkrétní potomci (TREE, VOXEL_MODEL) přidávají vlastní atributy.
+  constructor(id, name, x, y, z, description = "") {
+    super(id, name, x, y, z, description);
+    // ORIENTATION (DD-26) — float ∈ [0, 360) ve stupních, rotace kolem Y osy.
+    // Default 0. Pro pixel-voxel dekorace (TREE, GRASS_TUFT, ROCK_PIXEL, LOG)
+    // typicky náhodná pro organický vzhled. Engine převede na radiány.
+    this.ORIENTATION = 0;
+  }
 }
 
 /**
@@ -312,6 +319,66 @@ export class TREE extends COMPOSITES {
   constructor(id, name, x, y, z, description = "", kind = "spruce") {
     super(id, name, x, y, z, description);
     this.KIND = kind;
+  }
+}
+
+/**
+ * GRASS_TUFT = pixel-voxel chomáč trávy / kapradiny na zemi (vrstva 2 DD-25).
+ * KIND-y: `"tall"` (stéblo trávy 4-5 voxelů vysoké), `"short"` (3-4 voxely
+ * trsu), `"fern"` (pět-listá kapradina rozšířená do stran).
+ */
+export class GRASS_TUFT extends COMPOSITES {
+  constructor(id, name, x, y, z, description = "", kind = "tall") {
+    super(id, name, x, y, z, description);
+    this.KIND = kind;
+  }
+}
+
+/**
+ * ROCK_PIXEL = pixel-voxel kámen / balvan (vrstva 2 DD-25). Náhrada za sez. 15
+ * smazanou ROCK třídu (icosahedron, DD-23 pivot). KIND-y: `"small"` (2×1×2
+ * shluk), `"medium"` (3×2×3), `"mossy"` (medium s mechovou záplatou nahoře).
+ */
+export class ROCK_PIXEL extends COMPOSITES {
+  constructor(id, name, x, y, z, description = "", kind = "small") {
+    super(id, name, x, y, z, description);
+    this.KIND = kind;
+  }
+}
+
+/**
+ * LOG = pixel-voxel padlý kmen (vrstva 2 DD-25). Ležící váleček 4-6 voxelů
+ * podél osy. KIND-y: `"stump"` (1×1×1 pařízek), `"birch"` (bílá kůra s černými
+ * skvrnami), `"pine"` (hnědá borovice). Natočení v ploše XZ řídí ORIENTATION
+ * (DD-26, zděděno z COMPOSITES; default 0 = kmen leží podél osy X).
+ */
+export class LOG extends COMPOSITES {
+  constructor(id, name, x, y, z, description = "", kind = "birch") {
+    super(id, name, x, y, z, description);
+    this.KIND = kind;
+  }
+}
+
+/**
+ * PATH = pixel-art cesta jako 1D křivka (DD-25 vrstva 3 — Linie). První
+ * potomek vrstvy LINES (zatím bez explicit base třídy — přidá se s druhým
+ * sourozencem TRACK / RIVER).
+ *
+ * Atributy:
+ *  - `KIND` — string řídí texturu povrchu. Default `"dirt"` (sdílí `:dirt`
+ *    s grass blokem). Plánováno: `"stone"`, `"wood"`.
+ *  - `POINTS` — pole `[x, y, z]` kontrolních bodů ve **world** souřadnicích
+ *    (instance.X/Y/Z se nepoužívá; engine staví strip mesh přímo z POINTS).
+ *    Engine spline-interpoluje (Catmull-Rom) a vykreslí jako plochý strip
+ *    šířky ~0.5 j s drobným Y offsetem nad terrain (proti z-fighting).
+ *
+ * Pozice: instance.X/Y/Z = (0, 0, 0) je idiomatický „cesta žije v world coords".
+ */
+export class PATH extends CUBES {
+  constructor(id, name, points, description = "", kind = "dirt") {
+    super(id, name, 0, 0, 0, description);
+    this.KIND   = kind;
+    this.POINTS = points;
   }
 }
 
@@ -336,7 +403,8 @@ export class TREE extends COMPOSITES {
  *  - `SCALE` — uniformní scale faktor (DD-22 konvence: **0.625**, tj. 1 MV
  *    voxel = 1/16 TC voxelu = 6.25 cm. Velikost objektu řídí MV grid; tunel
  *    48³ MV se vyrenderuje jako 3×3×3 TC).
- *  - `ROTATION_Y` — natočení kolem Y osy v radiánech (default 0).
+ *  - `ORIENTATION` (DD-26, zděděno z COMPOSITES) — natočení kolem Y osy ve
+ *    stupních [0, 360), default 0. Engine převede na radiány.
  *
  * Engine po načtení **auto-centruje** model v XZ a posune Y tak, aby spodek
  * mesh seděl na `instance.Y` → instance.Y = world Y land surface.
@@ -345,11 +413,10 @@ export class TREE extends COMPOSITES {
  * ručně kódit COMPOSITES dispatch.
  */
 export class VOXEL_MODEL extends COMPOSITES {
-  constructor(id, name, x, y, z, asset, scale = 0.625, rotationY = 0, description = "") {
+  constructor(id, name, x, y, z, asset, scale = 0.625, description = "") {
     super(id, name, x, y, z, description);
     this.ASSET = asset;
     this.SCALE = scale;
-    this.ROTATION_Y = rotationY;
   }
 }
 

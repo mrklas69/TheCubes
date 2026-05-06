@@ -257,7 +257,7 @@ Scéna se skládá ze čtyř vrstev s ortogonálními úkoly a různým rozliše
    - **TRRAMPS** (trojboký hranol = pravoúhlý klín, 5 faces; svah + bottom + back vertikál + 2 boční trojúhelníky)
    - **TTRAMPS** (trojboký jehlan = trirectangular tetrahedron, 4 faces; rovnostranný svah + 3 pravoúhlé trojúhelníky)
    - **TTUNELS** (1C blok s klenutým průchodem v jedné ose, 4 faces; top + sides + inside walls + inside ceiling, bez dna)
-   - Sdílí: snap-to-int (DD-12), procedurální `BufferGeometry` v engine, `faceMaterialFor` dispatch (DD-14), `:named-textures` paleta, atribut `ORIENTATION` (integer 0..3 = počet 90° CCW rotací).
+   - Sdílí: snap-to-int (DD-12), procedurální `BufferGeometry` v engine, `faceMaterialFor` dispatch (DD-14), `:named-textures` paleta, atribut `ORIENTATION` (DD-26 — float ve stupních [0, 360)).
 
 2. **Voxely** (1V = 1/16 C, dotvarba krajiny) — pixel-voxel kompozice z BoxGeometry voxelů velikosti 0.125 j (= 1/8 TC). Pod **`COMPOSITES`**:
    - **TREE** (KIND sub-buildery: spruce/oak/birch/palm/...)
@@ -283,3 +283,38 @@ Pixel-art identita zachována napříč všemi vrstvami: NearestFilter, 16×16 t
 - DD-24 (shape × surface) zůstává platný, ale **omezený rozsah**: pre-build skript se týkal VOXEL_MODELů s jednolitým povrchem. Po DD-25 jsou tyto bloky procedurální (TCUBES/TRRAMPS/TTRAMPS/TTUNELS), takže shape × surface jako asset pipeline je redundantní pro standardní bloky. DD-24 se může uplatnit pro budoucí komplexní VOXEL_MODELy (vrstva 4).
 - Nová `BLOCKS` abstract třída v `model.js` — značkovací parent CCUBES/TCUBES/TRRAMPS/TTRAMPS/TTUNELS.
 - Hover highlight (sez. 16) — emissive boost na celém objektu, lazy clone-on-first-hover materiálu (zachovává sdílení v TREE `_treeMatCache`).
+
+## DD-26 — Sjednocená `ORIENTATION` napříč BLOCKS i COMPOSITES, float [0, 360) ve stupních
+
+Jediný atribut `ORIENTATION` pro rotaci kolem Y osy napříč celou hierarchií CUBES potomků. Float ∈ [0, 360) ve **stupních**. Engine převádí: `mesh.rotation.y = ORIENTATION * (Math.PI / 180)`. Default 0 (= žádná rotace).
+
+**Sjednocení:**
+- `BLOCKS` base třída (TRRAMPS, TTRAMPS, TTUNELS) — dříve `ORIENTATION` integer enum 0..3 (= počet 90° CCW rotací). Migrace: stávající instance `ramp_0` z `1` → `90`.
+- `COMPOSITES` base třída (TREE, GRASS_TUFT, ROCK_PIXEL, LOG, VOXEL_MODEL) — dříve `ROTATION_Y` (radiány) na LOG a VOXEL_MODEL, jinak žádná rotace na TREE/GRASS_TUFT/ROCK_PIXEL. Atribut `ROTATION_Y` smazán.
+- Engine — `createTRRampFor` / `createTTRampFor` / `createTTunnelFor` z `* (π/2)` → `* (π/180)`. `createCompositeFor` aplikuje `group.rotation.y` uniformně z ORIENTATION pro všechny COMPOSITES potomky.
+
+**Důvod:** Tři různé konvence (BLOCKS enum, LOG/VOXEL_MODEL radiány, plánovaná COMPOSITES float-stupně) by porušily izomorfismus (CLAUDE.md design principle: „podobné věci vypadají, ovládají se a působí podobně"). Stupně zvoleny před radiány kvůli **lidské čitelnosti** (90, 180, 270 vs. `Math.PI / 2`, `Math.PI`, atd.); model drží lidsky orientované hodnoty, engine převádí (DD-11 model/engine separation).
+
+**Důsledek:**
+- Constructor `BLOCKS` a `COMPOSITES` nově inicializují `this.ORIENTATION = 0` jako shared default.
+- Konkrétní BLOCKS potomky (TRRAMPS/TTRAMPS/TTUNELS) přijímají `orientation` parametr v constructoru a přepisují default.
+- Konkrétní COMPOSITES potomky bez `orientation` parametru — atribut se nastaví post-construction (idiomatic s `ANIMATE`, `SPEAKER`).
+- `populateNorthernScene` přiřazuje každé dekoraci `instance.ORIENTATION = rng() * 360` → organičtější vzhled (žádné mřížkově stejně otočené stromy).
+
+## DD-27 — PATH = první potomek vrstvy 3 LINES; Catmull-Rom spline + plochý strip mesh
+
+Nová třída `PATH extends CUBES` (DD-25 vrstva 3) pro 1D křivky v krajině. Atributy `KIND` (string, default `"dirt"`) + `POINTS` (pole `[x, y, z]` kontrolních bodů ve world coords). Engine vytvoří **Catmull-Rom curve** (Three.js `CatmullRomCurve3`, type `catmullrom`, tension 0.5), navzorkuje 64×, a postaví plochý strip mesh: dva vertices na vzorek (levý/pravý okraj kolmé k tangentě v XZ rovině), trojúhelníky mezi sousedními vzorky. Šířka strip 0.5 j, Y offset +0.005 j nad terrain (proti z-fightingu).
+
+Materiál: `MeshStandardMaterial` s repeating texturou (`:path-dirt` 8× podél délky). První KIND = `dirt` (kropenatý šum šedých kamínků 240 záplat 1-2 px). Plánováno: `stone`, `wood`.
+
+**Catmull-Rom volba před Bezier:** křivka prochází všemi kontrolními body (= bod v `POINTS` je opravdu bod, kterým cesta vede), tangenty se odvozují automaticky z okolí. Bezier by vyžadoval explicitní tangent handles = 2× víc bodů na definici.
+
+**Rovný směr v krajních bodech:** Three.js v non-closed Catmull-Rom curvách používá v krajních bodech reflexi sousedního, tj. tangenta v `P[0]` = `P[1] - P[0]`. Pokud první dva body mají stejné Z, tangenta je čistě podél X. Stejně tak na konci. Tj. **rovný vstup/výstup** se dosáhne mít prvních/posledních dvou bodů na stejné Z hodnotě (= rovný úsek cesty), ne přidávat virtuální anchor mimo trasu.
+
+**Layout authoring:** PATH instance nemá smysluplnou X/Y/Z polohu (cesta žije v world coords); `super(...)` se volá s `(0, 0, 0)`. POINTS jsou jediný zdroj geometrie.
+
+**Populate respektuje koridor cesty:** `pathOccupiedCells(points)` vzorkuje curve 128× a vrátí grid buňky (X, Z), které cesta protíná. `populateNorthernScene` přidá tyto buňky k `blocked` set → žádné stromy/kameny v cestě.
+
+**Infotip POINTS:** speciální formátování ve `formatValue` — `(-3.5, -0.5, -3) → (0.5, -0.5, -1) → (4.5, -0.5, 1)` (uzávorkováno + šipky).
+
+**Důsledek:** vrstva LINES (DD-25 vrstva 3) má první konkrétní implementaci. Až přijde druhý sourozenec (TRACK pro koleje), zvážit zavedení `LINES` abstract base třídy (analogicky s BLOCKS / COMPOSITES base).

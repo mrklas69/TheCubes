@@ -8,7 +8,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
-import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TTUNELS, SPRITES, COMPOSITES, TREE, VOXEL_MODEL, TIMER, COUNTER } from "./model.js";
+import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TTUNELS, SPRITES, COMPOSITES, TREE, GRASS_TUFT, ROCK_PIXEL, LOG, VOXEL_MODEL, PATH, TIMER, COUNTER } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
 
 // === Renderer ===
@@ -85,7 +85,7 @@ sun.shadow.mapSize.set(2048, 2048);
 // artefakty ("shadow acne" = tečkovaný vzor na osvětlených plochách).
 // `normalBias` posune test podle normály — pomáhá na zaoblených plochách
 // (vak balónu, kužely stromu), kde klasický bias způsobuje "peter-panning".
-// Pro voxel kostky dotýkající se ploch (Scéna 2) způsobuje vysoká hodnota
+// Pro voxel kostky dotýkající se ploch způsobuje vysoká hodnota
 // opačný problém — tenkou „lit line" na styku → snížené z 0.02 na 0.005,
 // (stín se odlepí od objektu).
 sun.shadow.bias = -0.0001;
@@ -249,8 +249,6 @@ function makeEmojiTexture(char) {
 const TEX_SIZE = 16;
 const PATCH_MIN = 1;
 const PATCH_MAX = 2;
-const GRASS_STRIP_PX = 2;
-
 // Helper — náhodné obdélníkové záplaty v zadaném vertikálním pásu canvasu.
 // Záplaty mohou přesáhnout okraj canvasu nebo pásu (fillRect ořízne) — drobné
 // „roztrhané" hrany dávají organický vzhled.
@@ -288,8 +286,6 @@ function makePatchTexture(baseColor, accentPalette) {
   return canvasToPixelTexture(canvas);
 }
 
-// Pozn.: paleta dirt + grass je sdílená v `DIRT_*` / `GRASS_*` konstantách,
-// aby `:grass-side` (kompozit obou vrstev) mohla čerpat ze stejných hodnot.
 const DIRT_BASE = "#6b4a2a";
 const DIRT_ACCENTS = ["#5a3a22", "#7a5630", "#48301d"];
 const GRASS_BASE = "#5d9446";
@@ -307,6 +303,23 @@ function makeGrassTopTexture() {
 
 function makeStoneTexture() {
   return makePatchTexture(STONE_BASE, STONE_ACCENTS);
+}
+
+// Štěrková cesta — šedé kameny různých odstínů, kropenatý šum (žádné stopy).
+// Hustá rozsypaná zrnka 1×1 px různých odstínů → blízko vidět texturu kamínků,
+// z dálky splyne v jednolitou šeď.
+const PATH_BASE    = "#7a7a78";
+const PATH_ACCENTS = ["#9a9a98", "#b0b0ae", "#6a6a68", "#5a5a58", "#3a3a38", "#8a8478"];
+function makePathDirtTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = TEX_SIZE;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = PATH_BASE;
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+  // Kropenatý šum — ~240 drobných záplat 1-2 px po celé ploše. Patche se
+  // překrývají (canvas má 256 px²), což dává ještě bohatší variaci.
+  drawPatches(ctx, PATH_ACCENTS, 210 + Math.floor(Math.random() * 60), 0, TEX_SIZE);
+  return canvasToPixelTexture(canvas);
 }
 
 // Kolej (vrch voxelu): tmavě hnědý štěrkový základ + pražce (sleepers) +
@@ -332,35 +345,15 @@ function makeRailTopTexture() {
   return canvasToPixelTexture(canvas);
 }
 
-// Boční strana grass-bloku: spodních 14 px dirt + vrchních 2 px grass strip.
-// Záplaty každé vrstvy jen v jejím pásu (drawPatches respektuje yMin/yMax).
-function makeGrassSideTexture() {
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = TEX_SIZE;
-  const ctx = canvas.getContext("2d");
-  // Spodní vrstva — dirt
-  ctx.fillStyle = DIRT_BASE;
-  ctx.fillRect(0, GRASS_STRIP_PX, TEX_SIZE, TEX_SIZE - GRASS_STRIP_PX);
-  drawPatches(ctx, DIRT_ACCENTS, 2 + Math.floor(Math.random() * 3), GRASS_STRIP_PX, TEX_SIZE);
-  // Vrchní vrstva — grass strip
-  ctx.fillStyle = GRASS_BASE;
-  ctx.fillRect(0, 0, TEX_SIZE, GRASS_STRIP_PX);
-  // V tenkém pásu jen 0–1 záplata, ať nezakryje base barvu.
-  if (Math.random() < 0.6) {
-    drawPatches(ctx, GRASS_ACCENTS, 1, 0, GRASS_STRIP_PX);
-  }
-  return canvasToPixelTexture(canvas);
-}
-
 // Per-cube fresh textury (žádný singleton) — každé volání factory vrátí novou
 // `THREE.Texture` s vlastním vzorem → 100 kostek × 6 stran = až 600 unikátních
 // textur. Každá 16×16 = 256 px, celkem ~600 KB GPU mem (zanedbatelné).
 const NAMED_TEXTURE_FACTORIES = {
   ":dirt":       () => makeDirtTexture(),
   ":grass-top":  () => makeGrassTopTexture(),
-  ":grass-side": () => makeGrassSideTexture(),
   ":stone":      () => makeStoneTexture(),
   ":rail-top":   () => makeRailTopTexture(),
+  ":path-dirt":  () => makePathDirtTexture(),
 };
 
 // === Dispatch: atribut strany TCUBES → Three.js materiál ===
@@ -934,6 +927,9 @@ function createMeshFor(instance) {
   if (instance instanceof COMPOSITES) {
     // 3D mesh složený z primitivů. Konkrétní tvar řešíme podle podtřídy.
     object3d = createCompositeFor(instance);
+  } else if (instance instanceof PATH) {
+    // 1D křivka (DD-25 vrstva 3 Linie) — strip mesh sledující POINTS.
+    object3d = createPathFor(instance);
   } else if (instance instanceof SPRITES) {
     // 2D billboard — obrázek vždy otočený ke kameře. Nevoxelový potomek,
     // pozice float bez snap-to-grid.
@@ -1037,7 +1033,7 @@ function createTCubeFor(instance) {
 // === TRRAMPS — Trojboký hranol (klín) =======================================
 //
 // 1C blok (1×1×1) s pravoúhlým trojúhelníkem v boční rovině XY. Default
-// orientace (ROTATION_Y=0): apex sloupec na −Z (NORTH), svah klesá k +Z (SOUTH).
+// orientace (ORIENTATION=0): apex sloupec na −Z (NORTH), svah klesá k +Z (SOUTH).
 // Stojící divák před rampou (na +Z) tedy vidí svah klesat k němu.
 //
 // Vertices v lokálních souřadnicích (1C blok centered v origin):
@@ -1138,8 +1134,7 @@ const TRRAMP_GEOM_CACHE = (() => {
   );
 
   // LEFT — triangle (v0, v3, v4) na X=−0.5, normála (−1, 0, 0).
-  // CCW při pohledu z −X stran. Apex sloupec v4 → UV (0, 1) = top-left textury
-  // (kde `:grass-side` má grass strip).
+  // CCW při pohledu z −X stran. Apex sloupec v4 → UV (0, 1) = top-left textury.
   addTri(
     v0, v3, v4,
     [-1, 0, 0],
@@ -1178,7 +1173,7 @@ function createTRRampFor(instance) {
   ];
   const mesh = new THREE.Mesh(TRRAMP_GEOM_CACHE, materials);
   snapToGrid(mesh, instance);
-  mesh.rotation.y = instance.ORIENTATION * (Math.PI / 2);
+  mesh.rotation.y = instance.ORIENTATION * (Math.PI / 180);
   return mesh;
 }
 
@@ -1241,7 +1236,7 @@ const TTRAMP_GEOM_CACHE = (() => {
 
   // BACK — triangle (C, Y, X) na Z=−0.5, normála (0, 0, −1).
   // CCW při pohledu z −Z stran. UV: C (W-bottom) = (0,0), Y (W-top, apex) = (0,1),
-  // X (E-bottom) = (1,0). Apex v UV (0,1) → grass strip u top textury (`:grass-side`).
+  // X (E-bottom) = (1,0). Apex v UV (0,1).
   addTri(
     C, Y, X,
     [0, 0, -1],
@@ -1279,7 +1274,7 @@ function createTTRampFor(instance) {
   ];
   const mesh = new THREE.Mesh(TTRAMP_GEOM_CACHE, materials);
   snapToGrid(mesh, instance);
-  mesh.rotation.y = instance.ORIENTATION * (Math.PI / 2);
+  mesh.rotation.y = instance.ORIENTATION * (Math.PI / 180);
   return mesh;
 }
 
@@ -1527,7 +1522,7 @@ function createTTunnelFor(instance) {
   ];
   const mesh = new THREE.Mesh(TTUNEL_GEOM_CACHE, materials);
   snapToGrid(mesh, instance);
-  mesh.rotation.y = instance.ORIENTATION * (Math.PI / 2);
+  mesh.rotation.y = instance.ORIENTATION * (Math.PI / 180);
   return mesh;
 }
 
@@ -1594,9 +1589,19 @@ function createSpriteFor(instance) {
 function createCompositeFor(instance) {
   const group = new THREE.Group();
   group.position.set(instance.X, instance.Y, instance.Z);
+  // ORIENTATION (DD-26) — uniform Y rotace pro všechny COMPOSITES. Ve modelu
+  // jsou stupně, engine převádí na radiány. Auto-centrování VOXEL_MODELu pak
+  // proběhne v lokálním (rotovaném) prostoru group → bbox stále sedí.
+  group.rotation.y = instance.ORIENTATION * (Math.PI / 180);
 
   if (instance instanceof TREE) {
     buildTree(group, instance);
+  } else if (instance instanceof GRASS_TUFT) {
+    buildGrassTuft(group, instance);
+  } else if (instance instanceof ROCK_PIXEL) {
+    buildRockPixel(group, instance);
+  } else if (instance instanceof LOG) {
+    buildLog(group, instance);
   } else if (instance instanceof VOXEL_MODEL) {
     buildVoxelModel(group, instance);
   }
@@ -1614,11 +1619,10 @@ function buildVoxelModel(group, instance) {
     materials.preload();
     const objLoader = new OBJLoader().setMaterials(materials).setPath("./assets/");
     objLoader.load(`${instance.ASSET}.obj`, (object) => {
-      // Pořadí transformací (Three.js skládá scale → rotation → position):
-      // nejprve uniform scale, pak rotace kolem Y. Pak změříme bbox výsledku
-      // a posuneme do auto-centra.
+      // Pořadí transformací (Three.js skládá scale → position): uniform
+      // scale, pak auto-centrování. Rotace kolem Y se aplikuje na rodičovský
+      // group v `createCompositeFor` (DD-26 ORIENTATION).
       object.scale.setScalar(instance.SCALE);
-      object.rotation.y = instance.ROTATION_Y;
       object.updateMatrixWorld(true);
       const bbox = new THREE.Box3().setFromObject(object);
       object.position.set(
@@ -1641,6 +1645,90 @@ function buildVoxelModel(group, instance) {
       group.add(object);
     }, undefined, (err) => console.error(`OBJ load failed: ${instance.ASSET}.obj`, err));
   }, undefined, (err) => console.error(`MTL load failed: ${instance.ASSET}.mtl`, err));
+}
+
+// === PATH — Linie (DD-25 vrstva 3) ============================================
+// 1D křivka jako plochý strip mesh. POINTS interpolovány Catmull-Rom curvou,
+// sample 64 bodů, levá/pravá strana strip podle tangenty (kolmá v XZ rovině).
+// UV scale 8× podél délky → textura se opakuje ~každého 1 j světové vzdálenosti
+// (s 8× úzkou cestou na šířku). Drobný Y offset +0.005 nad terrain proti
+// z-fightingu s grass top facemi.
+
+const PATH_WIDTH        = 0.5;   // šířka cesty v j
+const PATH_SEGMENTS     = 64;    // počet vzorků křivky
+const PATH_Y_OFFSET     = 0.005; // mírně nad terrain
+const PATH_UV_REPEAT    = 8;     // opakování textury podél délky
+
+const PATH_TEX_NAMES = {
+  dirt: ":path-dirt",
+};
+const _pathTexCache = new Map();
+function pathTexture(kind) {
+  let tex = _pathTexCache.get(kind);
+  if (!tex) {
+    const texName = PATH_TEX_NAMES[kind] ?? ":path-dirt";
+    tex = NAMED_TEXTURE_FACTORIES[texName]();
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    _pathTexCache.set(kind, tex);
+  }
+  return tex;
+}
+
+function createPathFor(instance) {
+  const group = new THREE.Group();
+  // PATH žije v world coords — instance.X/Y/Z není smysluplné, držíme group v origin.
+
+  const pts = instance.POINTS.map((p) => new THREE.Vector3(p[0], p[1] + PATH_Y_OFFSET, p[2]));
+  if (pts.length < 2) return group;
+
+  // Catmull-Rom spline → měkké zatáčky bez nutnosti ručních tangent vektorů.
+  const curve   = new THREE.CatmullRomCurve3(pts, false, "catmullrom", 0.5);
+  const samples = curve.getPoints(PATH_SEGMENTS);
+
+  const positions = [];
+  const uvs       = [];
+  const indices   = [];
+  const _tan = new THREE.Vector3();
+
+  for (let i = 0; i < samples.length; i++) {
+    const p = samples[i];
+    // Tangenta = směr na další bod (poslední bod kopíruje předchozí směr).
+    if (i < samples.length - 1) _tan.subVectors(samples[i + 1], p);
+    else                         _tan.subVectors(p, samples[i - 1]);
+    _tan.y = 0;
+    _tan.normalize();
+    // Kolmá v XZ rovině (rotace o 90°): (-tan.z, 0, tan.x). Šířka půlená.
+    const nx = -_tan.z * (PATH_WIDTH / 2);
+    const nz =  _tan.x * (PATH_WIDTH / 2);
+
+    positions.push(p.x - nx, p.y, p.z - nz);  // levý okraj
+    positions.push(p.x + nx, p.y, p.z + nz);  // pravý okraj
+
+    const v = (i / (samples.length - 1)) * PATH_UV_REPEAT;
+    uvs.push(0, v);
+    uvs.push(1, v);
+  }
+
+  for (let i = 0; i < samples.length - 1; i++) {
+    const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1;
+    indices.push(a, b, c,  b, d, c);
+  }
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geom.setAttribute("uv",       new THREE.Float32BufferAttribute(uvs, 2));
+  geom.setIndex(indices);
+  geom.computeVertexNormals();
+
+  const mat = new THREE.MeshStandardMaterial({ map: pathTexture(instance.KIND ?? "dirt") });
+  const mesh = new THREE.Mesh(geom, mat);
+  // Shadow handling: traverze v `createMeshFor` nastaví cast=true, receive=true.
+  // Vlastní stín strip-mesh je benigní (cesta je 0.005 j nad ground, stín splyne
+  // s podkladem). Stromy nad cestou vrhají stín na ni → receive je užitečný.
+  group.add(mesh);
+
+  return group;
 }
 
 // Strom — dispatch podle `instance.KIND` na konkrétní sub-builder.
@@ -1901,8 +1989,179 @@ const TREE_BUILDERS = {
   maple:   buildTreeMaple,
 };
 
+// === Doplňková flora a kameny — vrstva 2 DD-25 (GRASS_TUFT, ROCK_PIXEL, LOG) ===
+// Sdílí pixel helpery `treeMat` / `treeVoxel` / `treeBlock` (DRY) — naming
+// je tree-prefixed historicky, ale helper sám je obecný pixel-voxel idiom.
 
-// === Scéna 2: 10×10 voxelová dioráma ===
+const DECO_C = {
+  grassDark:   0x3a6a2a,
+  grassMid:    0x5a8a3a,
+  grassYellow: 0x9aae3a,
+  fernDark:    0x254520,
+  rockGray:    0x6a6a6a,
+  rockDark:    0x4a4a4a,
+  rockLight:   0x8a8a8a,
+  moss:        0x4a7a3a,
+  logBirch:    0xeae5d8,
+  logBirchSpot: 0x222222,
+  logPine:     0x6b4423,
+  logPineCore: 0x8a6435,
+};
+
+// --- GRASS_TUFT buildery ---
+
+// Vysoký trs — 4 stébla v rohách 1 voxelu, výška 3-5 voxelů (height-weighted
+// `tree_sway` ho rozpohybuje stejně jako stromy — top je vyšší = větší výchylka).
+function buildGrassTall(group) {
+  treeBlock(group, 0, 0, 0, 1, 4, 1, DECO_C.grassMid);
+  treeVoxel(group, 0, 4, 0, DECO_C.grassYellow);  // špička žlutozelená
+}
+
+// Mikro voxel zeleně — jediný 1×1×1 voxel (= 0.125 j ≈ 12.5 cm).
+function buildGrassMicro(group) {
+  treeVoxel(group, 0, 0, 0, DECO_C.grassMid);
+}
+
+// Krátký trsík — 3 voxely vrcholu, široký 2×2.
+function buildGrassShort(group) {
+  treeVoxel(group, 0, 0, 0, DECO_C.grassMid);
+  treeVoxel(group, 1, 0, 0, DECO_C.grassDark);
+  treeVoxel(group, 0, 0, 1, DECO_C.grassDark);
+  treeVoxel(group, 1, 0, 1, DECO_C.grassMid);
+  treeVoxel(group, 0, 1, 0, DECO_C.grassYellow);
+  treeVoxel(group, 1, 1, 1, DECO_C.grassYellow);
+}
+
+// Kapradina — 5-listá rozšířená do stran (severské lesní podloží).
+function buildGrassFern(group) {
+  // Středový stonek
+  treeBlock(group, 0, 0, 0, 1, 2, 1, DECO_C.fernDark);
+  // 4 listy vně
+  treeVoxel(group, 1, 1, 0, DECO_C.fernDark);
+  treeVoxel(group, -1, 1, 0, DECO_C.fernDark);
+  treeVoxel(group, 0, 1, 1, DECO_C.fernDark);
+  treeVoxel(group, 0, 1, -1, DECO_C.fernDark);
+  treeVoxel(group, 0, 2, 0, DECO_C.fernDark);
+}
+
+const GRASS_TUFT_BUILDERS = {
+  micro: buildGrassMicro,
+  tall:  buildGrassTall,
+  short: buildGrassShort,
+  fern:  buildGrassFern,
+};
+
+function buildGrassTuft(group, instance) {
+  const kind = instance.KIND ?? "tall";
+  const builder = GRASS_TUFT_BUILDERS[kind];
+  if (!builder) {
+    console.warn(`[GRASS_TUFT] Unknown KIND "${kind}", fallback "tall".`);
+    GRASS_TUFT_BUILDERS.tall(group);
+    return;
+  }
+  builder(group);
+}
+
+// --- ROCK_PIXEL buildery ---
+
+// Mikro kámen — jediný 1×1×1 voxel (oblázek).
+function buildRockMicro(group) {
+  treeVoxel(group, 0, 0, 0, DECO_C.rockGray);
+}
+
+// Malý kámen — 2×1×2 shluk se světlou špičkou.
+function buildRockSmall(group) {
+  treeBlock(group, 0, 0, 0, 2, 1, 2, DECO_C.rockGray);
+  treeVoxel(group, 0, 1, 1, DECO_C.rockLight);
+}
+
+// Střední kámen — 3×2×3 cluster s temnými nárohy a světlým vrcholem.
+function buildRockMedium(group) {
+  // Spodek 3×3 šedý
+  treeBlock(group, 0, 0, 0, 3, 1, 3, DECO_C.rockGray);
+  // Tmavé rohy spodku
+  treeVoxel(group, 0, 0, 0, DECO_C.rockDark);
+  treeVoxel(group, 2, 0, 2, DECO_C.rockDark);
+  // Druhé patro 2×2 posunuté
+  treeBlock(group, 1, 1, 0, 2, 1, 2, DECO_C.rockGray);
+  // Vrcholový voxel světlý
+  treeVoxel(group, 1, 2, 1, DECO_C.rockLight);
+}
+
+// Mechový kámen — medium s mechovým povlakem nahoře (severská vlhkost).
+function buildRockMossy(group) {
+  treeBlock(group, 0, 0, 0, 3, 1, 3, DECO_C.rockGray);
+  treeVoxel(group, 0, 0, 0, DECO_C.rockDark);
+  treeVoxel(group, 2, 0, 0, DECO_C.rockDark);
+  treeBlock(group, 1, 1, 1, 2, 1, 2, DECO_C.rockGray);
+  // Mech nahoře — místo světlého voxelu
+  treeVoxel(group, 1, 2, 1, DECO_C.moss);
+  treeVoxel(group, 0, 1, 0, DECO_C.moss);
+  treeVoxel(group, 2, 1, 2, DECO_C.moss);
+}
+
+const ROCK_PIXEL_BUILDERS = {
+  micro:  buildRockMicro,
+  small:  buildRockSmall,
+  medium: buildRockMedium,
+  mossy:  buildRockMossy,
+};
+
+function buildRockPixel(group, instance) {
+  const kind = instance.KIND ?? "small";
+  const builder = ROCK_PIXEL_BUILDERS[kind];
+  if (!builder) {
+    console.warn(`[ROCK_PIXEL] Unknown KIND "${kind}", fallback "small".`);
+    ROCK_PIXEL_BUILDERS.small(group);
+    return;
+  }
+  builder(group);
+}
+
+// --- LOG buildery (padlý kmen, leží podél lokální osy X) ---
+
+// Pařez — jediný voxel dřeva (kousek nebo úplně malý pařízek).
+function buildLogStump(group) {
+  treeVoxel(group, 0, 0, 0, DECO_C.logPine);
+}
+
+// Bříza — bílý kmen s 3 černými skvrnami. 6 voxelů dlouhý, 1×1 průřez.
+function buildLogBirch(group) {
+  treeBlock(group, 0, 0, 0, 6, 1, 1, DECO_C.logBirch);
+  treeVoxel(group, 1, 0, 0, DECO_C.logBirchSpot);
+  treeVoxel(group, 3, 0, 0, DECO_C.logBirchSpot);
+  treeVoxel(group, 5, 0, 0, DECO_C.logBirchSpot);
+}
+
+// Borovice — hnědý kmen s tmavšími prstenci a světlým středem na konci.
+function buildLogPine(group) {
+  treeBlock(group, 0, 0, 0, 5, 1, 1, DECO_C.logPine);
+  // Konec s viditelným letokruhem
+  treeVoxel(group, 5, 0, 0, DECO_C.logPineCore);
+  // Tmavší prstence
+  treeVoxel(group, 1, 0, 0, DECO_C.logBirchSpot);
+  treeVoxel(group, 3, 0, 0, DECO_C.logBirchSpot);
+}
+
+const LOG_BUILDERS = {
+  stump: buildLogStump,
+  birch: buildLogBirch,
+  pine:  buildLogPine,
+};
+
+function buildLog(group, instance) {
+  const kind = instance.KIND ?? "birch";
+  const builder = LOG_BUILDERS[kind];
+  if (!builder) {
+    console.warn(`[LOG] Unknown KIND "${kind}", fallback "birch".`);
+    LOG_BUILDERS.birch(group);
+    return;
+  }
+  builder(group);
+}
+
+
+// === Scéna: 10×10 voxelová dioráma ===
 // Po DD-23 (sez. 15) je toto jediná scéna v TheCubes — vše voxelové.
 
 // Helpery pro 3 typy voxelových bloků — sdílený pattern (izomorfismus DD-14).
@@ -1925,16 +2184,17 @@ function makeDirtBlock(id, x, y, z) {
 function makeGrassBlock(id, x, y, z) {
   return new TCUBES(id, `Tráva (${x}, ${y}, ${z})`, x, y, z, {
     TOP:    ":grass-top", BOTTOM: ":dirt",
-    NORTH:  ":grass-side", SOUTH:  ":grass-side",
-    EAST:   ":grass-side", WEST:   ":grass-side",
-  }, "TCUBES — travnatý blok.");
+    NORTH:  ":dirt", SOUTH:  ":dirt",
+    EAST:   ":dirt", WEST:   ":dirt",
+  }, "TCUBES — travnatý blok (vrch grass, boky/spodek hlína).");
 }
+
 
 // Layout Scény 2 — exportovaný z builderu (sez. 14). Pravidlo „překryté =
 // hlína / skála" je už aplikované při exportu (grass s Y+1 obsazené → dirt;
 // + Y+2 obsazené → stone). Aktualizace: postavit v builderu, kliknout
 // „Export do clipboardu", nahradit obsah pole.
-const SCENE2_LAYOUT = [
+const SCENE_LAYOUT = [
   ["dirt", -5, -1, -5],
   ["dirt", -5, 0, -5],
   ["dirt", -5, 1, -5],
@@ -2086,13 +2346,13 @@ const SCENE2_LAYOUT = [
   ["grass", 4, -1, 4],
 ];
 
-function buildSceneTwo(scene) {
+function buildScene(scene) {
   const FACTORIES = {
     grass: makeGrassBlock,
     dirt:  makeDirtBlock,
     stone: makeStoneBlock,
   };
-  for (const [kind, x, y, z] of SCENE2_LAYOUT) {
+  for (const [kind, x, y, z] of SCENE_LAYOUT) {
     const id = `s2_${kind}_${x + 5}_${y + 1}_${z + 5}`;
     scene.add(createMeshFor(FACTORIES[kind](id, x, y, z)));
   }
@@ -2123,74 +2383,239 @@ function buildSceneTwo(scene) {
 
   // Travnaté rampy — Bloky (DD-25 kandidát: 1C grid-aligned, procedurální).
   // Per-face textury sdílí paletu s grass cube voxely (`:grass-top` svah,
-  // `:grass-side` boky/zadek, `:dirt` spodek).
+  // `:grass-top` na vrchu/svahu, `:dirt` na všech bočních faces (= konzistence
+  // s grass blokem; sez. 17 zjednodušení BLOCKS rodiny).
   const TRRAMP_TEX = {
     SLOPE:  ":grass-top",
     BOTTOM: ":dirt",
-    BACK:   ":grass-side",
-    LEFT:   ":grass-side",
-    RIGHT:  ":grass-side",
+    BACK:   ":dirt",
+    LEFT:   ":dirt",
+    RIGHT:  ":dirt",
   };
   const TTRAMP_TEX = {
     SLOPE:  ":grass-top",
     BOTTOM: ":dirt",
-    BACK:   ":grass-side",
-    LEFT:   ":grass-side",
+    BACK:   ":dirt",
+    LEFT:   ":dirt",
   };
-  // TRRAMPS (trojboký hranol) — ORIENTATION=1 (= 90° CCW od defaultu) otočí
-  // apex na −X → svah stoupá v −X (= vede z grass(-4,-1,0) k peaku (-5,0,0)).
+  // TRRAMPS (trojboký hranol) — ORIENTATION=90° (CCW od defaultu) otočí apex
+  // na −X → svah stoupá v −X (= vede z grass(-4,-1,0) k peaku (-5,0,0)).
   // Pozice (-4, 0, 0) = jeden voxel nahoru od grass podlahy (BLOCKS Y konvence).
   scene.add(createMeshFor(new TRRAMPS(
-    "ramp_0", "Travnatá rampa Z=0", -4, 0, 0, TRRAMP_TEX, 1,
+    "ramp_0", "Travnatá rampa Z=0", -4, 0, 0, TRRAMP_TEX, 90,
     "TRRAMPS — trojboký hranol, svah stoupá v −X. Spojuje grass(-4,-1,0) → peak(-5,0,0).",
   )));
-  // TTRAMPS (trojboký jehlan) — ORIENTATION=0 (default) po +90° CW rotaci od
-  // sez. 16 prvního pokusu (1 → 0). Apex Y vrchol směřuje do NW-top rohu bloku.
+  // TTRAMPS (trojboký jehlan) — ORIENTATION=0° (default). Apex Y vrchol směřuje
+  // do NW-top rohu bloku.
   scene.add(createMeshFor(new TTRAMPS(
     "ramp_1", "Trojúhelníková rampa Z=1", -4, 0, 1, TTRAMP_TEX, 0,
     "TTRAMPS — trojboký jehlan (corner ramp), rovnostranný svah + 3 pravoúhlé stěny.",
   )));
 
+  // Cesta z tunnel_0 ven scénou (DD-25 vrstva 3 LINES). Pro **rovný vstup
+  // i výstup** podél X osy stačí mít první dva body na stejném Z a poslední
+  // dva také — Catmull-Rom v krajních bodech používá reflexi sousedního, tj.
+  // tangenta = (P[1] − P[0]); pokud P[1].Z = P[0].Z, je čistě +X. Anchory
+  // mimo scénu nepotřebujeme. Uprostřed jeden inflexní bod (esíčko).
+  const PATH_FROM  = [-3.5, -0.5, -3];   // východní vstup tunnel_0
+  const PATH_LEFT  = [-1.5, -0.5, -3];   // 2 j rovně podél X (Z=−3)
+  const PATH_VIA   = [ 0.5, -0.5, -1];   // inflexní bod (na spojnici start-end)
+  const PATH_RIGHT = [ 2.5, -0.5,  1];   // 2 j rovně podél X (Z=+1)
+  const PATH_TO    = [ 4.5, -0.5,  1];   // odchod přes východní hranu scény
+  const pathPoints = [PATH_FROM, PATH_LEFT, PATH_VIA, PATH_RIGHT, PATH_TO];
+  scene.add(createMeshFor(new PATH(
+    "path_0", "Cesta z tunelu", pathPoints,
+    "PATH — štěrková cesta z tunnel_0 ven přes východní hranu scény.",
+    "dirt",
+  )));
 
-  // Pixelové stromy — 10 druhů na předním řádku Z=4 (X=−5..4).
-  // Y=0 = COMPOSITES center na úrovni 0.5 j nad ground; sub-buildery umisťují
-  // pixely od lokální Y=−0.5 (= top of grass voxel = world ground level).
-  const TREE_KINDS_S2 = [
-    ["spruce",  "Smrk"],
-    ["oak",     "Dub"],
-    ["birch",   "Bříza"],
-    ["palm",    "Palma"],
-    ["bush",    "Keř"],
-    ["cypress", "Cypřiš"],
-    ["willow",  "Vrba"],
-    ["bonsai",  "Bonsaj"],
-    ["dead",    "Suchý strom"],
-    ["maple",   "Javor"],
-  ];
-  TREE_KINDS_S2.forEach(([kind, name], i) => {
-    const tree = new TREE(
-      `tree_s2_${kind}`, name, -5 + i, 0, 4,
-      `TREE — pixelová varianta „${kind}".`, kind,
-    );
-    // Vítr — náhodná fáze + drobně rozladěné periody → 10 stromů se kymácí
-    // nezávisle (bez desyncu by tvořily synchronní „taneční" pohyb).
-    // amplitude 0.16 j ≈ 16 cm posun špičky (~10° ohnutí) — slušný vánek.
-    tree.ANIMATE = {
+  populateNorthernScene(scene, pathOccupiedCells(pathPoints));
+}
+
+// Spočítá grid buňky (X, Z), kterými PATH prochází — populate je pak skipne,
+// aby dekorace nepřekrývaly cestu. Vzorkujeme 128× Catmull-Rom curve a každý
+// vzorek zaokrouhlíme na grid; sousední voxely (±1 v X i Z) skip taky kvůli
+// jitteru +/−0.2 j v populate (drobné dekorace by jinak vyčuhovaly nad cestu).
+function pathOccupiedCells(points) {
+  const set = new Set();
+  if (points.length < 2) return set;
+  const v3pts = points.map((p) => new THREE.Vector3(p[0], p[1], p[2]));
+  const curve = new THREE.CatmullRomCurve3(v3pts, false, "catmullrom", 0.5);
+  for (const p of curve.getPoints(128)) {
+    const gx = Math.round(p.x);
+    const gz = Math.round(p.z);
+    set.add(`${gx},${gz}`);
+  }
+  return set;
+}
+
+// === Procedurální dekorace severského podnebí ===
+// Vyplní 10×10 dioráma stromy, keři, trávou, kameny a padlými kmeny. Severský
+// mix: smrk dominuje (70%), bříza akcent (20%), suchý strom občas (10%);
+// keře, kapradiny, mechové kameny. Deterministická RNG (mulberry32, seed 42)
+// pro reprodukovatelnost.
+
+// Mulberry32 — deterministický pseudo-random generátor (4 řádky, 32-bit state).
+function mulberry32(seed) {
+  return function () {
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Najde nejvyšší voxel v každé (X, Z) buňce 10×10 gridu z LAYOUT-u.
+// Vrací Map s klíčem `${x},${z}` → { y, kind }.
+function topVoxelMap(layout) {
+  const map = new Map();
+  for (const [kind, x, y, z] of layout) {
+    const key = `${x},${z}`;
+    const prev = map.get(key);
+    if (!prev || y > prev.y) map.set(key, { y, kind });
+  }
+  return map;
+}
+
+function populateNorthernScene(scene, pathBlocked = new Set()) {
+  const top = topVoxelMap(SCENE_LAYOUT);
+  // Voxely obsazené tunely a rampami — žádná dekorace nahoře.
+  const blocked = new Set(["-4,-3", "3,-3", "-4,0", "-4,1"]);
+  for (const key of pathBlocked) blocked.add(key);
+  const rng = mulberry32(42);
+  const pick = (arr) => arr[Math.floor(rng() * arr.length)];
+
+  // Severský mix — váhy přes opakování v poli (KISS místo cumulative table).
+  const TREE_KINDS  = ["spruce", "spruce", "spruce", "spruce", "spruce",
+                       "birch",  "birch",
+                       "dead",
+                       "bonsai"];
+  const GRASS_KINDS = ["short", "short", "fern"];
+  const ROCK_KINDS  = ["small", "small", "medium", "mossy"];
+  const LOG_KINDS   = ["birch", "pine"];
+
+  let counter = 0;
+  for (let x = -5; x <= 4; x++) {
+    for (let z = -5; z <= 4; z++) {
+      const key = `${x},${z}`;
+      if (blocked.has(key)) continue;
+      const t = top.get(key);
+      if (!t) continue;
+
+      // Pixel-voxel COMPOSITES: lokální helpery (`treeVoxel`) mají bottom na
+      // local Y=−0.5, takže instance.Y musí být **+1 nad grid Y top voxelu**
+      // (= 0.5 j nad surface = group origin centrum nad povrchem). Pro grass
+      // na grid Y=−1 → instance.Y=0 (mesh bottom svět = −0.5 = surface).
+      const instY = t.y + 1;
+      // Drobný jitter (±0.2 j) — eliminuje vizuální mřížkovost rozmístění.
+      const jx = x + (rng() - 0.5) * 0.4;
+      const jz = z + (rng() - 0.5) * 0.4;
+
+      const r = rng();
+
+      // Skála (stone top): drobné kameny rozházené po povrchu — small a micro.
+      if (t.kind === "stone") {
+        const yawStone = rng() * 360;
+        if (r < 0.30) spawnRock(scene, counter++, jx, instY, jz, "small", yawStone);
+        else if (r < 0.70) spawnRock(scene, counter++, jx, instY, jz, "micro", yawStone);
+        continue;
+      }
+
+      // Náhodná Y rotace pro každou dekoraci (DD-26) — eliminuje
+      // mřížkový vzhled (všechny stromy stejně otočené).
+      const yaw = rng() * 360;
+
+      // Hlína (dirt top, peak zadní stěny bez grass): suchý strom občas, kameny.
+      if (t.kind !== "grass") {
+        if (r < 0.15) spawnRock(scene, counter++, jx, instY, jz, "small", yaw);
+        else if (r < 0.225) spawnTree(scene, counter++, jx, instY, jz, "dead", yaw);
+        else if (r < 0.40) spawnRock(scene, counter++, jx, instY, jz, "micro", yaw);
+        continue;
+      }
+
+      // Grass top — hlavní severský mix. Vícevoxelové dekorace (strom/keř/rock/
+      // log/short+fern grass) zhruba × 0.75 oproti sez. 17 prvotnímu nastavení;
+      // mikro vrstva (1-voxel rock/grass/stump) doplňuje hustotu drobnostmi.
+      if (r < 0.075) {
+        spawnTree(scene, counter++, jx, instY, jz, pick(TREE_KINDS), yaw);
+      } else if (r < 0.120) {
+        spawnTree(scene, counter++, jx, instY, jz, "bush", yaw);
+      } else if (r < 0.180) {
+        spawnRock(scene, counter++, jx, instY, jz, pick(ROCK_KINDS), yaw);
+      } else if (r < 0.200) {
+        spawnLog(scene, counter++, jx, instY, jz, pick(LOG_KINDS), yaw);
+      } else if (r < 0.410) {
+        spawnGrass(scene, counter++, jx, instY, jz, pick(GRASS_KINDS), yaw);
+      } else if (r < 0.470) {
+        spawnRock(scene, counter++, jx, instY, jz, "micro", yaw);
+      } else if (r < 0.580) {
+        spawnGrass(scene, counter++, jx, instY, jz, "micro", yaw);
+      } else if (r < 0.610) {
+        spawnLog(scene, counter++, jx, instY, jz, "stump", yaw);
+      }
+    }
+  }
+}
+
+function spawnTree(scene, id, x, y, z, kind, yaw) {
+  const tree = new TREE(
+    `deco_tree_${id}`, `Strom (${x.toFixed(1)}, ${z.toFixed(1)})`, x, y, z,
+    `TREE — pixelová varianta „${kind}".`, kind,
+  );
+  tree.ORIENTATION = yaw;
+  tree.ANIMATE = {
+    kind:      "tree_sway",
+    periodX:   3.5 + Math.random() * 1.5,
+    periodZ:   2.7 + Math.random() * 1.0,
+    amplitude: 0.04,
+    phaseX:    Math.random() * Math.PI * 2,
+    phaseZ:    Math.random() * Math.PI * 2,
+  };
+  scene.add(createMeshFor(tree));
+}
+
+function spawnGrass(scene, id, x, y, z, kind, yaw) {
+  const tuft = new GRASS_TUFT(
+    `deco_grass_${id}`, `Tráva (${x.toFixed(1)}, ${z.toFixed(1)})`, x, y, z,
+    `GRASS_TUFT — chomáč „${kind}".`, kind,
+  );
+  tuft.ORIENTATION = yaw;
+  // Vysoké stéblo se kýve ve větru (pixel sway), krátké trsy a kapradiny stojí.
+  if (kind === "tall") {
+    tuft.ANIMATE = {
       kind:      "tree_sway",
-      periodX:   3.5 + Math.random() * 1.5,
-      periodZ:   2.7 + Math.random() * 1.0,
-      amplitude: 0.16,
+      periodX:   2.0 + Math.random() * 1.0,
+      periodZ:   1.7 + Math.random() * 0.8,
+      amplitude: 0.08,
       phaseX:    Math.random() * Math.PI * 2,
       phaseZ:    Math.random() * Math.PI * 2,
     };
-    scene.add(createMeshFor(tree));
-  });
+  }
+  scene.add(createMeshFor(tuft));
+}
+
+function spawnRock(scene, id, x, y, z, kind, yaw) {
+  const rock = new ROCK_PIXEL(
+    `deco_rock_${id}`, `Kámen (${x.toFixed(1)}, ${z.toFixed(1)})`, x, y, z,
+    `ROCK_PIXEL — varianta „${kind}".`, kind,
+  );
+  rock.ORIENTATION = yaw;
+  scene.add(createMeshFor(rock));
+}
+
+function spawnLog(scene, id, x, y, z, kind, yaw) {
+  const log = new LOG(
+    `deco_log_${id}`, `Padlý kmen (${x.toFixed(1)}, ${z.toFixed(1)})`, x, y, z,
+    `LOG — padlý kmen „${kind}".`, kind,
+  );
+  log.ORIENTATION = yaw;
+  scene.add(createMeshFor(log));
 }
 
 
-// Po DD-23 (sez. 15) zůstává jen Scéna 2 — voxelová dioráma. Scéna 1
+// Po DD-23 (sez. 15) zůstává jediná scéna — voxelová dioráma. Bývalá Scéna 1
 // + scene switcher byly odstraněny při „all-voxel" pivotu.
-buildSceneTwo(scene);
+buildScene(scene);
 
 // === Hover highlight (editor-like feedback) ===
 // Při najetí kurzoru na CUBES-potomka (kromě SPRITES) jemně zežloutne celý
@@ -2282,6 +2707,11 @@ function formatValue(key, val) {
   if (key === "ANIMATE" && typeof val === "object") {
     return val.kind || "object";
   }
+  // POINTS na PATH = pole [x, y, z] trojic. Default `Array.toString()` je sklouže
+  // všechny čárky do plochého řetězce (nečitelné). Uzávorkujeme každý bod.
+  if (key === "POINTS" && Array.isArray(val)) {
+    return val.map((p) => `(${p.join(", ")})`).join(" → ");
+  }
   return val;
 }
 
@@ -2372,6 +2802,9 @@ const KB_ZOOM_PER_SEC = 2.0;     // multiplier vzdálenosti za sekundu
 const _kbForward = new THREE.Vector3();
 const _kbRight   = new THREE.Vector3();
 const _kbDelta   = new THREE.Vector3();
+// World Y osa pro Q/E orbit — explicitní (0,1,0) místo camera.up, eliminuje
+// drift, kdyby camera.up někdy přestala být přesně vertikální.
+const _kbWorldY  = new THREE.Vector3(0, 1, 0);
 
 function updateKeyboardCamera(dt) {
   if (heldKeys.size === 0) return;
@@ -2398,14 +2831,17 @@ function updateKeyboardCamera(dt) {
     camera.position.add(_kbDelta);
   }
 
-  // Q/E rotace — kamera obíhá cíl kolem Y osy. Q = CCW (camera shifts left
-  // od pohledu kamery), E = CW. Mutujeme camera.position; cíl zůstává.
+  // Q/E rotace — kamera obíhá cíl kolem world Y osy. Q = CCW (camera shifts
+  // left od pohledu kamery), E = CW. Mutujeme camera.position; cíl zůstává.
+  // Explicitní `_kbWorldY` (ne camera.up) + `camera.lookAt` → kruh přesně
+  // kolem cíle bez postranního shiftu (sez. 17 fix).
   if (heldKeys.has("q") || heldKeys.has("e")) {
     const sign  = heldKeys.has("q") ? 1 : -1;
     const angle = sign * KB_ROT_SPEED * dt;
     _kbDelta.subVectors(camera.position, controls.target);
-    _kbDelta.applyAxisAngle(camera.up, angle);
+    _kbDelta.applyAxisAngle(_kbWorldY, angle);
     camera.position.copy(controls.target).add(_kbDelta);
+    camera.lookAt(controls.target);
   }
 
   // Zoom — Y přiblížit, X oddálit. Geometrický factor podle dt → konstantní
