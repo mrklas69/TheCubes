@@ -210,7 +210,30 @@
 - [ ] **Biome populate** *(přeneseno)* — `BIOME_TREES[climate] = { kind: weight }` + `populateVegetation(world, region, density, variety)`.
 - [ ] **BUILDING třída** *(přeneseno)* — pixel-voxel domy/sklady/věže.
 - [ ] **TRACK třída** (LINES vrstva 3, sourozenec PATH) — koleje pro vlak. Poté zvážit `LINES` abstract base třídu.
-- [ ] **DD-22 vs. pixel-voxel Y konvence** — `@AUDIT:CODE` nebo nové DD; sjednotit `treeVoxel` helper offset s VOXEL_MODEL auto-center logikou.
+- [x] **DD-22 vs. pixel-voxel Y konvence** — vyřešeno sez. 18 (DD-28 sjednocení: BLOCKS = grid-center, ostatní vizuální třídy = surface).
+- [ ] **`mtllib` reference fix** *(drobnost)*.
+- [ ] **Editor fáze 2** *(přeneseno)*.
+- [ ] **`ACTION.kind: increment`** *(přeneseno)*.
+
+## Sezení 18 (2026-05-10)
+
+- [x] **`@AUDIT:CODE`** — 12 nálezů (1 kritický, 5 doporučených, 4 kosmetické) napříč `src/` + GLOSSARY + DESIGN_DECISIONS + struktura. Všechny opraveny.
+- [x] **F1 (KRITICKÉ) — DD-28 sjednocená Y konvence** napříč CUBES potomky. **Dvě sémantiky:** BLOCKS (TCUBES, TRRAMPS, TTRAMPS, TTUNELS) = grid Y voxelu (mesh center, snap-to-int), ostatní vizuální třídy (VOXEL_MODEL + pixel-voxel COMPOSITES) = world Y surface (mesh bottom). Předtím tři konvence, pixel-voxel měl group origin posunutý o 0.5 nad surface kvůli `treeVoxel` lokálnímu offsetu. Migrace: `treeVoxel` `-0.5 + (gy + 0.5) * TREE_PX` → `(gy + 0.5) * TREE_PX`; populate `instY = t.y + 0.5` (místo `+1`). DD-28 přidáno do DESIGN_DECISIONS, GLOSSARY DD-22 sekce rozšířena o tabulku všech tříd.
+- [x] **F2 — zombie `GRASS_TUFT.tall` smazán** — sez. 17 odebrala `tall` z populate („vypadalo divně"), ale zůstal jako default + builder + dispatch + ANIMATE větev v `spawnGrass`. Cleanup: `buildGrassTall` smazán, default `kind = "short"`, ANIMATE větev smazána (ostatní KIND-y nejsou animované).
+- [x] **F3 — docstringy** v `model.js`: GRASS_TUFT (`micro/short/fern`), ROCK_PIXEL (přidán `micro`), VOXEL_MODEL (příklad `cube-grass`, zmínka „bez aktivní instance v scéně, infrastruktura pro budoucí komplexní MV importy").
+- [x] **F4 — GLOSSARY hlavička** — sez. 15 → sez. 17/18.
+- [x] **F5 — komentář v `buildScene`** — odstraněna matoucí zmínka o `Y=−0.5 = top of grass cube` (platila pro VOXEL_MODEL `tunel-grass`, ne pro aktuální TTUNELS BLOCKS).
+- [x] **F6 — `temp/` cleanup** — adresář smazán (relikvie `tunel.png` z sez. 14/15/16), přidán do `.gitignore`.
+- [x] **F7 — historické komentáře zkráceny** — GridHelper komentář smazán, humanoidi+kolize+DD-19 z 14 řádků na 3, LIT z 3 na 1, click handler z 3 na 2.
+- [x] **F8/F9 — asset templates dokumentace** — sekce v GLOSSARY o `cube-grass.vox` + `scene-palette.vox` jako MV authoring šablony bez runtime konzumenta.
+- [x] **F10 — `castShadow` duplicita v `treeVoxel`** smazána (jednotně řeší traverze v `createMeshFor`, ne helper).
+
+### Sez. 18 → sez. 19 Příště
+
+- [ ] **WORLD entity** *(přeneseno; ⚠ stále se opakuje, sez. 15+16+17+18 = 4×, blíží se stale práh 5)*.
+- [ ] **Biome populate** *(přeneseno; analogická situace)*.
+- [ ] **BUILDING třída** *(přeneseno)* — pixel-voxel domy/sklady/věže.
+- [ ] **TRACK třída** (LINES vrstva 3, sourozenec PATH) — koleje pro vlak.
 - [ ] **`mtllib` reference fix** *(drobnost)*.
 - [ ] **Editor fáze 2** *(přeneseno)*.
 - [ ] **`ACTION.kind: increment`** *(přeneseno)*.

@@ -1,6 +1,6 @@
 # Glossary
 
-Canonical terminologie projektu TheCubes. Stav po sez. 15 (DD-23 „Kostičky = jen voxely"). Smazané třídy a koncepty žijí v immutable diary jako historický kontext — zde se neuvádějí.
+Canonical terminologie projektu TheCubes. Stav po sez. 17 (DD-26 sjednocená `ORIENTATION`, DD-27 `PATH` + LINES vrstva 3, DD-28 sjednocená Y konvence). Smazané třídy a koncepty žijí v immutable diary jako historický kontext — zde se neuvádějí.
 
 ## Model
 
@@ -134,21 +134,43 @@ Engine auto-centruje XZ + posune Y bottom na `instance.Y` (DD-22 Y konvence); `N
 
 **MagicaVoxel → TheCubes** (import): user vyrobí model, exportuje přes File → Export → obj (vznikne `name.obj` + `name.mtl` + `name.png`). Soubory umístí do `assets/`. V kódu: `new VOXEL_MODEL("id", "name", X, Y, Z, "name", scale, rotationY, "...")`.
 
-### Měřítko a Y konvence VOXEL_MODELu *(DD-22)*
+### Asset templates *(sez. 18)*
 
-**Pevné měřítko** — 1 TC voxel = 1 m, 1 MV voxel = 1/16 TC voxelu = **6.25 cm**, `SCALE` default `0.625`. Velikost objektu řídí počet voxelů v MV gridu, ne scale parametr. Tunel 48³ MV → 3×3×3 TC; postava 8×5×28 MV → 0.5×0.31×1.75 m.
+V `assets/` zůstávají jen MV authoring šablony, nejsou aktuálně konzumovány runtime kódem:
 
-**Y = world Y spodní hrany mesh** (auto-snap loaderu v `buildVoxelModel`) — **ne** grid souřadnice voxelu, ne center mesh. Aby model **stál** na grass voxelu s grid souřadnicí `(gx, gy, gz)`, použij `instance.Y = gy + 0.5` (top toho voxelu).
+- **`cube-grass.vox`** — 16³ MV kostka s povrchovými voxely odpovídajícími TheCubes texturám. Výchozí bod pro budoucí komplexní MV modely (přebrat paletu, modelovat detail). Generuje `tools/export-grass-vox.mjs`.
+- **`scene-palette.vox`** — 12 swatch barev (1×1×1 voxel each) z TheCubes palety pro MV authoring. Generuje `tools/export-scene-palette-vox.mjs`.
 
-| Kde model stojí | Grid `gy` | `instance.Y` |
+Po sez. 16 (DD-25) byly všechny VOXEL_MODEL instance nahrazeny procedurálními BLOCKS (TTUNELS, TRRAMPS), takže `buildVoxelModel` infrastruktura je momentálně bez konzumenta — zachovaná pro budoucí komplexní entity (vozidla, postavy, charakteristické landmarky), kde voxel jazyk vyžaduje multi-color paletu mimo `:named-textures` rámec.
+
+### Měřítko a Y konvence *(DD-22 + DD-28)*
+
+**Pevné měřítko** — 1 TC voxel = 1 m, 1 MV voxel = 1/16 TC voxelu = **6.25 cm**, `VOXEL_MODEL.SCALE` default `0.625`. Pixel-voxel COMPOSITES (TREE/GRASS_TUFT/ROCK_PIXEL/LOG) používají voxel velikosti **0.125 j** (`TREE_PX = 0.125 = 1/8 TC = 12.5 cm`). Velikost objektu řídí počet voxelů v jeho gridu, ne scale parametr. Tunel 48³ MV → 3×3×3 TC; postava 8×5×28 MV → 0.5×0.31×1.75 m.
+
+**Y konvence — dvě sémantiky** *(DD-28 sez. 18)*:
+
+| Třída / rodina | `instance.Y` semantics | Pro stojící na grass podlaze (gy=−1) |
+|---|---|---|
+| **BLOCKS** (TCUBES, TRRAMPS, TTRAMPS, TTUNELS) | grid Y voxelu (= mesh **center**) | `Y = 0` (1C blok nad podlahou) |
+| **VOXEL_MODEL** | world Y surface (= mesh **bottom**) | `Y = −0.5` |
+| **Pixel-voxel COMPOSITES** (TREE, GRASS_TUFT, ROCK_PIXEL, LOG) | world Y surface (= group origin) | `Y = −0.5` |
+| SPRITES, PATH | libovolný Y (free 3D space) | dle obsahu |
+
+**BLOCKS = grid-Y** (= 1C grid-aligned bloky terénu, snap-to-int v rendereru DD-12 vynucuje konvenci automaticky — uživatel uvažuje „blok je ve sloupci gy=0").
+
+**Surface konvence = mesh bottom** (= „postav strom / model na povrch"):
+- Engine VOXEL_MODELu auto-snap (`buildVoxelModel` posune mesh bottom na lokální Y=0 → `group.position.y = instance.Y` zarovná na world surface).
+- Pixel-voxel `treeVoxel` použije lokální Y `(gy + 0.5) * TREE_PX` → první voxel bottom na lokální Y=0 → group origin = surface.
+
+| Kde entita stojí | Grid `gy` | `instance.Y` (surface třídy) |
 |---|---|---|
 | Standardní podlaha diorámy (grass top na world Y=−0.5) | −1 | **−0.5** |
 | Vyvýšená úroveň o 1 voxel (grass top na world Y=0.5) | 0 | **0.5** |
 | Vyvýšená úroveň o 2 voxely | 1 | **1.5** |
 
-**Pravidlo:** `instance.Y = gy + 0.5`, kde `gy` je grid souřadnice voxelu, na kterém model leží.
+**Pravidlo pro surface třídy:** `instance.Y = gy + 0.5`, kde `gy` je grid souřadnice voxelu, na kterém entita leží.
 
-**Důsledek pro vícevrstvé entity** (rampy, schody): MV grid musí výškou přesně odpovídat výškovému rozdílu, který má model spojovat. Rampa 1 m vysoká = 16 MV voxelů → spojuje sousední TC úrovně.
+**Důsledek pro vícevrstvé entity** (rampy, schody, MV modely): MV grid / pixel-voxel grid musí výškou přesně odpovídat výškovému rozdílu, který má model spojovat. Rampa 1 m vysoká = 16 MV voxelů (nebo 8 pixel-voxelů à 0.125 j) → spojuje sousední TC úrovně.
 
 ### Shape × Surface separation *(DD-24)*
 

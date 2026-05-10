@@ -318,3 +318,28 @@ Materiál: `MeshStandardMaterial` s repeating texturou (`:path-dirt` 8× podél 
 **Infotip POINTS:** speciální formátování ve `formatValue` — `(-3.5, -0.5, -3) → (0.5, -0.5, -1) → (4.5, -0.5, 1)` (uzávorkováno + šipky).
 
 **Důsledek:** vrstva LINES (DD-25 vrstva 3) má první konkrétní implementaci. Až přijde druhý sourozenec (TRACK pro koleje), zvážit zavedení `LINES` abstract base třídy (analogicky s BLOCKS / COMPOSITES base).
+
+## DD-28 — Sjednocená Y konvence per typ vizualizace (surface vs. grid-center)
+
+`instance.Y` má **dvě sémantiky** podle typu vizualizace, sjednocené napříč hierarchií CUBES potomků:
+
+- **Surface konvence** (= world Y top voxelu, na kterém entita stojí): platí pro **VOXEL_MODEL** a **pixel-voxel COMPOSITES** (TREE, GRASS_TUFT, ROCK_PIXEL, LOG). Engine zarovná spodek mesh-u přesně na `instance.Y`. Pro grass podlahu na grid `gy=-1` → `instance.Y = -0.5` (= world Y top of grass voxelu).
+- **Grid-center konvence** (= world Y středu voxelu = grid souřadnice): platí pro **BLOCKS** (TCUBES, TRRAMPS, TTRAMPS, TTUNELS) — snap-to-int v rendereru posadí mesh center přesně na grid pozici. Pro 1C blok na grid `gy=0` → `instance.Y = 0`, mesh center na world Y=0, bottom na -0.5, top na +0.5.
+
+**Pravidlo dispatche** podle typu:
+| Třída / rodina | `instance.Y` semantics | Pro stojící na grass podlaze (gy=-1) |
+|---|---|---|
+| BLOCKS (TCUBES, TRRAMPS, TTRAMPS, TTUNELS) | grid Y voxelu (= mesh center) | `Y = 0` (1C blok nad podlahou) |
+| VOXEL_MODEL | world Y surface (= mesh bottom) | `Y = -0.5` |
+| Pixel-voxel COMPOSITES (TREE, GRASS_TUFT, ROCK_PIXEL, LOG) | world Y surface (= group origin) | `Y = -0.5` |
+| SPRITES, PATH | world Y libovolný (free 3D space) | dle obsahu |
+
+**Důvod:** BLOCKS jsou 1C grid-aligned bloky tvořící krajinu — mesh-center semantics odpovídá tomu, jak uživatel uvažuje („tento blok je ve sloupci gy=0"). Snap-to-int v rendereru (DD-12) tu konvenci automaticky vynucuje. Pro **dotvarbu** (vrstva 2 voxely + externí MV modely) je naopak přirozené říct „postav strom na surface" — mesh bottom = `instance.Y`.
+
+Sez. 17 měl tři konvence (BLOCKS = grid, VOXEL_MODEL = surface, pixel-voxel = surface + 0.5) — pixel-voxel měl group origin posunutý o 0.5 nad surface kvůli `treeVoxel` lokálnímu offsetu `-0.5 + (gy + 0.5) * TREE_PX`. Sez. 18 cleanup: `treeVoxel` lokální Y zjednodušen na `(gy + 0.5) * TREE_PX` → group origin = surface, sjednoceno s VOXEL_MODEL. Populate `instY = t.y + 0.5` (ne `+1`).
+
+**Důsledek:**
+- DD-22 sekce o Y konvenci VOXEL_MODELu zůstává v platnosti, ale je teď **sub-konvencí** širšího pravidla DD-28 (surface platí pro celou vrstvu 2 + komplexní VOXEL_MODELy).
+- Migrace pixel-voxel COMPOSITES instance.Y: každá instance posunutá o `-0.5` (`instY = t.y + 0.5` místo `+1`).
+- Aktualizace `treeVoxel` (`src/main.js`): `-0.5 + (gy + 0.5) * TREE_PX` → `(gy + 0.5) * TREE_PX`. První voxel (gy=0) má bottom přesně na lokální Y=0.
+- Komentáře v `treeVoxel` + `populateNorthernScene` aktualizovány.

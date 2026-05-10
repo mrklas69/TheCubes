@@ -92,10 +92,6 @@ sun.shadow.bias = -0.0001;
 sun.shadow.normalBias = 0;
 scene.add(sun);
 
-// (Sez. 14: GridHelper a AxesHelper odstraněny — orientační pomůcky pro
-// vývojářské účely M1/M2 už nepotřebujeme. Souřadný systém Three.js Y-up
-// je etablovaný; mřížka navíc rušila čistotu dioramy.)
-
 // === Ground plane pro zachytávání stínů ===
 // PlaneGeometry je default v rovině XY (ležící vertikálně). Otočíme ji
 // o -90° kolem X, aby ležela v rovině XZ (horizontálně). `ShadowMaterial`
@@ -614,20 +610,9 @@ function animateDrift(object3d, anim, t) {
   object3d.position[axis] = base[axis] + phase - range / 2;
 }
 
-// 2D kolizní systém (DD-19) odstraněn v sez. 14 — jediný konzument byly
-// humanoidní postavy (CHARACTER/NOODLE/STICKMAN), které se přesunuly do
-// samostatného projektu ./source/Stickman. Statické voxelové dekorace se
-// mezi sebou nesrážejí — kolizní registry zbytečný.
-
-// Humanoidní pose primitives + gait animátory + wander stavový automat
-// odstraněny v sez. 14 (přesun do projektu ./source/Stickman). Smazáno:
-// applyWalkCycle/SitPose/LiePose/WorkPose, resetCharBase, WORK_POSE,
-// LIE_GROUND_Y_DEFAULT, animateWalkIdle/RunIdle/SquatLift, moveTowards,
-// NOODLE pose primitives (rebuildNoodleLimb, resetNoodleLimbs,
-// applyNoodleWalkCycle/SitPose/WorkPose, resetNoodleBase), animateWalk,
-// animateSit, animateWander + WANDER_STATES/TIMERS, WALK_PARAMS, RUN_PARAMS,
-// enterWanderState, pickNextWanderState. DD-18/19/20 zůstávají v immutable
-// logu jako historický kontext.
+// Sez. 14 cleanup: humanoidi (CHARACTER/NOODLE/STICKMAN) + 2D kolizní systém
+// (DD-19) + wander stavový automat + pose primitives + gait animátory přesunuty
+// do sibling projektu ./source/Stickman. DD-18/19/20 v immutable logu.
 
 // Lookup tabulka `kind` → animátor. Nový druh pohybu = nová větev zde (+
 // samotná funkce výš). Izomorfní s `faceMaterialFor` dispatchem (DD-14).
@@ -906,9 +891,7 @@ function registerBehavior(instance) {
   console.warn(`Neznámá nevizuální třída: ${instance.constructor.name}`);
 }
 
-// LIT fade system (BALLOON.LIT) odstraněn v sez. 15 (DD-23) — BALLOON třída
-// + lampion idiom byly non-voxel a šly pryč při „all-voxel" pivotu. Až bude
-// potřeba osvětlitelný pixel-voxel objekt, zavedeme znovu.
+// Sez. 15 cleanup: LIT fade system + BALLOON třída smazány (DD-23 „all-voxel" pivot).
 
 // === Vizualizační dispatch: instance → Three.js Object3D ===
 // Podle konkrétní třídy instance rozhodujeme, jaký vizuál sestrojit.
@@ -1761,17 +1744,17 @@ function treeMat(color) {
 }
 
 // Pixel-voxel na grid pozici (gx, gy, gz). gy=0 = první vrstva nad zemí.
-// Lokální Y center = -0.5 + (gy + 0.5) * TREE_PX → bottom face voxelu sedí
-// přesně na Y=-0.5 (= ground level v lokálním coords groupy COMPOSITES).
+// Lokální Y center = (gy + 0.5) * TREE_PX → bottom face prvního voxelu (gy=0)
+// sedí přesně na lokální Y=0 (= group origin = world surface, viz DD-28).
+// Stíny dostane mesh později v `createMeshFor` traverzi (jednotné nastavení
+// pro všechny meshe scény, ne duplicitně tady).
 function treeVoxel(group, gx, gy, gz, color) {
   const m = new THREE.Mesh(_treeBoxGeom, treeMat(color));
   m.position.set(
     (gx + 0.5) * TREE_PX,
-    -0.5 + (gy + 0.5) * TREE_PX,
+    (gy + 0.5) * TREE_PX,
     (gz + 0.5) * TREE_PX,
   );
-  m.castShadow = true;
-  m.receiveShadow = true;
   group.add(m);
 }
 
@@ -2010,13 +1993,6 @@ const DECO_C = {
 
 // --- GRASS_TUFT buildery ---
 
-// Vysoký trs — 4 stébla v rohách 1 voxelu, výška 3-5 voxelů (height-weighted
-// `tree_sway` ho rozpohybuje stejně jako stromy — top je vyšší = větší výchylka).
-function buildGrassTall(group) {
-  treeBlock(group, 0, 0, 0, 1, 4, 1, DECO_C.grassMid);
-  treeVoxel(group, 0, 4, 0, DECO_C.grassYellow);  // špička žlutozelená
-}
-
 // Mikro voxel zeleně — jediný 1×1×1 voxel (= 0.125 j ≈ 12.5 cm).
 function buildGrassMicro(group) {
   treeVoxel(group, 0, 0, 0, DECO_C.grassMid);
@@ -2046,17 +2022,16 @@ function buildGrassFern(group) {
 
 const GRASS_TUFT_BUILDERS = {
   micro: buildGrassMicro,
-  tall:  buildGrassTall,
   short: buildGrassShort,
   fern:  buildGrassFern,
 };
 
 function buildGrassTuft(group, instance) {
-  const kind = instance.KIND ?? "tall";
+  const kind = instance.KIND ?? "short";
   const builder = GRASS_TUFT_BUILDERS[kind];
   if (!builder) {
-    console.warn(`[GRASS_TUFT] Unknown KIND "${kind}", fallback "tall".`);
-    GRASS_TUFT_BUILDERS.tall(group);
+    console.warn(`[GRASS_TUFT] Unknown KIND "${kind}", fallback "short".`);
+    GRASS_TUFT_BUILDERS.short(group);
     return;
   }
   builder(group);
@@ -2357,13 +2332,10 @@ function buildScene(scene) {
     scene.add(createMeshFor(FACTORIES[kind](id, x, y, z)));
   }
 
-  // Tunelové oblouky — voxelový model `tunel` (MagicaVoxel).
-  // SCALE 0.625 = pevná konvence: 1 MV voxel = 1 pixel textury = 1/16 TC voxelu
-  // = 6.25 cm. Velikost objektu řídí MV grid; nový tunel 48³ MV → 3×3×3 TC.
-  // Y=−0.5 = top of grass cube (auto-center loadera posadí mesh na surface).
   // Tunelové vstupy — TTUNELS bloky (DD-25 procedurální geometrie). Nahrazují
   // dřívější 3×3×3 TC VOXEL_MODEL `tunel-grass` (sez. 14, DD-21). 1C velikost
-  // místo 3C — užší tunel, ale konzistentní s rodinou Bloků.
+  // místo 3C — užší tunel, ale konzistentní s rodinou Bloků. Y=0 = grid Y voxelu
+  // (BLOCKS = mesh center semantics, snap-to-int v rendereru; viz DD-28).
   // Vlak jezdí podél X osy na Z = −3. Default ORIENTATION=0 = vstupy ±X.
   // SIDES = `:dirt` (eliminuje druhý grass-strip pásek).
   const TUNEL_TEX = {
@@ -2502,11 +2474,11 @@ function populateNorthernScene(scene, pathBlocked = new Set()) {
       const t = top.get(key);
       if (!t) continue;
 
-      // Pixel-voxel COMPOSITES: lokální helpery (`treeVoxel`) mají bottom na
-      // local Y=−0.5, takže instance.Y musí být **+1 nad grid Y top voxelu**
-      // (= 0.5 j nad surface = group origin centrum nad povrchem). Pro grass
-      // na grid Y=−1 → instance.Y=0 (mesh bottom svět = −0.5 = surface).
-      const instY = t.y + 1;
+      // DD-28 surface konvence: pixel-voxel COMPOSITES + VOXEL_MODEL používají
+      // `instance.Y = world Y surface = gy + 0.5` (= top voxelu, na kterém model
+      // stojí). Pro grass podlahu na grid Y=−1 → t.y=−1 → instance.Y=−0.5.
+      // BLOCKS (TCUBES, TRRAMPS, ...) mají naopak grid-Y semantics (= mesh center).
+      const instY = t.y + 0.5;
       // Drobný jitter (±0.2 j) — eliminuje vizuální mřížkovost rozmístění.
       const jx = x + (rng() - 0.5) * 0.4;
       const jz = z + (rng() - 0.5) * 0.4;
@@ -2580,17 +2552,6 @@ function spawnGrass(scene, id, x, y, z, kind, yaw) {
     `GRASS_TUFT — chomáč „${kind}".`, kind,
   );
   tuft.ORIENTATION = yaw;
-  // Vysoké stéblo se kýve ve větru (pixel sway), krátké trsy a kapradiny stojí.
-  if (kind === "tall") {
-    tuft.ANIMATE = {
-      kind:      "tree_sway",
-      periodX:   2.0 + Math.random() * 1.0,
-      periodZ:   1.7 + Math.random() * 0.8,
-      amplitude: 0.08,
-      phaseX:    Math.random() * Math.PI * 2,
-      phaseZ:    Math.random() * Math.PI * 2,
-    };
-  }
   scene.add(createMeshFor(tuft));
 }
 
@@ -2781,9 +2742,8 @@ canvas.addEventListener("pointerleave", () => {
   lastHoveredInstance = null;
 });
 
-// Click handler odstraněn v sez. 15 (DD-23) — jediná interakce byla toggle
-// BALLOON.LIT, ta zmizela s BALLOON třídou. Až bude nová interaktivní entita,
-// refaktor na `INTERACTIONS = { ClassName: fn }` dispatch.
+// Sez. 15 cleanup: click handler smazán s BALLOON.LIT (DD-23). Až bude nová
+// interaktivní entita, refaktor na `INTERACTIONS = { ClassName: fn }` dispatch.
 
 // === Klávesové ovládání kamery ===
 // WASD = horizontální pan (W/S podél kamerového „forward" promítnutého na XZ

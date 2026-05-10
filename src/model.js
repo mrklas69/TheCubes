@@ -324,11 +324,14 @@ export class TREE extends COMPOSITES {
 
 /**
  * GRASS_TUFT = pixel-voxel chomáč trávy / kapradiny na zemi (vrstva 2 DD-25).
- * KIND-y: `"tall"` (stéblo trávy 4-5 voxelů vysoké), `"short"` (3-4 voxely
- * trsu), `"fern"` (pět-listá kapradina rozšířená do stran).
+ * KIND-y: `"micro"` (jediný 1×1×1 voxel pro mikro posyp), `"short"` (3-4 voxely
+ * trsu, 2×2 půdorys), `"fern"` (pět-listá kapradina rozšířená do stran).
+ *
+ * Sez. 17 — varianta `"tall"` byla odstraněna (vypadala divně, dlouhá stébla
+ * neseděla do severského mixu).
  */
 export class GRASS_TUFT extends COMPOSITES {
-  constructor(id, name, x, y, z, description = "", kind = "tall") {
+  constructor(id, name, x, y, z, description = "", kind = "short") {
     super(id, name, x, y, z, description);
     this.KIND = kind;
   }
@@ -336,8 +339,9 @@ export class GRASS_TUFT extends COMPOSITES {
 
 /**
  * ROCK_PIXEL = pixel-voxel kámen / balvan (vrstva 2 DD-25). Náhrada za sez. 15
- * smazanou ROCK třídu (icosahedron, DD-23 pivot). KIND-y: `"small"` (2×1×2
- * shluk), `"medium"` (3×2×3), `"mossy"` (medium s mechovou záplatou nahoře).
+ * smazanou ROCK třídu (icosahedron, DD-23 pivot). KIND-y: `"micro"` (jediný
+ * 1×1×1 voxel oblázek), `"small"` (2×1×2 shluk se světlou špičkou), `"medium"`
+ * (3×2×3 cluster s temnými rohy), `"mossy"` (medium s mechovou záplatou nahoře).
  */
 export class ROCK_PIXEL extends COMPOSITES {
   constructor(id, name, x, y, z, description = "", kind = "small") {
@@ -398,8 +402,8 @@ export class PATH extends CUBES {
  * Engine asynchronně dotáhne soubor a vyplní `Group` o načtený `Object3D`.
  *
  * Atributy:
- *  - `ASSET` — basename souboru v `./assets/` (např. `"tunel"` → `tunel.obj`
- *    + `tunel.mtl` + `tunel.png`).
+ *  - `ASSET` — basename souboru v `./assets/` (např. `"cube-grass"` → `cube-grass.obj`
+ *    + `cube-grass.mtl` + `cube-grass.png`).
  *  - `SCALE` — uniformní scale faktor (DD-22 konvence: **0.625**, tj. 1 MV
  *    voxel = 1/16 TC voxelu = 6.25 cm. Velikost objektu řídí MV grid; tunel
  *    48³ MV se vyrenderuje jako 3×3×3 TC).
@@ -407,10 +411,16 @@ export class PATH extends CUBES {
  *    stupních [0, 360), default 0. Engine převede na radiány.
  *
  * Engine po načtení **auto-centruje** model v XZ a posune Y tak, aby spodek
- * mesh seděl na `instance.Y` → instance.Y = world Y land surface.
+ * mesh seděl na `instance.Y` (DD-28 — surface konvence sdílená s pixel-voxel
+ * COMPOSITES).
  *
  * Use case: importovat hotové 3D modely z externích nástrojů bez nutnosti
  * ručně kódit COMPOSITES dispatch.
+ *
+ * Sez. 17 stav: žádná aktivní instance ve scéně (`tunel-grass` a `ramp-grass`
+ * nahrazeny TTUNELS / TRRAMPS v sez. 16). Třída i `cube-grass.vox` template
+ * v `assets/` zůstávají jako infrastruktura pro budoucí komplexní MV importy
+ * (vozidla, postavy, charakteristické landmarky).
  */
 export class VOXEL_MODEL extends COMPOSITES {
   constructor(id, name, x, y, z, asset, scale = 0.625, description = "") {
