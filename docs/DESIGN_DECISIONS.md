@@ -343,3 +343,24 @@ Sez. 17 měl tři konvence (BLOCKS = grid, VOXEL_MODEL = surface, pixel-voxel = 
 - Migrace pixel-voxel COMPOSITES instance.Y: každá instance posunutá o `-0.5` (`instY = t.y + 0.5` místo `+1`).
 - Aktualizace `treeVoxel` (`src/main.js`): `-0.5 + (gy + 0.5) * TREE_PX` → `(gy + 0.5) * TREE_PX`. První voxel (gy=0) má bottom přesně na lokální Y=0.
 - Komentáře v `treeVoxel` + `populateNorthernScene` aktualizovány.
+
+## DD-29 — WORLD singleton: nevizuální OBJECTS-derived globální stav, atributy gated by konzument
+
+`WORLD` je nevizuální OBJECTS-derived singleton pro globální stav scény — bez `X/Y/Z` (žije v modelu, ne v prostoru). První instance: `world` v `src/main.js`. Sez. 20.
+
+**Atributy přibývají jen tehdy, když mají živého konzumenta** v engine. YAGNI sloty „pro budoucnost" nejsou povolené.
+
+| Atribut | Default | Konzument | Stav |
+|---|---|---|---|
+| `WIND_STRENGTH` | `1.0` | `animateTreeSway` (násobí amplitudu) | aktivní (sez. 20) |
+| `SUN_ANGLE` | — | (den/noc shader) | odložen (IDEAS) |
+| `CLIMATE` | — | (biome populate) | odložen (IDEAS) |
+| `SEASON` | — | (sezónní textury / vegetace) | odložen (IDEAS) |
+| `DAY` | — | (časová animace) | odložen (IDEAS) |
+| `WIND_DIRECTION` | — | (direction-aware sway) | odložen (`tree_sway` je izotropní) |
+
+**Plochá struktura** (`WIND_STRENGTH`, ne nested `WIND.strength`) — generický infotip (DD-08) přes `Object.entries` zobrazí číslo přímo. Když se v budoucnu objeví druhý wind atribut (`WIND_DIRECTION`), pohlídá se konzistence (taky ploše: `WIND_DIRECTION`); refaktor na nested se vyplatí až při ≥3 atributech jedné kategorie.
+
+**Důvod (DO/DROP rozhodnutí v sez. 20):** `tree_sway` má hardcoded amplitudu — globální regulátor je první přirozený „světový stav" a uvolní pattern pro další (až bude konzument). „Foundations before curtains" princip: model nezaplňovat dopředu. WORLD bez X/Y/Z **demonstruje hodnotu DD-01** (OBJECTS = cokoli v modelu, CUBES = cokoli s polohou) — singleton tu separaci ospravedlní.
+
+**Důsledek:** nový `instanceof WORLD` dispatch v `registerBehavior` se zatím **nezavádí** — singleton žije jako modul-level konstanta. Pokud přibude druhá podobná entita (např. `CLIMATE_ZONES` registry), zvážit obecnější „registry singletons" pattern. Dev exposure přes `window.world` = jednorázová pragma pro test v konzoli.

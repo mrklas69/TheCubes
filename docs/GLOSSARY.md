@@ -1,6 +1,6 @@
 # Glossary
 
-Canonical terminologie projektu TheCubes. Stav po sez. 17 (DD-26 sjednocená `ORIENTATION`, DD-27 `PATH` + LINES vrstva 3, DD-28 sjednocená Y konvence). Smazané třídy a koncepty žijí v immutable diary jako historický kontext — zde se neuvádějí.
+Canonical terminologie projektu TheCubes. Stav po sez. 17–20 (DD-26 sjednocená `ORIENTATION`, DD-27 `PATH` + LINES vrstva 3, DD-28 sjednocená Y konvence, DD-29 `WORLD` singleton). Smazané třídy a koncepty žijí v immutable diary jako historický kontext — zde se neuvádějí.
 
 ## Model
 
@@ -48,6 +48,7 @@ Historicky (před DD-26, sez. 16) byla `BLOCKS.ORIENTATION` integer enum 0..3 a 
 
 - **TIMER** — atributy: `INTERVAL` (počet ticků mezi firem) a `ACTION = { kind, target, attr, value? }`. První skutečná reakce na `TIME.tick` (DD-04 dostal use case). Engine dispatch `ACTIONS[kind]` — aktuálně `toggle` (flip bool) a `set` (nastavit hodnotu). Registrace přes `registerBehavior(instance)` (symetrický sibling `scene.add(createMeshFor(...))` pro vizuální entity). Viz DD-17. *(M8+.)*
 - **COUNTER** — atributy `VALUE` (int, default 0) a `INCREMENT` (int, default 1, může být záporné). Engine při `registerBehavior` dynamicky přidá řádek do HUD elementu `#hud` a v tick handleru mutuje `VALUE += INCREMENT`. Demonstruje **HUD observability** — nevizuální ≠ neviditelný, COUNTER je čitelný vedle `TIME`. `VALUE` je obyčejné datové pole, TIMER.ACTION `set` ho může kdykoli přepsat (např. reset). *(M8+.)*
+- **WORLD** — singleton globálního stavu scény (DD-29, sez. 20). Bez `X/Y/Z` (žije v modelu, ne v prostoru) — demonstruje DD-01 separation. Atribut `WIND_STRENGTH` (float, default `1.0`) — multiplikátor amplitudy `tree_sway` animátoru: `1.0` = aktuální stav, `0` = bezvětří, `2` = bouře. Instance `world` v `src/main.js`, dev exposure přes `window.world` (test v konzoli `world.WIND_STRENGTH = 2`). Žádná `registerBehavior` registrace (žije čistě jako data, žádný tickHandler ani DOM). Další atributy (`SUN_ANGLE`, `CLIMATE`, `SEASON`, `DAY`, `WIND_DIRECTION`) přibudou jen s živým konzumentem (politika DD-29) — viz `IDEAS.md`. *(M8+, sez. 20.)*
 
 ## Čas
 
@@ -59,7 +60,7 @@ Historicky (před DD-26, sez. 16) byla `BLOCKS.ORIENTATION` integer enum 0..3 a 
 
 ### Aktivní `ANIMATE.kind`y
 
-- **tree_sway** — pixel-voxel strom se kymácí ve větru. Per-children mutace na `group.children` s **height-weighted amplitudou** (`heightFactor = max(0, base.y + 0.5)` → kmen statický u země, špička maximální výchylka). Random fáze per strom (`phaseX`, `phaseZ`) + nesoudělné periody (3.5–5 s × 2.7–3.7 s) → desync mezi instancemi. Lazy snapshot v `userData.swayBase` (per-children pozice).
+- **tree_sway** — pixel-voxel strom se kymácí ve větru. Per-children mutace na `group.children` s **height-weighted amplitudou** (`heightFactor = max(0, base.y + 0.5)` → kmen statický u země, špička maximální výchylka). Random fáze per strom (`phaseX`, `phaseZ`) + nesoudělné periody (3.5–5 s × 2.7–3.7 s) → desync mezi instancemi. Lazy snapshot v `userData.swayBase` (per-children pozice). Globální amplituda škálována `world.WIND_STRENGTH` (DD-29, sez. 20).
 - **rotate** — rovnoměrná rotace celého Object3D kolem zadané osy. Parametry `axis` (`"x"`/`"y"`/`"z"`, default `"y"`) a `period` (doba jednoho otočení v sekundách). Generický — mutuje `object3d.rotation` přímo, nevyžaduje `userData.parts`. Funguje napříč třídami (TCUBES, COMPOSITES, …).
 - **orbit_stadium** — uzavřená oválná dráha (atletický ovál = 2 rovné úseky + 2 půlkruhy) v rovině XZ kolem `userData.base`. Parametry `length` (L, rovná část; dlouhá osa X), `radius` (R, poloměr oblouku; krátká osa 2R), `period` (T, doba oběhu). Heading (`rotation.y`) sleduje tečnu dráhy → NORTH strana vždy ukazuje dopředu jako auto na trati.
 - **drift** — lineární pohyb po jedné ose s **wrap-around** — když objekt opustí pás šířky `range`, vrátí se z opačné strany (skok). Parametry: `axis` (`"x"`/`"y"`/`"z"`, default `"x"`), `speed` (j/s, default 1.0), `range` (šířka pásu v jednotkách, default 16). Pozice obíhá v intervalu `[base − range/2, base + range/2]` kolem `userData.base`.

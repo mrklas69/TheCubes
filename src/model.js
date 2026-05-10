@@ -490,3 +490,24 @@ export class TIMER extends OBJECTS {
     this.ACTION = null;
   }
 }
+
+/**
+ * WORLD = nevizuální singleton OBJECTS-derived entita pro globální stav scény
+ * (DD-29, sez. 20). Žije v modelu, nemá X/Y/Z (= demonstruje DD-01 separation:
+ * OBJECTS = cokoli v modelu, CUBES = cokoli s polohou).
+ *
+ * Atribut `WIND_STRENGTH` (float, default 1.0) — multiplikátor amplitudy
+ * `tree_sway` animátoru. `1.0` = aktuální stav (nevíme o tom), `0` = bezvětří
+ * (stromy stojí), `2` = bouře. Plochá struktura (`WIND_STRENGTH`, ne nested
+ * `WIND.strength`) — KISS pro infotip + zatím jediný atribut větru.
+ *
+ * Politika DD-29: další atributy (SUN_ANGLE, CLIMATE, SEASON, DAY,
+ * WIND_DIRECTION) přibudou jen tehdy, když budou mít živého konzumenta —
+ * žádné YAGNI sloty „pro budoucnost". Otevřené nápady viz `docs/IDEAS.md`.
+ */
+export class WORLD extends OBJECTS {
+  constructor(id = "world", name = "World", description = "Globální stav scény (singleton).") {
+    super(id, name, description);
+    this.WIND_STRENGTH = 1.0;
+  }
+}

@@ -8,7 +8,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
-import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TTUNELS, SPRITES, COMPOSITES, TREE, GRASS_TUFT, ROCK_PIXEL, LOG, VOXEL_MODEL, PATH, TIMER, COUNTER } from "./model.js";
+import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TTUNELS, SPRITES, COMPOSITES, TREE, GRASS_TUFT, ROCK_PIXEL, LOG, VOXEL_MODEL, PATH, TIMER, COUNTER, WORLD } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
 
 // === Renderer ===
@@ -404,6 +404,16 @@ function faceMaterialFor(val) {
 // je čistě datový, o Three.js neví. Animátor je tedy v `main.js`, ne v třídě.
 const animators = [];
 
+// WORLD singleton (DD-29, sez. 20) — globální stav scény. `WIND_STRENGTH`
+// čte `animateTreeSway`. Nevizuální entita, nemá registraci (žádný
+// tickHandler ani DOM) — žije čistě jako data.
+// Dev exposure přes `window.world` — bez `registerBehavior` infrastruktury
+// (která je pro tickHandlers / HUD řádky) je to nejjednodušší cesta, jak
+// otestovat efekt v konzoli: `world.WIND_STRENGTH = 2` → bouře, `0` →
+// bezvětří. Pokud přibude víc dev singletonů, dá se sjednotit pod `window.tc.*`.
+const world = new WORLD();
+window.world = world;
+
 // Plný kruh v radiánech — pojmenovaná konstanta, aby `(TAU * t) / period` šel
 // číst jako „kolik period uplynulo v radiánech". Math.PI * 2 = 2π.
 const TAU = Math.PI * 2;
@@ -433,8 +443,11 @@ function oscPhase(t, period, offset = 0) {
 function animateTreeSway(group, anim, t) {
   const phaseX = oscPhase(t, anim.periodX, anim.phaseX ?? 0);
   const phaseZ = oscPhase(t, anim.periodZ, (anim.phaseZ ?? 0) + Math.PI / 3);
-  const sx = anim.amplitude * Math.sin(phaseX);
-  const sz = anim.amplitude * Math.sin(phaseZ);
+  // Globální vítr (DD-29) škáluje amplitudu všech stromů jednotně.
+  // `world.WIND_STRENGTH = 1.0` (default) = beze změny vůči pre-DD-29 stavu.
+  const amp = anim.amplitude * world.WIND_STRENGTH;
+  const sx = amp * Math.sin(phaseX);
+  const sz = amp * Math.sin(phaseZ);
   for (const child of group.children) {
     if (!child.userData.swayBase) {
       child.userData.swayBase = {

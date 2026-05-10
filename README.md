@@ -41,18 +41,19 @@ OBJECTS (ID, NAME, DESCRIPTION, ANIMATE)
  │    │    └── VOXEL_MODEL (ASSET, SCALE)
  │    └── PATH (KIND, POINTS — LINES vrstva 3, DD-27)
  ├── TIMER (INTERVAL, ACTION)
- └── COUNTER (VALUE, INCREMENT)
+ ├── COUNTER (VALUE, INCREMENT)
+ └── WORLD (WIND_STRENGTH) — singleton, DD-29
 ```
 
 **Aktivní `ANIMATE.kind`y:** `tree_sway`, `rotate`, `orbit_stadium`, `pulse`, `drift`.
 
 **Milníky:**
 - **M1–M7** hotové (sez. 1–5): statický svět, voxelové potomky, COMPOSITES, SPRITES, TCUBES, ANIMATE dispatch.
-- **M8+** průběžně (sez. 6–18): další `ANIMATE.kind`y, SPRITES.SPEAKER tracking (DD-16), TIMER + COUNTER (DD-17), MagicaVoxel pipeline (DD-21), pevné měřítko (DD-22), all-voxel pivot (DD-23), shape × surface separation (DD-24), 4-vrstvá taxonomie + BLOCKS rodina (DD-25), sjednocená ORIENTATION (DD-26), PATH třída (DD-27), sjednocená Y konvence (DD-28).
+- **M8+** průběžně (sez. 6–20): další `ANIMATE.kind`y, SPRITES.SPEAKER tracking (DD-16), TIMER + COUNTER (DD-17), MagicaVoxel pipeline (DD-21), pevné měřítko (DD-22), all-voxel pivot (DD-23), shape × surface separation (DD-24), 4-vrstvá taxonomie + BLOCKS rodina (DD-25), sjednocená ORIENTATION (DD-26), PATH třída (DD-27), sjednocená Y konvence (DD-28), WORLD singleton (DD-29).
 
-Detail v `CLAUDE.md` (Status), `docs/DIARY.md` (chronologie sezení), `docs/DESIGN_DECISIONS.md` (DD-01 až DD-28).
+Detail v `CLAUDE.md` (Status), `docs/DIARY.md` (chronologie sezení), `docs/DESIGN_DECISIONS.md` (DD-01 až DD-29).
 
-**Plán:** WORLD entity (WIND/SUN/CLIMATE/SEASON); BUILDING (vrstva 2); TRACK (vrstva 3 sourozenec PATH); editor fáze 2.
+**Plán:** Biome populate (gated by `WORLD.CLIMATE` — DD-29 politika); BUILDING (vrstva 2); TRACK (vrstva 3 sourozenec PATH); editor fáze 2.
 
 ## Stack
 
