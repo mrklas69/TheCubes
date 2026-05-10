@@ -77,6 +77,7 @@ Pak otevři `http://localhost:8000/` v prohlížeči.
 
 - `CLAUDE.md` — projektové instrukce pro AI
 - `docs/TODO.md` — aktivní úkoly
+- `docs/DONE.md` — archiv hotových úkolů
 - `docs/IDEAS.md` — raw nápady
 - `docs/GLOSSARY.md` — terminologie
 - `docs/DESIGN_DECISIONS.md` — schválená rozhodnutí

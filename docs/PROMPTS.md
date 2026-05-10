@@ -1,10 +1,10 @@
 # PROMPTS.md — Makra pro Claude (projekt TheCubes)
 
-Projektově specifická makra. Globální makra (`@THINK`, `@AUDIT:CODE`, `@AUDIT:DOCS`) jsou v `~/.claude/CLAUDE.md` a platí i zde.
+Projektově specifická makra. Globální makra (`%THINK`, `%AUDIT:CODE`, `%AUDIT:DOCS`) jsou v `~/.claude/CLAUDE.md` a platí i zde.
 
 ---
 
-## @BEGIN — Zahájení sezení
+## %BEGIN — Zahájení sezení
 
 Zahajujeme nové sezení na projektu TheCubes.
 
@@ -53,7 +53,7 @@ Pokud spuštění selže (port obsazený jiným procesem, chybí Python, …), v
 
 ---
 
-## @END — Ukončení sezení
+## %END — Ukončení sezení
 
 Uzavíráme toto sezení na TheCubes.
 

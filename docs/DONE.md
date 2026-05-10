@@ -1,0 +1,206 @@
+# DONE — Hotové úkoly
+
+Archiv splněných úkolů z `docs/TODO.md`. DROP položky (zrušené nápady) jsou zde s odkazem na rozhodnutí pro budoucí kontext. Detaily sezení v `docs/diary/YYYY-MM-DD.md`, designová rozhodnutí v `docs/DESIGN_DECISIONS.md`.
+
+## M1 — Statický svět s hodinami
+
+- [x] Založit strukturu projektu (README, CLAUDE.md, docs/, src/)
+- [x] `index.html` shell s import mapou pro Three.js
+- [x] `src/model.js` — třídy `OBJECTS` a `CUBES`
+- [x] `src/time.js` — globální `TIME` + `advanceTime()`
+- [x] `src/main.js` — Three.js scéna, kamera, render loop, jedna kostka v (0,0,0)
+- [x] HUD: `TIME: <tick>` v rohu
+- [x] Ovládání kamery (OrbitControls)
+- [x] Šachovnicová textura pro mateřskou CUBES (DD-07)
+- [x] Infotip panel na hover (DD-08)
+- [x] Ověřit v prohlížeči — kostka se zobrazí, kamera funguje, TIME tiká, infotip funguje
+- [x] Osvětlení — DD-10 nahrazuje DD-09 (zleva shora)
+- [x] `git init` + první commit (sez. 2, `ce50345` na `main`)
+
+## M2 — Orientace + první potomek
+
+- [x] **A)** `GridHelper` + `AxesHelper` ve scéně (orientační pomůcky).
+- [x] **B)** První potomek `CUBES` — `TERRAIN` s atributem `COLOR` (JS number 0xRRGGBB). Override default šachovnice plochou barvou.
+- [x] **B)** 3×3 grid: centrální `CUBES` (šachovnice), okolo 8 `TERRAIN` s duhovou paletou clockwise.
+- [x] Ověřit, že infotip funguje generic i pro `TERRAIN` (ukáže `COLOR` formátované jako `#rrggbb`).
+- [x] Zapsat DD-11 (vizualizační dispatch v engine, ne na třídě).
+
+## M3 — COMPOSITES + strom, jednotný souřadný systém
+
+- [x] DD-12: uvolnit DD-03, CUBES má float X/Y/Z, voxel renderer snap-to-grid.
+- [x] DD-13: terminologie potomků CUBES (CCUBES, TCUBES, SPRITES, COMPOSITES).
+- [x] Refactor `TERRAIN` → `CCUBES` (src + docs; DD-11/DIARY sez. 2 immutable, historická poznámka v GLOSSARY).
+- [x] `COMPOSITES extends CUBES` v `src/model.js` — značkovací třída bez atributů.
+- [x] `TREE extends COMPOSITES` — konkrétní instance.
+- [x] `createMeshFor` rozšířit o COMPOSITES dispatch → `THREE.Group`.
+- [x] `buildTree` — kmen + 3 kužely z Three.js primitivů.
+- [x] Umístit `tree_0001` na (3, 0, 0) ve scéně.
+- [x] Ověřit v prohlížeči: strom se vykreslí, infotip ukazuje třídu `TREE` + atributy, duha a středová kostka stále fungují.
+
+## M4 — BALLOON mimo grid
+
+- [x] `BALLOON extends COMPOSITES` s atributem `COLOR` (vak).
+- [x] `buildBalloon` v enginu: vak (SphereGeometry) + koš (BoxGeometry) + 4 lana (CylinderGeometry). Helper `cylinderBetween(a, b, radius, mat)`.
+- [x] Dispatch pro `BALLOON` v `createCompositeFor`.
+- [x] Instance `balloon_0001` na **float** pozici — přesunuto na `(1, 3, 2)` pro dobrou projekci stínu (mimo grid, demonstrace DD-12).
+- [x] Ověřit v prohlížeči: balón visí nad scénou, pozice nesnapovaná na int, infotip ukáže `BALLOON` + `COLOR` jako `#ff6b35`.
+- [x] **Stíny** (bonus M4): `renderer.shadowMap` (PCFSoftShadowMap), `sun.castShadow` + ortho frustum + bias, ShadowMaterial ground plane, shadow flagy v `createMeshFor`. Sníženo `AmbientLight` 0.4 → 0.15 kvůli self-shadow kontrastu.
+
+## M5 — SPRITES (dialog bubble)
+
+- [x] `SPRITES extends CUBES` s atributem `ASSET` (default null).
+- [x] `makeBubbleTexture(text)` — canvas 512×160 s zaobleným bílým rectem + komix ocáskem dolů. Vrací `{ texture, aspect, bubbleFraction }`.
+- [x] `createSpriteFor(instance)` — `THREE.Sprite` + `SpriteMaterial`, scale z `bubbleFraction` aby bubble měla vizuální výšku ~0.5.
+- [x] Dispatch v `createMeshFor` → SPRITES větev před CCUBES.
+- [x] Instance `dialog_0001` nad stromem na (3, 2.2, 0) — text „Ahoj! Jsem mluvící strom."
+- [x] DD-14 — dispatch ASSET podle typu (null/string).
+- [x] Ověřit v prohlížeči: bublina se otáčí ke kameře, text čitelný, ocásek míří na strom, infotip ukáže `SPRITES` + `ASSET`.
+
+## M6 — TCUBES (per-face textury)
+
+- [x] `TCUBES extends CUBES` s šesti atributy `TEXTURE_TOP/BOTTOM/NORTH/SOUTH/EAST/WEST` (default null).
+- [x] `makeEmojiTexture(char)` — canvas 128×128 s emoji/textem vycentrovaným.
+- [x] `faceMaterialFor(val)` — dispatch null/number/hex/string → materiál. Izomorfní s SPRITES.
+- [x] `createTCubeFor(instance)` — BoxGeometry s 6 materiály v pořadí [+X,-X,+Y,-Y,+Z,-Z] mapované na EAST/WEST/TOP/BOTTOM/SOUTH/NORTH.
+- [x] Dispatch v `createMeshFor` → TCUBES větev.
+- [x] `formatValue` v infotipu: null → „—", number u COLOR/TEXTURE_* → hex.
+- [x] Instance `tbox_0001` „Krabice s obsahem" (-3, 0, 0) — TOP 🌳, BOTTOM 🪵, 4 strany 📦.
+- [x] Instance `tbox_0002` „Hvězda na vrchu" (-3, 0, 2) — jen TOP ⭐, ostatní fallback šachovnice.
+- [x] DD-14 pokrývá i TCUBES dispatch (sdílený pattern s SPRITES).
+
+## M7 — Chování v čase (ANIMATE dispatch)
+
+- [x] DD-15 — atribut `ANIMATE` na `OBJECTS` (default null), data-driven dispatch v enginu (`{ kind, ...params }`).
+- [x] Animators registry v `main.js` (`animators[]`, `registerAnimator`, `updateAnimations`).
+- [x] Wall-clock `performance.now() / 1000` jako parametr animací (plynulý, nezávislý na FPS).
+- [x] `cylinderBetween` refactor na unit-height + `scale.y`; extrahovat `updateCylinderBetween` pro per-frame mutaci.
+- [x] `animateBalloonBob` — vak sinusově pohupuje (amp 0.15, period 4 s), koš nezávisle (amp 0.05, period 1.5 s, fáze π/2), lana přepočítávána každý frame.
+- [x] `animateTreeSway` — 3 kužely koruny se pohupují v eliptickém XZ patternu (dvě nesoudělné periody 3.5 s a 2.7 s, amplituda 0.08 × koeficient výšky). Kmen statický.
+- [x] `formatValue` v infotipu zobrazí `ANIMATE.kind` místo „[object Object]".
+- [x] **Bubble fix:** `makeBubbleTexture` sloučen na jednu cestu (rect + trojúhelník), jediný `fill()` + `stroke()` → žádný černý proužek okraje přes ocásek. Odstraněn helper `roundRectPath`.
+
+## M8+ — Hotové
+
+- [x] Generický `rotate` animátor (`ANIMATORS.rotate`, přímá mutace `object3d.rotation`) + krabice `tbox_0001` rotující kolem Y (period 6 s). Ověřuje, že `ANIMATE` pattern funguje napříč třídami, ne jen COMPOSITES.
+- [x] Generický `orbit_stadium` animátor — uzavřená oválná dráha (stadium pattern). `tbox_0002` „Hvězda na vrchu" obíhá kolem výchozí pozice (L=2, R=0.8, period 10 s), heading sleduje tečnu dráhy. Zavedl snapshot `object3d.userData.base` při `registerAnimator` — sdílený kontrakt pro transformační animátory.
+- [x] Generický `pulse` animátor — mutace `material.emissive*` (třetí dimenze `ANIMATE` patternu: díly / transformace / materiál). Červená dlaždice `ccube_0001` pulsuje period 2 s / max 0.9, tyrkysová `ccube_0005` pomaleji (3.5 s / max 0.6, min 0.05) → desynchronizace ukazuje, že animátory běží nezávisle per-instance. Lazy init `emissive` barvy přes `userData.pulseInit`. Tyrkysová navíc sinusově mění `material.opacity` 0.25 → 1.0 (zapíná `transparent=true` lazy v init) → „dýchá".
+- [x] **HOUSE** — statický COMPOSITES (kvádr stěn + jehlanová střecha ConeGeometry 4-segment). Atribut `COLOR` na stěny, střecha fixně rezavě červená. Dokončuje základní COMPOSITES trio (TREE + BALLOON + HOUSE). Instance `house_0001` (0, 0, -3) za růžicí.
+- [x] **CLOUD + drift** — COMPOSITES shluk 5 koulí + nový `drift` animátor (lineární pohyb po jedné ose s wrap-around). Instance `cloud_0001` (0, 4.5, -2), drift po X, speed 0.6 j/s, range 16 (cyklus ≈ 26.7 s). Pátý `ANIMATE.kind` — první ne-periodický (wrap skok na hranici).
+- [x] **Dynamický 3D ocásek SPRITES** (sez. 8, DD-16) — ocásek odstraněn z canvas textury, nahrazen tenkým 4-segmentovým jehlanem mimo sprite. Atributy `SPEAKER` (instance ref nebo `{x,y,z}` literál) + `SPEAKER_OFFSET_Y` (default 0.5). Registry `bubbleTails[]` + `meshByInstance` lookup → ocásek sleduje i pohyblivé cíle (`object3d.position` mutované animátory). `dialog_0001` přesunut mimo osu stromu (diagonální ocásek), nový `dialog_0002` mluví na orbitující `tbox_0002` (live tracking).
+- [x] **ROCK** (sez. 8) — COMPOSITES shluk 5 nízkopoly icosahedronů (detail=0) s flat shading. Atribut `COLOR` (default šedá), paleta 3 odstínů (×1, ×0.75, ×1.2) se sdílenými materiály. Instance `rock_0001` (-3, 0, -2). Uzavírá COMPOSITES pětici. *(Smazáno sez. 15, DD-23 — pixel-voxel pivot.)*
+- [x] **Nevizuální potomek OBJECTS** (sez. 9, DD-17) — `TIMER { INTERVAL, ACTION }`. První reakce na `TIME.tick` (otevírá DD-04). Engine registr `tickHandlers[]` + dispatch `ACTIONS[kind]` (`toggle`, `set`). `registerBehavior(instance)` symetrický k `scene.add(createMeshFor(...))`. Demo: `timer_0001` toggle `balloon1.LIT` každých 5 ticků.
+- [x] **Lantern mode na BALLOON** (sez. 9) — atribut `LIT` (bool), PointLight uvnitř vaku (teplá 0xffb060, intenzita 10, castShadow = 2. shadow mapa vedle slunce), emissive na vaku. Engine fade watcher (`updateLit(dt)`) lerpuje exp. (~0.5 s). Toggle přes click na vak (raycaster `click` event) nebo přes TIMER.ACTION — oba mechanismy konvergují na stejný stav. *(Smazáno sez. 15, DD-23.)*
+- [x] **Edge highlight na hover** (sez. 9) — žluté hrany CUBES entity pod kurzorem (editor-like). `EdgesGeometry(geom, 20°)` + `LineSegments` s `depthTest=false` + `renderOrder=999` → X-ray look. Cache v `root.userData.edgeOverlays` (lazy build první hover, reuse). `raycast = () => {}` aby hrany neintrupovaly hover detekci. SPRITES skip (nemají smysluplné 3D hrany). **Sez. 10:** přepnuto na `depthTest=true` + `polygonOffset=-2/-2` → jen viditelné hrany. **Sez. 16:** kompletně přepsáno na emissive boost na celém objektu (DD-25).
+- [x] **COUNTER v HUD** (sez. 9) — druhý nevizuální potomek OBJECTS, `VALUE + INCREMENT` per-tick. `registerCounter` dynamicky přidá HUD řádek přes `createElement` (ne `innerHTML` — XSS safe). Demo `counter_0001` „Skóre" start=0 inc=1. Demonstruje, že nevizuální entita může být observable přes HUD DOM (ne jen 3D scénu).
+- [x] **CHARACTER + mode system** (sez. 10, DD-18) — humanoidní COMPOSITES s dvoudílnými končetinami. *(Smazáno sez. 14 — humanoidi přesunuti do `./source/Stickman`.)*
+- [x] **Wander stavový automat** (sez. 10, DD-18) — `ANIMATE.kind = "wander"` 6 stavů (walk/run/stand/sit/lie/work). *(Smazáno sez. 14.)*
+- [x] **2D kolizní systém** (sez. 10, DD-19) — kruhy v XZ rovině, dispatch-by-type radii, stop & transition. *(Smazáno sez. 14.)*
+- [x] **%AUDIT:CODE po DD-17** (sez. 10) — 6 findings (F1–F6), opraveno F1–F4. F5+F6 ponechány jako INFO.
+- [x] **Balloon light boost** (sez. 10) — `LIT_MAX_EMISSIVE` 1.5→2.0, `LIT_MAX_LIGHT` 10→30, PointLight distance 12→20, shadow map 512²→1024². *(Smazáno sez. 15 s LIT systémem.)*
+- [x] **%AUDIT:CODE po DD-18/19** (sez. 11) — 7 findings F1–F7, opraveno F1–F6. F7 (DD-15 vs. DD-18 STATE atribut) zapsán jako kandidát DD.
+- [x] **NOODLE** (sez. 12, DD-20) — humanoidní varianta „plastelínová" (CapsuleGeometry + TubeGeometry podél `CatmullRomCurve3`). *(Smazáno sez. 14.)*
+- [x] **STICKMAN** (sez. 12, DD-20) — humanoidní varianta „blokový low-poly". *(Smazáno sez. 14, přesun do `./source/Stickman`.)*
+- [x] **DD-20 `poseFns` dispatch** (sez. 12) — humanoidní varianty sdílejí `ANIMATE` mode slot přes `group.userData.poseFns`. *(Historický — humanoidi smazáni sez. 14.)*
+- [x] **STICKMAN polish** (sez. 13) — `WORK_POSE.centerAngle` sign fix, hlava `headR 0.18 → 0.144`, segments `(8,4) → (16,12)`, trup Z `0.24 → 0.16`, face plane s 3 výrazy, `faceUpdaters[]` registry. *(Smazáno sez. 14.)*
+- [x] **Scene switcher** (sez. 13) — URL-based reload (`?scene=N`), `buildSceneOne`/`buildSceneTwo` dispatch, HUD tlačítka. *(Smazáno sez. 15, DD-23 — Scéna 1 i scene switcher.)*
+- [x] **Scéna 2: travnatá louka** (sez. 13) — procedurální `makeGrassTexture` (canvas 256×256). *(Nahrazeno sez. 14 voxelovou diorámou `SCENE_LAYOUT`.)*
+- [x] **GLTF export** (sez. 13) — `window.exportStickman()` v console: dynamic `import("three/addons/exporters/GLTFExporter.js")`. *(Smazáno sez. 14.)*
+- [x] **Gait animátory pro Scénu 2** (sez. 13) — `walk_idle`, `run_idle`, `squat_lift`. *(Smazáno sez. 14.)*
+- [x] **`docs/SCENE2.md`** (sez. 13) — self-contained prompt pro fresh AI agenta. *(Smazáno sez. 16 audit F1.)*
+- [x] **Sez. 14 cleanup — humanoidi pryč** — STICKMAN, NOODLE, CHARACTER třídy + buildery + pose primitives + gait animátory + wander + kolize + face registry + `window.exportStickman()` smazány. ~1170 řádků (3096 → 1923).
+- [x] ~~Mobility design~~ — DROP (sez. 15, DD-23: bez humanoidů a po all-voxel pivotu rampy řeší přes VOXEL_MODEL `ramp-grass`).
+- [x] ~~Zaoblené hrany voxelů~~ — DROP (sez. 15, DD-23: pixel-art voxel jazyk, zaoblení by likvidovalo styl).
+
+## Sezení 14 (2026-05-05)
+
+- [x] **Scéna 2 dioráma** — 10×10 voxelová podlaha (`SCENE2_LAYOUT` ~145 kostek). Postavena interaktivně přes builder (LMB stavět, RMB bourat, 3 typy + Export do clipboardu) — builder pak odstraněn, hotová dioráma hardcoded.
+- [x] **Nové procedurální textury** — `:stone`, `:rail-top`, `:grass-side`. Refaktor `makePatchTexture` (jednolitý base + 1-2 px záplaty per cube) + `:grass-side` kompozit (14px dirt + 2px grass strip nahoře). DRY palette (DIRT_*, GRASS_*, STONE_*).
+- [x] **Klávesové ovládání kamery** — WASD pan, Q/E rotace kolem cíle, Y/X zoom. Per-frame v render loopu, smooth dle dt. `heldKeys` Set + window keydown/keyup/blur listener.
+- [x] **Tunelové oblouky** (sez. 14 v.1, později nahrazeno) — TUNNEL_ARCH třída + builder s half-torus rotated π/2 + scale.y 1.7. *(Třída smazána sez. 15, DD-23. Instance nahrazeny VOXEL_MODELem, později TTUNELS sez. 16.)*
+- [x] **WAREHOUSE + TRAIN třídy** — připraveny v model.js + buildery v main.js. *(Smazány sez. 15, DD-23.)*
+- [x] **GridHelper + AxesHelper** odstraněny — orientační pomůcky M1/M2 už nepotřebujeme.
+- [x] **Slunce** úhel 30° nad horizontem (Y=10→8).
+- [x] **Shadow fix** — peter-panning na voxel boundaries: `normalBias` 0.02→0, `bias` -0.0005→-0.0001, `PCFSoftShadowMap`→`PCFShadowMap`.
+- [x] **MagicaVoxel pipeline (DD-21)** — VOXEL_MODEL třída + `buildVoxelModel` (async OBJLoader+MTLLoader, auto-center XZ + bottom snap Y, NearestFilter pro pixel-art).
+- [x] **Tools/exports** — 4 Node skripty: `dump-png-palette.mjs`, `export-grass-vox.mjs`, `export-scene-palette-vox.mjs`, `export-cars-vox.mjs` *(poslední smazán sez. 15, DD-23)*.
+- [x] **DD-21 Vizuální zdroje hybrid** — formálně zafixováno: parametrizované entity → procedurální COMPOSITES, statická dekorace → VOXEL_MODEL default. GLOSSARY rozšířen o sekci „Vizuální zdroje".
+- [x] **Stickman jako sibling projekt** — humanoidní vývoj přesunut do `./source/Stickman`.
+- [x] ~~Tunel re-coloring~~ — hotovo sez. 15 (`tunel-grass.vox` 48³ MV).
+- [x] ~~2 simplifikovaná auta z .vox~~ — DROP (sez. 15, DD-23).
+- [x] ~~9 voxel modelů (stromy/kameny/trsy)~~ — pivot (sez. 15, DD-23: stromy řešeny pixel-voxel TREE.KIND-y, kameny + trsy další KIND-y).
+- [x] ~~Železnice mezi tunely~~ — implementováno → odebráno (sez. 15, user request). Textura `:rail-top` zůstává jako template.
+- [x] ~~Vlak na koleji + animace~~ — DROP (sez. 15, DD-23).
+- [x] ~~Cargo loading/unloading~~ — DROP (sez. 15, DD-23).
+- [x] ~~VOXEL_MODEL pro Scénu 1~~ — N/A (sez. 15, DD-23: Scéna 1 smazána).
+
+## Sezení 15 (2026-05-06)
+
+- [x] **Železnice mezi tunely** *(implementováno + roll-back)* — 6 rail TCUBES voxelů na Z=−3, X=−3..2. `makeRailBlock` helper + FACTORIES dispatch. User požádal o odebrání — vráceno na grass voxely. Textura `:rail-top` v `NAMED_TEXTURE_FACTORIES` zachována jako template.
+- [x] **`tunel-grass.vox` rename + smazání stale 16³** — z `tunel.vox` (16³ monochrom) → `tunel-grass.vox` (48³ MV s plnou paletou). User vyexportoval `tunel-grass.{obj,mtl,png}` v MagicaVoxelu.
+- [x] **`export-grass-vox.mjs` přepis** — generuje 16³ kostku s povrchovými voxely odpovídajícími texturám (TOP `:grass-top`, BOTTOM `:dirt`, 4 boky `:grass-side` 14 px dirt + 2 px grass strip). Paleta 8 barev. Output: `cube-grass.vox`.
+- [x] **10 pixel stromů** na předním řádku Z=4 — TREE třída rozšířena o `KIND` parametr; dispatch v `buildTree(group, instance)` přes `TREE_BUILDERS` lookup. KIND-y: `spruce`, `oak`, `birch`, `palm`, `bush`, `cypress`, `willow`, `bonsai`, `dead`, `maple`. Pixel size 0.125 j (= 1/8 TC voxelu = 12.5 cm). Helpery: `treeMat` cache, `treeVoxel`, `treeBlock`, `treeDiamond`. Sdílená BoxGeometry + materiály per barva.
+- [x] **Animace větru pro pixel stromy** — `tree_sway` polymorfně rozšířen: classic větev smazána (s buildTreeClassic), pixel větev = per-children mutace s height-weighted amplitudou. Random fáze (`phaseX/Z`) per strom + nesoudělné periody → desync. Amplituda 0.16 j *(snížena na 0.04 sez. 17)*.
+- [x] **DD-22 — Pevné měřítko + Y konvence** — 1 TC voxel = 1 m, 1 MV voxel = 1/16 TC = 6.25 cm, default `SCALE: 0.625`. Tabulka `Y vs grid_Y` v GLOSSARY.
+- [x] **Grass rampa import** (`ramp-grass.vox/obj/mtl/png`, 16³ MV → 1×1×1 TC). Position (-4, -0.5, 0). *(Nahrazeno sez. 16 TRRAMPS BLOCKS.)*
+- [x] **DD-23 — All-voxel pivot („Kostičky")** — smazány non-voxel třídy: BALLOON, HOUSE, CLOUD, ROCK, TUNNEL_ARCH, WAREHOUSE, TRAIN + Scéna 1 + scene switcher + LIT system + balloon_bob + classic TREE + cylinderBetween helpers + click handler. **~720 řádků smazáno** (`main.js` 2596 → 1919). HTML scene-switcher CSS + DOM odebrán. Auto assets a `tools/export-cars-vox.mjs` smazány. ANIMATORS jen `tree_sway` (pixel) / `rotate` / `orbit_stadium` / `pulse` / `drift`.
+- [x] **DD-24 — Shape × Surface separation** — VOXEL_MODELy s jednolitým povrchem rozděleny na shape (1 MV s abstract paletou 4 indexy: BASE/ACCENT1/ACCENT2/HIGHLIGHT) + surface (JSON paleta 4 RGBA). Plánovaný pre-build skript. Pojmenování `<shape>-<surface>` (kebab-case lowercase). Sez. 15 rename: `grass-cube` → `cube-grass`, `grass-ramp.*` → `ramp-grass.*`. *(Pre-build pipeline DROPnuta sez. 16, DD-25 — pro standardní bloky redundantní.)*
+
+### Sez. 15 → sez. 16 Příště — Hotové
+
+- [x] ~~Pre-build skript `tools/build-shapes.mjs`~~ — DROP (DD-25 sez. 16: bloky teď procedurální, MV pipeline pro standardní bloky redundantní; DD-24 zúžen na budoucí komplexní VOXEL_MODELy).
+- [x] ~~8 surface JSON palet~~ — DROP (DD-25, viz výše).
+- [x] ~~Re-modelovat shapes na abstract paletu~~ — DROP (DD-25, viz výše).
+- [x] **GLOSSARY cleanup** — hotovo v sez. 16 audit (F2: kompletní rewrite).
+- [x] **`docs/IDEAS.md` review** — hotovo v sez. 16 audit (F4: anotace u DONE značek).
+
+## Sezení 16 (2026-05-06)
+
+- [x] **%AUDIT:DOCS** — 7 nálezů (F1 SCENE2 smazán, F2 GLOSSARY rewrite, F3 README Status, F4 IDEAS anotace, F5 DD-22 typo „vejmuly→vešly", F6 DD setříděno vzestupně, F7 vyřešeno s F2).
+- [x] **Hover highlight refaktor** — `setEdgeHighlight` → `setHoverHighlight`. Žluté světélkování celého objektu (`mat.emissive = 0x404020`). Lazy clone-on-first-hover materiálů per mesh. Sdílené materials (TREE `_treeMatCache`) zůstávají nedotčené. Originály v `userData.hoverOrigMat`, klony v `hoverHotMat`.
+- [x] **DD-25 — 4-vrstvá taxonomie scény** (Bloky / Voxely / Linie / Objekty). Reviduje DD-23 v tom smyslu, že voxelová identita platí pro vrstvu 2, ne pro celou scénu. DD-24 zachován ale s omezeným rozsahem.
+- [x] **`BLOCKS` abstract parent** — značkovací třída pod CUBES. `CCUBES`, `TCUBES` refaktor: extends BLOCKS.
+- [x] **TRRAMPS** (trojboký hranol = pravoúhlý klín). 5 face atributů (`SLOPE`, `BOTTOM`, `BACK`, `LEFT`, `RIGHT`) + `ORIENTATION`. Custom BufferGeometry s 18 vertices, 8 trojúhelníků, 5 material groups. Bug fix: winding order pro BOTTOM/BACK/LEFT/RIGHT face byl nesprávně.
+- [x] **TTRAMPS** (trojboký jehlan = trirectangular tetrahedron). 4 face atributy (`SLOPE`, `BOTTOM`, `BACK`, `LEFT`) + `ORIENTATION`. 4 unique vertices, per-face non-shared = 12 vertices, 4 trojúhelníky.
+- [x] **TTUNELS** (klenutý tunel skrz 1C blok). 4 face atributy (`TOP`, `SIDES`, `WALLS`, `CEILING`) + `ORIENTATION`. Geometrie: kvádr 1×1×1 mínus „obdélník + půlkruh extrudovaný v ose" (12 segmentů na půlkruhu). Bez dna.
+- [x] **`ROTATION_Y` → `ORIENTATION` enum** — refaktor TRRAMPS/TTRAMPS/TTUNELS. Integer 0..3 = počet 90° CCW rotací. *(Sez. 17 sjednoceno na float ve stupních, DD-26.)*
+- [x] **Smazány VOXEL_MODEL `tunel-grass` + `ramp-grass` instance** — nahrazeny TTUNELS / TRRAMPS. Asset soubory `assets/tunel-grass.{vox,obj,mtl,png}`, `assets/ramp-grass.{vox,obj,mtl,png}`, `assets/ramp-triangle-grass.{vox,obj,mtl,png}` smazány. Skript `tools/export-ramp-triangle-vox.mjs` smazán. V `assets/` zbývá jen `cube-grass.vox` + `scene-palette.vox`.
+- [x] **TTUNELS texture bug** — z bočního pohledu byly viditelné 2 paralelní zelené pásky. Opraveno: TEXTURE_SIDES změněno z `:grass-side` na `:dirt`.
+
+### Sez. 16 → sez. 17 Příště — Hotové
+
+- [x] **PATH (LINES vrstva 3)** — DD-27, sez. 17, Catmull-Rom strip mesh. *(TRACK plánován — viz aktivní TODO.)*
+
+## Sezení 17 (2026-05-06)
+
+- [x] **DD-26 sjednocená `ORIENTATION`** napříč BLOCKS i COMPOSITES — float ∈ [0, 360) ve stupních. Engine `* (Math.PI / 180)`. Refaktor: BLOCKS enum 0..3 → stupně (migrace `ramp_0` z 1 → 90), `LOG/VOXEL_MODEL.ROTATION_Y` (rad) atribut smazán, `BLOCKS` + `COMPOSITES` base třídy explicit constructor s default 0. `populateNorthernScene` přiřadí každé dekoraci `rng() * 360`.
+- [x] **DD-27 PATH třída** (1. potomek vrstvy 3 LINES) — `extends CUBES` s `KIND` (default `"dirt"`) + `POINTS`. Engine `createPathFor`: `THREE.CatmullRomCurve3` typ catmullrom tension 0.5, 64 vzorků, plochý strip mesh. Šířka 0.5 j, Y offset +0.005 j proti z-fightingu, repeating texture UV scale 8× podél délky. `pathTexture(kind)` cache. Dispatch v `createMeshFor` (před SPRITES).
+- [x] **`:path-dirt` named-texture** — kropenatý šum 240 záplat 1-2 px šedých odstínů (#7a7a78 base + 6 accents).
+- [x] **Cesta z tunnel_0**: 5 bodů — `(-3.5, -3) → (-1.5, -3) → (0.5, -1) → (2.5, 1) → (4.5, 1)`. Three.js Catmull-Rom reflection fallback v krajních bodech. Jeden inflexní bod ve středu (esíčko).
+- [x] **`pathOccupiedCells(points)`** — vzorkuje curve 128×, vrátí Set grid buněk (X, Z). Předáno do `populateNorthernScene` jako `pathBlocked`.
+- [x] **Procedurální severská dekorace** — 3 nové třídy COMPOSITES: `GRASS_TUFT` (KIND-y micro/short/fern), `ROCK_PIXEL` (micro/small/medium/mossy), `LOG` (stump/birch/pine). Sdílí `treeVoxel`/`treeBlock`/`treeMat` helpery. `populateNorthernScene` — mulberry32(42) deterministická RNG, severský mix. Cca 60% grass topu pokryto.
+- [x] **Y konvence fix** — pixel-voxel COMPOSITES `instance.Y = t.y + 1`. *(Vyřešeno sez. 18 DD-28 sjednocením na surface = mesh bottom, `t.y + 0.5`.)*
+- [x] **Random ORIENTATION na všech dekoracích** — `populateNorthernScene` přiřadí každé instanci `rng() * 360`.
+- [x] **Zjednodušení grass blok** — boky/spodek `:dirt` (jednolitá hlína). Aplikováno i na rampy (TRRAMPS/TTRAMPS BACK/LEFT/RIGHT na `:dirt`). Pravidlo BLOCKS rodiny: **vrch `:grass-top`, jinak `:dirt`**. Smazáno: `makeGrassSideTexture`, `:grass-side` v `NAMED_TEXTURE_FACTORIES`, `GRASS_STRIP_PX`.
+- [x] **`buildSceneTwo` → `buildScene`** + **`SCENE2_LAYOUT` → `SCENE_LAYOUT`** rename — po sez. 15 cleanup zbyl stale „Two" suffix.
+- [x] **Voda — implementace + cleanup** — `:water-top` + `:water-side` + `makeWaterTexture` factory, `faceMaterialFor` special-case (transparent + opacity 0.7), `noShadow` heuristika. 2×2 jezírko v middle scény. Test OK, ale uživatel po chvíli „nejsem si jistý" → kompletní cleanup (~70 řádků).
+- [x] **Q/E kamerová rotace fix** — explicitní `_kbWorldY = (0,1,0)` + `camera.lookAt(controls.target)` po mutaci pozice. Žádný shift do strany.
+- [x] **Infotip POINTS uzávorkováno** — `formatValue` special-case pro PATH `POINTS` array → `(-3.5, -0.5, -3) → (0.5, -0.5, -1) → (4.5, -0.5, 1)`.
+- [x] **Mikro voxely 1×1×1** — nové KIND-y `micro` na ROCK_PIXEL/GRASS_TUFT/LOG.stump. 1 voxel = 0.125 j (≈ 12.5 cm). Vícevoxelové dekorace × 0.75, micro vrstva přidaná.
+- [x] **`tree_sway` amplituda × 0.25** — z 0.16 → 0.04 (vítr méně dramatický).
+
+### Sez. 17 → sez. 18 Příště — Hotové
+
+- [x] **DD-22 vs. pixel-voxel Y konvence** — vyřešeno sez. 18 (DD-28 sjednocení: BLOCKS = grid-center, ostatní vizuální třídy = surface).
+
+## Sezení 18 (2026-05-10)
+
+- [x] **`%AUDIT:CODE`** — 12 nálezů (1 kritický, 5 doporučených, 4 kosmetické) napříč `src/` + GLOSSARY + DESIGN_DECISIONS + struktura. Všechny opraveny.
+- [x] **F1 (KRITICKÉ) — DD-28 sjednocená Y konvence** napříč CUBES potomky. **Dvě sémantiky:** BLOCKS (TCUBES, TRRAMPS, TTRAMPS, TTUNELS) = grid Y voxelu (mesh center, snap-to-int), ostatní vizuální třídy (VOXEL_MODEL + pixel-voxel COMPOSITES) = world Y surface (mesh bottom). Předtím tři konvence, pixel-voxel měl group origin posunutý o 0.5 nad surface kvůli `treeVoxel` lokálnímu offsetu. Migrace: `treeVoxel` `-0.5 + (gy + 0.5) * TREE_PX` → `(gy + 0.5) * TREE_PX`; populate `instY = t.y + 0.5` (místo `+1`). DD-28 přidáno do DESIGN_DECISIONS, GLOSSARY DD-22 sekce rozšířena o tabulku všech tříd.
+- [x] **F2 — zombie `GRASS_TUFT.tall` smazán** — sez. 17 odebrala `tall` z populate, ale zůstal jako default + builder + dispatch + ANIMATE větev. Cleanup: `buildGrassTall` smazán, default `kind = "short"`, ANIMATE větev smazána.
+- [x] **F3 — docstringy** v `model.js`: GRASS_TUFT (`micro/short/fern`), ROCK_PIXEL (přidán `micro`), VOXEL_MODEL (příklad `cube-grass`, zmínka „bez aktivní instance v scéně, infrastruktura pro budoucí komplexní MV importy").
+- [x] **F4 — GLOSSARY hlavička** — sez. 15 → sez. 17/18.
+- [x] **F5 — komentář v `buildScene`** — odstraněna matoucí zmínka o `Y=−0.5 = top of grass cube`.
+- [x] **F6 — `temp/` cleanup** — adresář smazán (relikvie `tunel.png`), přidán do `.gitignore`.
+- [x] **F7 — historické komentáře zkráceny** — GridHelper komentář smazán, humanoidi+kolize+DD-19 z 14 řádků na 3, LIT z 3 na 1, click handler z 3 na 2.
+- [x] **F8/F9 — asset templates dokumentace** — sekce v GLOSSARY o `cube-grass.vox` + `scene-palette.vox` jako MV authoring šablony bez runtime konzumenta.
+- [x] **F10 — `castShadow` duplicita v `treeVoxel`** smazána (jednotně řeší traverze v `createMeshFor`).
