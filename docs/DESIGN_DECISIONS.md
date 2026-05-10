@@ -275,7 +275,7 @@ Scéna se skládá ze čtyř vrstev s ortogonálními úkoly a různým rozliše
 
 **Důvod:** Aktuální DD-23 („Kostičky = jen voxely") fungoval dobře pro statické dekorace, ale zúžil identitu projektu na jednu vizuální vrstvu. Realita scény (Minecraft, Transport Tycoon, Factorio) má **více vrstev** s různými prioritami: terén je modulární a grid-aligned (Bloky), vegetace je organická (Voxely), cesty jsou 1D (Linie), entity jsou jedinečné (Objekty). Sjednocení do jedné vrstvy by porušilo SLAP — různé úkoly vyžadují různé jazyky.
 
-Pixel-art identita zachována napříč všemi vrstvami: NearestFilter, 16×16 textury, voxely 0.125 j, sdílená paleta `:grass-top`/`:grass-side`/`:dirt`/`:stone`. To drží vizuální koherenci.
+Pixel-art identita zachována napříč všemi vrstvami: NearestFilter, 16×16 textury, voxely 0.125 j, sdílená paleta `:grass-top`/`:grass-side`/`:dirt`/`:stone`. To drží vizuální koherenci. *(Pozn. sez. 17: `:grass-side` smazán — pravidlo BLOCKS rodiny zjednodušeno na „vrch grass, jinak dirt".)*
 
 **Důsledek:**
 - Sez. 16 cleanup: VOXEL_MODEL `tunel-grass` (3×3×3 TC) nahrazen 2× `TTUNELS` (1×1×1 TC) na pozicích tunel_left a tunel_right; `ramp-grass` VOXEL_MODEL nahrazen `TRRAMPS` na rampě (-4, 0, 0). Asset soubory `tunel-grass.*` a `ramp-grass.*` smazány. Z VOXEL_MODEL použití zbývá jen `cube-grass.vox` šablona pro DD-24.
@@ -329,7 +329,7 @@ Materiál: `MeshStandardMaterial` s repeating texturou (`:path-dirt` 8× podél 
 **Pravidlo dispatche** podle typu:
 | Třída / rodina | `instance.Y` semantics | Pro stojící na grass podlaze (gy=-1) |
 |---|---|---|
-| BLOCKS (TCUBES, TRRAMPS, TTRAMPS, TTUNELS) | grid Y voxelu (= mesh center) | `Y = 0` (1C blok nad podlahou) |
+| BLOCKS (CCUBES, TCUBES, TRRAMPS, TTRAMPS, TTUNELS) | grid Y voxelu (= mesh center) | `Y = 0` (1C blok nad podlahou) |
 | VOXEL_MODEL | world Y surface (= mesh bottom) | `Y = -0.5` |
 | Pixel-voxel COMPOSITES (TREE, GRASS_TUFT, ROCK_PIXEL, LOG) | world Y surface (= group origin) | `Y = -0.5` |
 | SPRITES, PATH | world Y libovolný (free 3D space) | dle obsahu |

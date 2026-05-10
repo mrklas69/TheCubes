@@ -30,7 +30,7 @@ Historicky (před DD-26, sez. 16) byla `BLOCKS.ORIENTATION` integer enum 0..3 a 
 ### Ostatní potomky CUBES
 
 - **SPRITES** — potomek CUBES vizualizovaný jako 2D billboard (obrázek vždy otočený ke kameře). Atributy: `ASSET` (`null` → fallback šachovnice; `string` → canvas-generovaná dialogová bublina s textem v zaobleném obdélníku), `SPEAKER` (volitelný cíl dynamického 3D ocásku — instance nebo `{x,y,z}` literál, viz DD-16), `SPEAKER_OFFSET_Y` (vertikální offset nad cílovou instanci, default 0.5). Použití: dialog bubble, label, 2D entita. Pozice float (DD-12), sprite stíny neumí (záměr). *(M5 + M8+ dynamický ocásek.)*
-- **COMPOSITES** — potomek CUBES vizualizovaný jako 3D mesh ze složek (`Group` s více meshi). Po DD-23 (sez. 15) jsou složky výhradně **voxely** (BoxGeometry); žádné Cylinder/Cone/Sphere/Torus/Icosahedron. Pozice spojitá (float), bez snap-to-grid. Dva aktivní potomci: TREE a VOXEL_MODEL.
+- **COMPOSITES** — potomek CUBES vizualizovaný jako 3D mesh ze složek (`Group` s více meshi). Po DD-23 (sez. 15) jsou složky výhradně **voxely** (BoxGeometry); žádné Cylinder/Cone/Sphere/Torus/Icosahedron. Pozice spojitá (float), bez snap-to-grid; Y = world surface (DD-28). Aktivní potomci (sez. 17–18): TREE (10 KIND-ů), GRASS_TUFT, ROCK_PIXEL, LOG, VOXEL_MODEL.
 
 ### Konkrétní COMPOSITES
 
@@ -151,7 +151,7 @@ Po sez. 16 (DD-25) byly všechny VOXEL_MODEL instance nahrazeny procedurálními
 
 | Třída / rodina | `instance.Y` semantics | Pro stojící na grass podlaze (gy=−1) |
 |---|---|---|
-| **BLOCKS** (TCUBES, TRRAMPS, TTRAMPS, TTUNELS) | grid Y voxelu (= mesh **center**) | `Y = 0` (1C blok nad podlahou) |
+| **BLOCKS** (CCUBES, TCUBES, TRRAMPS, TTRAMPS, TTUNELS) | grid Y voxelu (= mesh **center**) | `Y = 0` (1C blok nad podlahou) |
 | **VOXEL_MODEL** | world Y surface (= mesh **bottom**) | `Y = −0.5` |
 | **Pixel-voxel COMPOSITES** (TREE, GRASS_TUFT, ROCK_PIXEL, LOG) | world Y surface (= group origin) | `Y = −0.5` |
 | SPRITES, PATH | libovolný Y (free 3D space) | dle obsahu |

@@ -25,15 +25,15 @@ Meta-sandbox s živým OOP modelem. Na začátku existuje jediná instance tří
 
 ```
 OBJECTS (ID, NAME, DESCRIPTION, ANIMATE)
- ├── CUBES (X, Y, Z float)
- │    ├── BLOCKS (1C grid, ORIENTATION ∈ [0, 360) — DD-26)
+ ├── CUBES (X, Y, Z float; Y konvence per typ — DD-28)
+ │    ├── BLOCKS (1C grid, Y = grid center, ORIENTATION ∈ [0, 360) — DD-26)
  │    │    ├── CCUBES (COLOR)
  │    │    ├── TCUBES (TEXTURE × 6)
  │    │    ├── TRRAMPS (TEXTURE × 5, ORIENTATION)
  │    │    ├── TTRAMPS (TEXTURE × 4, ORIENTATION)
  │    │    └── TTUNELS (TEXTURE × 4, ORIENTATION)
  │    ├── SPRITES (ASSET, SPEAKER, SPEAKER_OFFSET_Y)
- │    ├── COMPOSITES (voxel kompozice — ORIENTATION sdílena přes DD-26)
+ │    ├── COMPOSITES (voxel kompozice, Y = surface — ORIENTATION sdílena přes DD-26)
  │    │    ├── TREE (KIND — 10 pixel sub-builderů)
  │    │    ├── GRASS_TUFT (KIND — micro/short/fern)
  │    │    ├── ROCK_PIXEL (KIND — micro/small/medium/mossy)
