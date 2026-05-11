@@ -493,21 +493,191 @@ export class TIMER extends OBJECTS {
 
 /**
  * WORLD = nevizuální singleton OBJECTS-derived entita pro globální stav scény
- * (DD-29, sez. 20). Žije v modelu, nemá X/Y/Z (= demonstruje DD-01 separation:
- * OBJECTS = cokoli v modelu, CUBES = cokoli s polohou).
+ * (DD-29, sez. 20; rozšířeno DD-31, sez. 21). Žije v modelu, nemá X/Y/Z
+ * (= demonstruje DD-01 separation: OBJECTS = cokoli v modelu, CUBES = cokoli
+ * s polohou).
  *
- * Atribut `WIND_STRENGTH` (float, default 1.0) — multiplikátor amplitudy
- * `tree_sway` animátoru. `1.0` = aktuální stav (nevíme o tom), `0` = bezvětří
- * (stromy stojí), `2` = bouře. Plochá struktura (`WIND_STRENGTH`, ne nested
- * `WIND.strength`) — KISS pro infotip + zatím jediný atribut větru.
+ * Atributy:
+ *  - `WIND_STRENGTH` (float, default 1.0) — multiplikátor amplitudy `tree_sway`
+ *    animátoru. `1.0` = neutrál, `0` = bezvětří, `2` = bouře. Konzument:
+ *    `animateTreeSway`. Po cleanup fáze D (DD-30) ztratí konzumenta a migruje
+ *    do `IDEAS.md`.
+ *  - `TIME_SCALE` (float, default 1.0) — multiplikátor rychlosti `productionTick`
+ *    (DD-31). `0` = pauza simulace, `2` = 2× rychleji. Konzument: render loop
+ *    `productionTick(dt * world.TIME_SCALE)`.
+ *  - `RESOURCES` (objekt `{ resource_id: amount }`, default vše 0) — globální
+ *    **agregát** napříč `BUFFER` všech `FACILITY` instancí. Derived (engine
+ *    přepočítává každý tick), ne SSoT — autoritativní data žijí v `facility.BUFFER`.
+ *    Konzument: HUD top bar (6 čítačů). Klíče jsou všechny ID z `RESOURCES_DEF`.
  *
- * Politika DD-29: další atributy (SUN_ANGLE, CLIMATE, SEASON, DAY,
- * WIND_DIRECTION) přibudou jen tehdy, když budou mít živého konzumenta —
- * žádné YAGNI sloty „pro budoucnost". Otevřené nápady viz `docs/IDEAS.md`.
+ * Politika DD-29 (atribut gated by konzumenta) platí dál. Plochá struktura
+ * (`WIND_STRENGTH`, ne nested `WIND.strength`). Otevřené nápady (SUN_ANGLE,
+ * CLIMATE, SEASON, DAY, WIND_DIRECTION) v `docs/IDEAS.md`.
  */
 export class WORLD extends OBJECTS {
   constructor(id = "world", name = "World", description = "Globální stav scény (singleton).") {
     super(id, name, description);
     this.WIND_STRENGTH = 1.0;
+    this.TIME_SCALE = 1.0;
+    // Inicializace agregátu — všechny resource ID z RESOURCES_DEF na 0.
+    // Object.fromEntries vyrobí `{ logs: 0, planks: 0, ... }` z polí klíčů.
+    this.RESOURCES = Object.fromEntries(
+      Object.keys(RESOURCES_DEF).map((id) => [id, 0])
+    );
+  }
+}
+
+// =============================================================================
+// FACTORY TOY (DD-30, DD-31, sez. 21+)
+//
+// Vrstva nad CUBES hierarchií pro tick-based ekonomický loop. Tři třídy
+// (GENERATOR, TRANSFORMER, STORAGE) sdílí `FACILITY` base. Engine je dispatchuje
+// stejně jako BLOCKS (snap-to-int, hover infotip), produkční logika žije
+// v `productionTick()` v `src/main.js`.
+// =============================================================================
+
+/**
+ * RESOURCES_DEF — registry surovin (data, ne třídy). Klíč = `resource_id`
+ * používaný v `FACILITY.BUFFER`, `RECIPES_DEF.inputs/outputs`, `world.RESOURCES`.
+ *
+ * MVP set (DD-31 sez. 21): 6 surovin pokrývajících solid + fluid kategorii.
+ * Phase 2 vlna doplní `bricks`, `cement`, `steel` a multi-input recepty.
+ *
+ * Pole per surovinu:
+ *  - `name_cs` / `name_en` — UI labely (HUD, infotip).
+ *  - `category` — `"solid"` | `"fluid"`. Voidspan-derived (Logistics matrix,
+ *    DD-30): solidy potřebují `PATH.KIND="conveyor"`, fluidy `"pipeline"`.
+ *  - `unit` — zobrazená jednotka. MVP = `"ks"` napříč (KISS, formatScalar
+ *    z Voidspan v0.1 přijde v Phase 2).
+ */
+export const RESOURCES_DEF = {
+  logs:   { name_cs: "Klády",  name_en: "Logs",   category: "solid", unit: "ks" },
+  planks: { name_cs: "Prkna",  name_en: "Planks", category: "solid", unit: "ks" },
+  stone:  { name_cs: "Kámen",  name_en: "Stone",  category: "solid", unit: "ks" },
+  gravel: { name_cs: "Štěrk",  name_en: "Gravel", category: "solid", unit: "ks" },
+  water:  { name_cs: "Voda",   name_en: "Water",  category: "fluid", unit: "ks" },
+  coal:   { name_cs: "Uhlí",   name_en: "Coal",   category: "solid", unit: "ks" },
+};
+
+/**
+ * RECIPES_DEF — registry transformerových receptů (data). Klíč = `recipe_id`
+ * = `FACILITY.KIND` u transformer typu (izomorfie s TREE.KIND, DD-31 sez. 21).
+ *
+ * Pole per recept:
+ *  - `inputs` — `{ resource_id: ks_per_unit_recipe }`. Pila spotřebuje 1 kládu
+ *    za 1 cyklus receptu. Phase 2: multi-input (cement = 2 gravel + 1 water).
+ *  - `outputs` — `{ resource_id: ks_per_unit_recipe }`. Pila vyrobí 0.8 prkna
+ *    za 1 cyklus = 80% efektivita (zbylých 0.2 = piliny, ztráta).
+ *  - `rate_per_tick` — kolik cyklů receptu se odehraje za 1 wall sekundu při
+ *    `TIME_SCALE=1`. `1.0` = 1 cyklus/s. Drtič 0.8 = pomalejší zpracování kamene.
+ */
+export const RECIPES_DEF = {
+  sawmill: { inputs: { logs: 1 },  outputs: { planks: 0.8 }, rate_per_tick: 1.0 },
+  crusher: { inputs: { stone: 1 }, outputs: { gravel: 1.2 }, rate_per_tick: 0.8 },
+};
+
+/**
+ * FACILITY_DEF — registry fasility kindů (data, mesh hinty + ekonomické
+ * parametry). Klíč = `FACILITY.KIND`. Editor v Phase C bude tento registry
+ * číst pro paletu („dostupné fasility").
+ *
+ * Pole per kind:
+ *  - `type` — `"generator"` | `"transformer"` | `"storage"`. Dispatch v
+ *    `productionTick` a v `createMeshFor` (i když mesh je sjednocený box).
+ *  - `outputs` (jen pro generator) — `{ resource_id: ks_per_s }`. Les dává
+ *    0.5 klády/s = ~30 klád za minutu.
+ *  - `recipe` (jen pro transformer) — klíč do `RECIPES_DEF`.
+ *  - `buffer_capacity` — max ks v `BUFFER` per slot. Generator output buffer
+ *    50 (~100 s plný), transformer slot 20, sklad 200 (= „pufr sítě").
+ *  - `holds` (volitelné, pro storage) — whitelist resource_id, který sklad
+ *    akceptuje. `null` / chybějící = drží cokoli. MVP storage je generic.
+ *  - `color` — 0xRRGGBB barva placeholder mesh boxu. Pixel-art asset (DD-30:
+ *    VOXEL_MODEL per fasilita) přijde v Phase 2.
+ *  - `name_cs` — label v UI/infotip.
+ */
+export const FACILITY_DEF = {
+  // --- GENERATORs (produkují bez vstupu) ---
+  forest:    { type: "generator",   outputs: { logs:  0.5 }, buffer_capacity: 50,  color: 0x3e6a32, name_cs: "Les" },
+  quarry:    { type: "generator",   outputs: { stone: 0.4 }, buffer_capacity: 50,  color: 0x7a7a78, name_cs: "Lom" },
+  well:      { type: "generator",   outputs: { water: 0.6 }, buffer_capacity: 50,  color: 0x4a7090, name_cs: "Studna" },
+  coal_mine: { type: "generator",   outputs: { coal:  0.3 }, buffer_capacity: 50,  color: 0x2a2a2a, name_cs: "Důl uhlí" },
+  // --- TRANSFORMERs (vstup → výstup dle RECIPES_DEF) ---
+  sawmill:   { type: "transformer", recipe: "sawmill",       buffer_capacity: 20,  color: 0xaa6633, name_cs: "Pila" },
+  crusher:   { type: "transformer", recipe: "crusher",       buffer_capacity: 20,  color: 0x99887a, name_cs: "Drtič" },
+  // --- STORAGE (drží libovolné suroviny) ---
+  storage:   { type: "storage",                              buffer_capacity: 200, color: 0xb8a06a, name_cs: "Sklad" },
+};
+
+/**
+ * FACILITY = base třída factory-toy entity (DD-31). Voxel 1×1×1 v gridu
+ * s lokálním `BUFFER` per surovinu. Sourozenec BLOCKS (oba 1C grid-aligned,
+ * snap-to-int v rendereru, DD-28 grid-center konvence).
+ *
+ * Atributy:
+ *  - `KIND` (string) — klíč do `FACILITY_DEF`. Determinuje type (generator/
+ *    transformer/storage), parametry, mesh barvu. Izomorfie s TREE.KIND.
+ *  - `BUFFER` (objekt `{ resource_id: amount }`) — lokální zásoby. Generator
+ *    plní `outputs`, transformer čerpá `inputs` a plní `outputs`, storage
+ *    drží whatever přijde. Engine inicializuje prázdný — bez agregace
+ *    `world.RESOURCES` ze starých instancí. Inicializační stock se nastavuje
+ *    post-hoc (`facility.BUFFER.logs = 50`) pro testovací scény.
+ *  - `PAUSED` (bool, default false) — true když produkce stojí. Engine mutuje
+ *    z `productionTick`. Důvod v `PAUSE_REASON`.
+ *  - `PAUSE_REASON` (string | null) — lidsky čitelný důvod (`"chybí klády"`,
+ *    `"buffer plný"`). HUD/infotip čte. Voidspan-derived material gate (DD-30).
+ *
+ * Konstruktor přijímá jen `id` + `kind` + pozici. Ostatní default. Model
+ * zůstává datový (DD-11) — žádný engine import.
+ */
+export class FACILITY extends CUBES {
+  constructor(id, name, x, y, z, kind, description = "") {
+    super(id, name, x, y, z, description);
+    this.KIND = kind;
+    this.BUFFER = {};        // `{ resource_id: amount }`, dynamicky doplňováno
+    this.PAUSED = false;
+    this.PAUSE_REASON = null;
+  }
+}
+
+/**
+ * GENERATOR = FACILITY produkující 1+ surovinu bez vstupu (les → klády, lom →
+ * kámen, studna → voda, důl → uhlí). `KIND` musí mít `FACILITY_DEF[kind].type
+ * === "generator"` s `outputs` mapou.
+ *
+ * Engine v `productionTick`: za každou wall sekundu (× TIME_SCALE) přidá
+ * `outputs[r] * dt` do `BUFFER[r]`. Pauzuje na backpressure (buffer plný).
+ */
+export class GENERATOR extends FACILITY {
+  constructor(id, name, x, y, z, kind, description = "") {
+    super(id, name, x, y, z, kind, description);
+  }
+}
+
+/**
+ * TRANSFORMER = FACILITY zpracovávající `inputs` na `outputs` dle receptu
+ * (pila: logs → planks, drtič: stone → gravel). `KIND` musí mít
+ * `FACILITY_DEF[kind].type === "transformer"` s `recipe` klíčem do `RECIPES_DEF`.
+ *
+ * Material gate: pauzuje s reasonem `chybí <input>`, pokud input buffer
+ * nestačí na cyklus tiku. Nebo `buffer <output> plný` na backpressure výstupu.
+ */
+export class TRANSFORMER extends FACILITY {
+  constructor(id, name, x, y, z, kind, description = "") {
+    super(id, name, x, y, z, kind, description);
+  }
+}
+
+/**
+ * STORAGE = FACILITY držící zásoby bez produkce/transformace. „Pufr sítě"
+ * mezi generátory a transformery. `KIND = "storage"` má `buffer_capacity = 200`.
+ *
+ * Atribut `HOLDS` (volitelný; null = drží cokoli) = whitelist resource_id.
+ * Engine v Phase B (PATH transport) zkontroluje při příjmu, jestli zdroj patří
+ * do whitelistu. MVP: vždy null, sklad generic.
+ */
+export class STORAGE extends FACILITY {
+  constructor(id, name, x, y, z, description = "", holds = null) {
+    super(id, name, x, y, z, "storage", description);
+    this.HOLDS = holds;
   }
 }

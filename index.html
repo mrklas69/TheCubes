@@ -25,6 +25,44 @@
     #hud .label { opacity: 0.7; margin-right: 4px; }
     /* COUNTER řádky (dynamicky přidané divy) — lehký rozestup mezi řádky */
     #hud > div { margin-top: 2px; }
+    /* Resource panel (DD-31, sez. 21) — 6 čítačů surovin pod TIME řádkem.
+       Jeden řádek per surovina: label vlevo, hodnota vpravo, tabular-nums. */
+    #resources {
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.15);
+      font-size: 13px;
+      min-width: 140px;
+    }
+    #resources .res-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 1px;
+    }
+    #resources .res-label { opacity: 0.7; }
+    #resources .res-val { font-weight: 600; }
+
+    /* Event log = ticker v levém dolním rohu (DD-31, Voidspan-derived bottom bar
+       inspirace). Monospace, severity-colored verb. */
+    #eventlog {
+      position: fixed; bottom: 10px; left: 10px;
+      background: rgba(0, 0, 0, 0.55);
+      color: #ddd;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font: 12px/1.5 ui-monospace, "SF Mono", Consolas, monospace;
+      user-select: none;
+      pointer-events: none;
+      min-width: 320px;
+      max-width: 60vw;
+      white-space: pre;
+    }
+    #eventlog .evt-line { display: block; }
+    #eventlog .evt-prod { color: #88dd88; }   /* zelená = produkce */
+    #eventlog .evt-drn  { color: #c8c8c8; }   /* neutrální = čerpání inputu */
+    #eventlog .evt-paus { color: #ddcc66; }   /* amber = gate spadla */
+    #eventlog .evt-rsum { color: #66ccdd; }   /* cyan = gate uvolněna */
 
 
     /* Infotip = hover panel s atributy instance pod kurzorem.
@@ -75,8 +113,19 @@
 <body>
   <div id="hud">
     <span class="label">TIME:</span><span id="time">0</span>
+    <!-- Resource panel — 6 čítačů (DD-31). Engine `aggregateResources()`
+         přepisuje .res-val text každý frame. -->
+    <div id="resources">
+      <div class="res-row"><span class="res-label">Klády</span><span class="res-val" id="res-logs">0</span></div>
+      <div class="res-row"><span class="res-label">Prkna</span><span class="res-val" id="res-planks">0</span></div>
+      <div class="res-row"><span class="res-label">Kámen</span><span class="res-val" id="res-stone">0</span></div>
+      <div class="res-row"><span class="res-label">Štěrk</span><span class="res-val" id="res-gravel">0</span></div>
+      <div class="res-row"><span class="res-label">Voda</span><span class="res-val" id="res-water">0</span></div>
+      <div class="res-row"><span class="res-label">Uhlí</span><span class="res-val" id="res-coal">0</span></div>
+    </div>
   </div>
   <div id="tooltip"></div>
+  <div id="eventlog"></div>
   <canvas id="scene"></canvas>
 
   <!-- type="module" umožňuje ES modulové `import` / `export` v prohlížeči.
