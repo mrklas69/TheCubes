@@ -1,7 +1,7 @@
 # CLAUDE.md — TheCubes
 
 ## Project
-TheCubes je meta-sandbox s živým OOP modelem. Na začátku existuje jediná instance `OBJECTS`, rozšiřováním modelu se scéna zaplňuje. Cíl: demonstrovat současné mládeži, že tvorba je zábavnější než konzumace.
+TheCubes je meta-sandbox s živým OOP modelem. Na začátku existuje jediná instance `OBJECTS`, rozšiřováním modelu se scéna zaplňuje.
 
 ## Status
 Milníky **M1–M7 hotové**, **M8+ průběžně**. **Jediná scéna** — dioráma s **4-vrstvou taxonomií** (DD-25 sez. 16: Bloky / Voxely / Linie / Objekty). Po sez. 17–20 čtyři nové DD: **DD-26 sjednocená `ORIENTATION`** napříč BLOCKS i COMPOSITES (float [0, 360) ve stupních), **DD-27 PATH** (1. potomek vrstvy 3 LINES, Catmull-Rom strip), **DD-28 sjednocená Y konvence** (BLOCKS = grid-center, surface třídy = mesh bottom), **DD-29 WORLD singleton** (nevizuální OBJECTS-derived, `WIND_STRENGTH` násobí `tree_sway` amplitudu; další atributy gated by konzument).
@@ -93,6 +93,10 @@ OBJECTS (ID, NAME, DESCRIPTION, ANIMATE)
 ## Macros
 - Projektová makra: `%BEGIN`, `%END` — definována v `docs/PROMPTS.md`. `%BEGIN` vždy končí spuštěním serveru na `localhost:8000`.
 - Globální makra: `%THINK`, `%AUDIT:CODE`, `%AUDIT:DOCS` (viz `~/.claude/CLAUDE.md`).
+
+### `%THINK` — rozšíření pro TheCubes
+Doplň globální body o:
+5. **Sandbox mechanika**: dá se vyjádřit stávajícím OOP modelem (objects, relations, rules)? Pokud ne, navrhni minimální rozšíření modelu — ne scripted scénář. Preferuj emergentní chování z jednoduchých pravidel před hardcoded výsledkem.
 
 ## Workflow
 1. Diskutovat koncept v chatu
