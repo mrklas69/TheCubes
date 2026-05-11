@@ -43,6 +43,25 @@
     #resources .res-label { opacity: 0.7; }
     #resources .res-val { font-weight: 600; }
 
+    /* Sim control panel (DD-31, sez. 22 fáze B) — slider pro world.TIME_SCALE.
+       Vlastní pointer-events: auto, aby slider chytal myš (#hud má none). */
+    #simctrl {
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.15);
+      font-size: 12px;
+      pointer-events: auto;
+    }
+    #simctrl .sim-row { display: flex; justify-content: space-between; gap: 8px; }
+    #simctrl .sim-label { opacity: 0.7; }
+    #simctrl .sim-val { font-weight: 600; min-width: 32px; text-align: right; }
+    #simctrl input[type="range"] {
+      width: 100%;
+      margin-top: 3px;
+      accent-color: #66ccdd;
+      cursor: pointer;
+    }
+
     /* Event log = ticker v levém dolním rohu (DD-31, Voidspan-derived bottom bar
        inspirace). Monospace, severity-colored verb. */
     #eventlog {
@@ -122,6 +141,13 @@
       <div class="res-row"><span class="res-label">Štěrk</span><span class="res-val" id="res-gravel">0</span></div>
       <div class="res-row"><span class="res-label">Voda</span><span class="res-val" id="res-water">0</span></div>
       <div class="res-row"><span class="res-label">Uhlí</span><span class="res-val" id="res-coal">0</span></div>
+    </div>
+    <div id="simctrl">
+      <div class="sim-row">
+        <span class="sim-label">Rychlost simulace</span>
+        <span class="sim-val" id="time-scale-val">1.0×</span>
+      </div>
+      <input type="range" id="time-scale-slider" min="0" max="3" step="0.1" value="1">
     </div>
   </div>
   <div id="tooltip"></div>

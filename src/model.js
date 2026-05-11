@@ -364,25 +364,46 @@ export class LOG extends COMPOSITES {
 }
 
 /**
- * PATH = pixel-art cesta jako 1D křivka (DD-25 vrstva 3 — Linie). První
- * potomek vrstvy LINES (zatím bez explicit base třídy — přidá se s druhým
- * sourozencem TRACK / RIVER).
+ * PATH = 1D křivka (DD-25 vrstva 3 — Linie). První potomek LINES vrstvy.
+ *
+ * **Dvojí role** (DD-31, sez. 21):
+ *  - `KIND = "dirt"` (default) — **dekorativní cesta** (sez. 17, severská
+ *    dioráma). Bez transportu, jen vizuál. `SOURCE`/`SINK`/`RESOURCE`/`THROUGHPUT`
+ *    zůstávají null.
+ *  - `KIND = "conveyor"` — **factory dopravník pro solidy** (logs, planks,
+ *    stone, gravel, coal). Engine `pathTick` přesouvá items mezi `SOURCE.BUFFER`
+ *    a `SINK.BUFFER` rychlostí `THROUGHPUT` ks/s.
+ *  - `KIND = "pipeline"` — **factory potrubí pro fluidy** (water). Stejný
+ *    transport engine, odlišný KIND pro vizuální/sémantické rozlišení a validaci
+ *    `RESOURCES_DEF[r].category`.
  *
  * Atributy:
- *  - `KIND` — string řídí texturu povrchu. Default `"dirt"` (sdílí `:dirt`
- *    s grass blokem). Plánováno: `"stone"`, `"wood"`.
+ *  - `KIND` — viz výše. Default `"dirt"`.
  *  - `POINTS` — pole `[x, y, z]` kontrolních bodů ve **world** souřadnicích
  *    (instance.X/Y/Z se nepoužívá; engine staví strip mesh přímo z POINTS).
  *    Engine spline-interpoluje (Catmull-Rom) a vykreslí jako plochý strip
  *    šířky ~0.5 j s drobným Y offsetem nad terrain (proti z-fighting).
+ *  - `SOURCE` — instance `FACILITY` (`GENERATOR`/`TRANSFORMER`/`STORAGE`) odkud
+ *    se čerpá. Pro `"dirt"` zůstává null. Set post-hoc: `path.SOURCE = forest;`.
+ *  - `SINK` — instance `FACILITY` kam přitéká. Symetrický se SOURCE.
+ *  - `RESOURCE` — string klíč do `RESOURCES_DEF` (`"logs"`, `"planks"`, …).
+ *    Explicit, ne derived — storage drží libovolné suroviny, derive by byl
+ *    nejednoznačný. Engine validuje `category` ↔ `KIND` (solid → conveyor,
+ *    fluid → pipeline) boot-time warnem.
+ *  - `THROUGHPUT` — float ks/s. Default `null` (= dekorativní, žádný transport).
+ *    Doporučené hodnoty: conveyor 2 ks/s, pipeline 5 L/s (DD-31 sez. 21).
  *
- * Pozice: instance.X/Y/Z = (0, 0, 0) je idiomatický „cesta žije v world coords".
+ * Pozice: instance.X/Y/Z = (0, 0, 0) — cesta žije v world coords (POINTS).
  */
 export class PATH extends CUBES {
   constructor(id, name, points, description = "", kind = "dirt") {
     super(id, name, 0, 0, 0, description);
-    this.KIND   = kind;
-    this.POINTS = points;
+    this.KIND       = kind;
+    this.POINTS     = points;
+    this.SOURCE     = null;
+    this.SINK       = null;
+    this.RESOURCE   = null;
+    this.THROUGHPUT = null;
   }
 }
 

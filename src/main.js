@@ -414,6 +414,21 @@ const animators = [];
 const world = new WORLD();
 window.world = world;
 
+// TIME_SCALE slider (DD-31, sez. 22 fáze B) — HUD ovladač rychlosti simulace.
+// `input` event mutuje `world.TIME_SCALE` a aktualizuje text. Render loop si
+// `world.TIME_SCALE` čte každý frame, takže změna se projeví okamžitě bez reloadu.
+{
+  const slider = document.getElementById("time-scale-slider");
+  const valEl  = document.getElementById("time-scale-val");
+  if (slider && valEl) {
+    slider.addEventListener("input", () => {
+      const v = parseFloat(slider.value);
+      world.TIME_SCALE = v;
+      valEl.textContent = `${v.toFixed(1)}×`;
+    });
+  }
+}
+
 // Plný kruh v radiánech — pojmenovaná konstanta, aby `(TAU * t) / period` šel
 // číst jako „kolik period uplynulo v radiánech". Math.PI * 2 = 2π.
 const TAU = Math.PI * 2;
@@ -924,6 +939,12 @@ function registerBehavior(instance) {
 // větvi. Iterujeme každý frame v `productionTick`.
 const facilities = [];
 
+// Registry všech aktivních PATH instancí — naplňuje `createPathFor`. Iterujeme
+// každý frame v `pathTick` (DD-31, sez. 22 fáze B). Dekorativní cesty
+// (`KIND="dirt"`, bez SOURCE/SINK) jsou v registry také, pathTick je tolerantně
+// přeskočí — větvení by bylo zbytečné, missing-fields check je levný.
+const paths = [];
+
 // Event log = ring buffer (max 100). Render zobrazuje posledních 5.
 const EVENT_LOG_CAPACITY = 100;
 const EVENT_LOG_VISIBLE = 5;
@@ -1072,7 +1093,7 @@ function transformerTick(facility, def, dt) {
 }
 
 // Hlavní produkční tick — volá se z render loopu s `dt` v sekundách
-// (už škálovaný `TIME_SCALE`). Storage je pasivní (transport přijde v Phase B).
+// (už škálovaný `TIME_SCALE`). Storage je pasivní (transport řeší pathTick).
 function productionTick(dt) {
   for (const f of facilities) {
     const def = FACILITY_DEF[f.KIND];
@@ -1081,6 +1102,50 @@ function productionTick(dt) {
     else if (def.type === "transformer") transformerTick(f, def, dt);
     // storage: no-op v MVP
   }
+}
+
+// PATH transport tick (DD-31, sez. 22 fáze B). Iteruje `paths[]`, per cesta
+// s validním transportem (SOURCE+SINK+RESOURCE+THROUGHPUT) přesune
+// `min(THROUGHPUT*dt, source_have, sink_free_capacity)` daného resource
+// ze source BUFFER do sink BUFFER. Dekorativní `"dirt"` cesty engine přeskočí.
+//
+// Volá se z render loopu **po** productionTick — jinak by transport mohl
+// odvézt items, které generator/transformer právě v tomto tick vyrobil
+// (= mikro-zpoždění o jeden frame, ale ekonomicky korektní: tick = produkce,
+// pak distribuce).
+function pathTick(dt) {
+  for (const p of paths) {
+    if (!p.SOURCE || !p.SINK || !p.RESOURCE || !p.THROUGHPUT) continue;
+    transferOnPath(p, dt);
+  }
+}
+
+// Jednotka transportu. Source-dry → 0, sink-full → 0; jinak min(want, have, free).
+// Loguje DRN/PROD přes existující floor-crossing helpery — stejná granularita
+// jako u generator/transformer eventů (1 řádek per whole-unit krok).
+function transferOnPath(path, dt) {
+  const src = path.SOURCE;
+  const dst = path.SINK;
+  const r   = path.RESOURCE;
+  const sinkDef = FACILITY_DEF[dst.KIND];
+  if (!sinkDef) return;
+
+  const have = src.BUFFER[r] ?? 0;
+  if (have <= 0) return;
+  const dstHave = dst.BUFFER[r] ?? 0;
+  const free = sinkDef.buffer_capacity - dstHave;
+  if (free <= 0) return;
+
+  const wanted = path.THROUGHPUT * dt;
+  const amount = Math.min(wanted, have, free);
+  if (amount <= 0) return;
+
+  const newSrc = have - amount;
+  const newDst = dstHave + amount;
+  src.BUFFER[r] = newSrc;
+  dst.BUFFER[r] = newDst;
+  maybeLogConsumption(src, r, have, newSrc);
+  maybeLogProduction(dst, r, dstHave, newDst);
 }
 
 // Přepočítá `world.RESOURCES` jako Σ `BUFFER` napříč všemi fasilitami a
@@ -1957,6 +2022,21 @@ function createPathFor(instance) {
   // s podkladem). Stromy nad cestou vrhají stín na ni → receive je užitečný.
   group.add(mesh);
 
+  // Registrace do paths registry — pathTick iteruje v render loopu. Dekorativní
+  // PATH (KIND="dirt", bez SOURCE/SINK) je zde také; pathTick je přeskočí
+  // missing-fields checkem. Boot-time validace category × KIND pro factory PATH.
+  paths.push(instance);
+  if (instance.RESOURCE && instance.KIND !== "dirt") {
+    const cat = RESOURCES_DEF[instance.RESOURCE]?.category;
+    const expected = cat === "fluid" ? "pipeline" : "conveyor";
+    if (instance.KIND !== expected) {
+      console.warn(
+        `[PATH] ${instance.ID}: RESOURCE "${instance.RESOURCE}" je ${cat}, ` +
+        `očekáván KIND="${expected}", máš "${instance.KIND}".`,
+      );
+    }
+  }
+
   return group;
 }
 
@@ -2649,10 +2729,12 @@ function buildScene(scene) {
 
   populateNorthernScene(scene, pathOccupiedCells(pathPoints));
 
-  // === Factory toy test scéna (DD-31, sez. 21, fáze A) ===
+  // === Factory toy test scéna (DD-31, sez. 21–22, fáze A→B) ===
   // 3 fasility na grass podlaze (Y=0 = jeden blok nad podlahou gy=−1, BLOCKS
-  // grid-center konvence DD-28). Bez PATH zatím — sawmill má pre-stocked logs,
-  // produkuje prkna do svého buffer; fáze B propojí PATH transportem.
+  // grid-center konvence DD-28) propojené 2 conveyor PATH (sez. 22 fáze B).
+  // Tok: forest → conveyor → sawmill → conveyor → storage. Bez pre-stocku —
+  // sawmill čeká na první klády z transportu (PAUS „chybí logs" na startu,
+  // RSUM jakmile forest stihne vyprodukovat & conveyor přesune).
   const forest = new GENERATOR(
     "fac_forest_0", "Les (test)", -2, 0, 2, "forest",
     "GENERATOR — produkuje klády (0.5/s) do lokálního BUFFER.",
@@ -2663,16 +2745,45 @@ function buildScene(scene) {
     "fac_sawmill_0", "Pila (test)", 0, 0, 2, "sawmill",
     "TRANSFORMER — recept sawmill (1 kláda → 0.8 prkna / cyklus, 1 cyklus/s).",
   );
-  // Pre-stock: 50 klád v input bufferu, aby fáze A demo ukázalo produkci prken
-  // i následnou PAUS „chybí logs" po vyčerpání. Fáze B (PATH) tohle nahradí.
-  sawmill.BUFFER.logs = 50;
   scene.add(createMeshFor(sawmill));
 
   const storage = new STORAGE(
     "fac_storage_0", "Sklad (test)", 2, 0, 2,
-    "STORAGE — pasivní pufr, MVP fáze A bez PATH transportu nic nepřijímá.",
+    "STORAGE — pasivní pufr pro prkna z pily (cap 200).",
   );
   scene.add(createMeshFor(storage));
+
+  // Conveyor PATH 1: forest → sawmill (resource: logs). POINTS na Y=−0.5
+  // (grass surface, stejná konvence jako dekorativní path_0). Throughput 2 ks/s
+  // (DD-31 default conveyor) — větší než forest production 0.5/s, takže transport
+  // není bottleneck a forest BUFFER zůstává ~0 (source-limited).
+  const pathForestSawmill = new PATH(
+    "path_forest_sawmill", "Dopravník Les → Pila",
+    [[-2, -0.5, 2], [0, -0.5, 2]],
+    "Conveyor — přemisťuje klády z lesa do pily.",
+    "conveyor",
+  );
+  pathForestSawmill.SOURCE     = forest;
+  pathForestSawmill.SINK       = sawmill;
+  pathForestSawmill.RESOURCE   = "logs";
+  pathForestSawmill.THROUGHPUT = 2;
+  scene.add(createMeshFor(pathForestSawmill));
+
+  // Conveyor PATH 2: sawmill → storage (resource: planks). Pila výstup 0.8/s,
+  // throughput 2/s — také source-limited. Storage cap 200 = ~250 s plnění
+  // dokud sklad nebude full a sawmill nehlásí PAUS „buffer planks plný"
+  // (≈ až pila vyprodukuje 200 prken, což při 0.4-0.8/s effective trvá ~5 min).
+  const pathSawmillStorage = new PATH(
+    "path_sawmill_storage", "Dopravník Pila → Sklad",
+    [[0, -0.5, 2], [2, -0.5, 2]],
+    "Conveyor — přemisťuje prkna z pily do skladu.",
+    "conveyor",
+  );
+  pathSawmillStorage.SOURCE     = sawmill;
+  pathSawmillStorage.SINK       = storage;
+  pathSawmillStorage.RESOURCE   = "planks";
+  pathSawmillStorage.THROUGHPUT = 2;
+  scene.add(createMeshFor(pathSawmillStorage));
 }
 
 // Spočítá grid buňky (X, Z), kterými PATH prochází — populate je pak skipne,
@@ -3126,7 +3237,10 @@ function animate() {
   // (DD-29 nový konzument). TIME_SCALE=0 → pauza simulace, =2 → 2× zrychleně.
   // Cap na 0.1 s (kdyby tab uspal a `dt` byl velký) — žádné spikes v ekonomice.
   const simDt = Math.min(dt, 0.1) * world.TIME_SCALE;
-  if (simDt > 0) productionTick(simDt);
+  if (simDt > 0) {
+    productionTick(simDt);
+    pathTick(simDt);
+  }
   aggregateResources();
   // Ocásky dialogových bublin: přepočítáme až **po** animátorech, aby jsme
   // četli aktuální `object3d.position` případných pohybujících se mluvčí
