@@ -30,11 +30,14 @@
 
 ### Fáze B — PATH transport (sez. 22–23)
 
-- [ ] **`PATH` rozšíření**: `KIND ∈ "conveyor"|"pipeline"`, `SOURCE` / `SINK` instance ID refs, `THROUGHPUT`.
-- [ ] **PATH skutečně přemisťuje** items mezi `SOURCE.BUFFER` a `SINK.BUFFER` per tick.
-- [ ] **Material gate** — transformer se pauzuje při chybějícím inputu, event log verb `PAUS` s důvodem (`Pila pauza — chybí klády`). Resume při doplnění.
-- [ ] **`WORLD.TIME_SCALE` slider** v HUD — škáluje globální tick rate.
-- [ ] **Migrace test scény** na PATH propojení (forest → conveyor → sawmill → conveyor → storage).
+- [x] **`PATH` rozšíření**: `KIND ∈ "conveyor"|"pipeline"`, `SOURCE` / `SINK` instance ref, `RESOURCE` (explicit), `THROUGHPUT`. *(Sez. 22.)*
+- [x] **PATH skutečně přemisťuje** items mezi `SOURCE.BUFFER` a `SINK.BUFFER` per tick (`pathTick(dt)`). *(Sez. 22.)*
+- [x] **Material gate** — transformer pauzuje při chybějícím inputu (`PAUS chybí <r>`), RSUM při doplnění. *(Už ve fázi A; sez. 22 ověřeno přes real transport.)*
+- [x] **`WORLD.TIME_SCALE` slider** v HUD — range 0..3, step 0.1, live update. *(Sez. 22.)*
+- [x] **Migrace test scény** na PATH propojení: forest → conveyor → sawmill → conveyor → storage (smazán pre-stocked `BUFFER.logs = 50`). *(Sez. 22.)*
+- [ ] **Material gate vizualizace** — emissive boost (červená/amber) na PAUSED fasilitách, lazy material clone à la hover. *(Sez. 22 odloženo do scope, dál sez. 23.)*
+- [ ] **Druhý zdrojový řetězec** (parallel verification) — quarry → crusher → storage. Voda + uhlí zatím bez transformeru (jen těží a teče do skladu pipelinem). *(Sez. 23.)*
+- [ ] **Steady-state polish** — sawmill aktuálně osciluje PAUS↔RSUM kvůli source-limited supply (forest 0.5/s vs. recipe 1/s spotřeba). Řešení: druhý forest, ladění rates, nebo debounce v `setPaused` (min interval mezi PAUS/RSUM emit). *(Sez. 22 odhalilo, řešit sez. 23.)*
 
 ### Fáze C — Editor MVP (sez. 24+)
 

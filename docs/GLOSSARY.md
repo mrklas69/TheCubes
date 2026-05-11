@@ -1,6 +1,6 @@
 # Glossary
 
-Canonical terminologie projektu TheCubes. Stav po sez. 17–21 (DD-26 sjednocená `ORIENTATION`, DD-27 `PATH` + LINES vrstva 3, DD-28 sjednocená Y konvence, DD-29 `WORLD` singleton, **DD-30 pivot na 3D factory-observer toy** s Voidspan inspirací, **DD-31 Resource model & FACILITY**). Smazané třídy a koncepty žijí v immutable diary jako historický kontext — zde se neuvádějí.
+Canonical terminologie projektu TheCubes. Stav po sez. 17–22 (DD-26 sjednocená `ORIENTATION`, DD-27 `PATH` + LINES vrstva 3, DD-28 sjednocená Y konvence, DD-29 `WORLD` singleton, **DD-30 pivot na 3D factory-observer toy** s Voidspan inspirací, **DD-31 Resource model & FACILITY** + PATH transport fáze B sez. 22). Smazané třídy a koncepty žijí v immutable diary jako historický kontext — zde se neuvádějí.
 
 **Identita projektu po DD-30 (sez. 21):** model-first factory-observer toy s OOP modelem jako runtime. Cíl = **pozorování ukazatelů** (observer game, Voidspan-derived Perpetual Observer Simulation axiom), ne win/loss. Sandbox/free-building aspekt zůstává (editor MVP plánovaný v Phase C). Pixel-voxel apartmá (TREE 10 KIND, GRASS_TUFT, ROCK_PIXEL, LOG, `populateNorthernScene`, `tree_sway`, `:grass-top`) je v Phase D cleanup queue — TheCubes nadále nevyžaduje organickou dekoraci, identita kostek = mřížkové fasility.
 
@@ -44,7 +44,16 @@ Historicky (před DD-26, sez. 16) byla `BLOCKS.ORIENTATION` integer enum 0..3 a 
 
 ### Linie (LINES vrstva 3, DD-25)
 
-- **PATH** — 1D křivka jako plochý strip mesh. Potomek CUBES (= LINES rodina abstract base třída zatím nezavedena, čeká na druhého sourozence TRACK). Atributy: `KIND` (string, default `"dirt"`) řídí texturu povrchu, `POINTS` (pole `[x, y, z]` kontrolních bodů ve world coords). `instance.X/Y/Z` se nepoužívá (cesta žije v world coords; constructor volá `super(0, 0, 0, ...)`). Engine `createPathFor`: `THREE.CatmullRomCurve3` (typ `catmullrom`, tension 0.5), 64 vzorků, generuje strip BufferGeometry s positions/uvs/indices. Šířka 0.5 j, Y offset +0.005 j proti z-fightingu, repeating texture UV scale 8× podél délky. **Rovný směr v krajních bodech** — Three.js v non-closed Catmull-Rom curvě používá v krajních bodech reflexi sousedního, tj. tangenta v `P[0]` = `P[1] − P[0]`; pokud `P[0].Z = P[1].Z`, tangenta je čistě podél X (= rovný vstup/výstup). `pathOccupiedCells(points)` vzorkuje curve 128× a vrátí Set grid buněk → `populateNorthernScene` skipne dekorace v koridoru cesty. *(Sez. 17, DD-27.)*
+- **PATH** — 1D křivka jako plochý strip mesh. Potomek CUBES (= LINES rodina abstract base třída zatím nezavedena, čeká na druhého sourozence TRACK). **Dvojí role** (sez. 22 fáze B): dekorativní (`KIND="dirt"`) nebo factory transport (`KIND ∈ "conveyor"|"pipeline"`). Atributy:
+  - `KIND` (string, default `"dirt"`) — řídí texturu povrchu i transport sémantiku. `"conveyor"` pro solid resources, `"pipeline"` pro fluid. Engine boot-time validuje `RESOURCES_DEF[RESOURCE].category` proti `KIND` (warn na neshodu).
+  - `POINTS` (pole `[x, y, z]` kontrolních bodů ve world coords). `instance.X/Y/Z` se nepoužívá (cesta žije v world coords; constructor volá `super(0, 0, 0, ...)`).
+  - `SOURCE`, `SINK` (instance ref na `FACILITY`, default null) — endpointy transportu. Dekorativní `"dirt"` cesty nechávají null.
+  - `RESOURCE` (string klíč do `RESOURCES_DEF`, default null) — **explicit** resource ID. Derived ze SOURCE by byl nejednoznačný u STORAGE (drží libovolné suroviny).
+  - `THROUGHPUT` (float ks/s, default null) — rychlost transportu. Doporučené: conveyor 2 ks/s, pipeline 5 L/s.
+
+  Engine `createPathFor`: `THREE.CatmullRomCurve3` (typ `catmullrom`, tension 0.5), 64 vzorků, generuje strip BufferGeometry s positions/uvs/indices. Šířka 0.5 j, Y offset +0.005 j proti z-fightingu, repeating texture UV scale 8× podél délky. **Rovný směr v krajních bodech** — Three.js v non-closed Catmull-Rom curvě používá v krajních bodech reflexi sousedního, tj. tangenta v `P[0]` = `P[1] − P[0]`; pokud `P[0].Z = P[1].Z`, tangenta je čistě podél X (= rovný vstup/výstup). `pathOccupiedCells(points)` vzorkuje curve 128× a vrátí Set grid buněk → `populateNorthernScene` skipne dekorace v koridoru cesty.
+
+  Transport tick (`pathTick(dt)` sez. 22): per cesta s validním transportem (`SOURCE+SINK+RESOURCE+THROUGHPUT` all set) přesune `min(THROUGHPUT*dt, source_have, sink_free_capacity)` ze source BUFFER do sink BUFFER. Loguje `DRN` na source, `PROD` na sink přes existující floor-crossing helpery (stejná 1-event-per-whole-unit granularita jako productionTick). Volá se **po** `productionTick` v render loopu — tick = nejprve produkce, pak distribuce. *(Sez. 17 DD-27 dekorativní + sez. 22 DD-31 fáze B transport.)*
 
 ### Fasility (FACILITY rodina, DD-31 sez. 21)
 
