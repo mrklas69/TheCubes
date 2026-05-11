@@ -58,7 +58,45 @@ Poznámka: rampy / schody řeší jen *geometrii*, splines / graf oddělí **poh
 - Editor modelu přímo v prohlížeči — formulář na vytvoření potomka třídy?
 - Nebo zatím jen úprava kódu, editor až později?
 
+## Voidspan inspirace pro factory toy *(DD-30, sez. 21 — Phase 2+ parking)*
+
+TheCubes byl pivotován na 3D analogii projektu Voidspan (sourozenecký projekt `~/source/Voidspan`, 25+ sezení designu). MVP set DD-31 vzal nejnutnější (Resource registry, Recipe matrix, Material gate, Event Log 4-znakové verbs). Tyto Voidspan koncepty jsou *parkované pro Phase 2+*:
+
+### Resource Taxonomy (Voidspan v0.1)
+- **Rarity tiers** (5 stupňů, EN/CZ): Common/Obyčejné, Uncommon/Neobvyklé, Rare/Vzácné, Exclusive/Exkluzivní, Epic/Epické. Designový baseline pro budoucí scaling — Common = `logs/stone/water`, Uncommon = `coal/iron`, Rare = budoucí drahé kovy, atd.
+- **Implikace:** drop chance v capsule recycling (Voidspan-specific, TheCubes nemá), market cena rarity-weighted, recipe gating (Engine v3 vyžaduje Titan).
+- **Logistics matrix:** Solids (dopravní pásy, pytle, sila/bedny, jednotka kg/t) vs. Fluids (potrubí/hadice, nádrže/barely, l/m³). TheCubes MVP používá generický `PATH.KIND ∈ "conveyor"|"pipeline"` jako minimální projekci — Phase 2 doplní storage subtypy (Silo/Tank/Crate).
+
+### Module Specialization Principle (Voidspan S5)
+*„Integrované multi-purpose moduly mají minimální výkon, dedikované jednoúčelové jsou řádově výkonnější."*
+- TheCubes Phase 2: 1×1×1 pila zpracuje 1 kládu/s, 2×2×2 mega-pila zpracuje 16 klád/s s lepší efektivitou (1 kláda → 0.9 prkna místo 0.8). Atraktivní upgrade curve — hráč začne s malými, později specializuje.
+
+### Multi-input recepty (Phase 2 surovinová vlna)
+Soviet Republic-style production chains. Otevírá kombinatorickou složitost:
+- `bricks` z `clay + coal` (Phase 2 přidá `clay` raw, kiln transformer)
+- `cement` z `gravel + water` (využije existující gravel + water řetězec)
+- `steel` z `iron + coal` (Phase 2 přidá `iron` raw, smelter transformer)
+- Beton z `gravel + cement + water` (3-input — testuje material gate s víc vstupy).
+
+### formatScalar (Voidspan v0.1 axiom)
+Jednotící zobrazení čísel v UI: 2 significant digits + SI prefixy (`µ/m/—/k/M/G/T`). Příklady: `0.15` → `"0.15"`, `1500` → `"1.5k"`. TheCubes MVP používá `Math.floor` → integer ks. Phase 2 polish, až bude víc surovin a vyšší totals.
+
+### Event Log polish (Phase 2)
+- Verb catalog rozšíření: `BUILD`/`DEMO` (editor v Phase C), `HAUL` (PATH transport per-tick), `RPRT` (systémové zprávy), `STAT` (Status tree threshold crossing — kdyby TheCubes přidal Status tree).
+- Filter chips (Voidspan-derived "Lazy emergence axiom"): chip se objeví až při prvním výskytu verb v sezení. UI roste s realitou.
+- Ring buffer kapacita: 500 events (Voidspan default) vs. MVP 100 — drobnost.
+
+### Záměrně **odmítnuto** (designové linie, kde se TheCubes nepodobá Voidspanu)
+- **Cosmology / lore** — Voidspan má Teegarden System, kolonisty, Capsule. TheCubes je abstraktní sandbox bez narativu.
+- **Status tree + Citizen tiers** — Voidspan se zaměřuje na *přežití kolonie* (HP, hlad, žízeň). TheCubes je *pozorování ukazatelů* bez win/loss.
+- **Protocol / QuarterMaster AI** — Voidspan má kolonijní CPU vrstvu (auto-repair, task routing). TheCubes pro MVP nepotřebuje, hráč staví a model počítá. Phase 3+ kdyby kolize.
+- **Coin / Credit měna** — TheCubes nepotřebuje monetární vrstvu, suroviny jsou samy o sobě hodnotou.
+- **W (Work) jako resource** — Voidspan má pracovníky s `power_w`. TheCubes nemá kolonisty, `productionTick` agreguje per-fasilitu bez nepřímé „work pool" abstrakce.
+- **TypeScript / Phaser / pnpm** — Voidspan má hotový stack (`apps/` workspace). TheCubes zůstává vanilla JS + Three.js + Python http.server. KISS = nemíchat technologie, jen koncepty.
+
 ## Inspirace
 - PocketStory `Board` view (Three.js diorama + meeples)
 - Smalltalk image-based programming
 - OOP databáze s živou vizualizací
+- **Voidspan v1.4** (sourozenecký projekt, `~/source/Voidspan`) — 25+ sezení designu factory builderu, kvintet zdrojů E/W/S/F/◎, Module Specialization, Protocol/QuarterMaster. Inspirace, ne dogma — viz „Voidspan inspirace" výš.
+- **Workers & Resources: Soviet Republic** (Hooded Horse, https://wiki.hoodedhorse.com/Workers_Resources_Soviet_Republic/Resources) — referenční resource graph s 50+ surovinami a multi-step production chains. Source-of-truth pro Phase 2 surovinovou vlnu.
