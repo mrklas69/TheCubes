@@ -606,7 +606,8 @@ export const RECIPES_DEF = {
  *  - `type` — `"generator"` | `"transformer"` | `"storage"`. Dispatch v
  *    `productionTick` a v `createMeshFor` (i když mesh je sjednocený box).
  *  - `outputs` (jen pro generator) — `{ resource_id: ks_per_s }`. Les dává
- *    0.5 klády/s = ~30 klád za minutu.
+ *    1.0 klády/s = 60 klád za minutu (matchne sawmill 1 log/cyklus × 1.0/s,
+ *    žádný source-starve, žádná PAUS/RSUM oscilace; sez. 23 polish bod #3).
  *  - `recipe` (jen pro transformer) — klíč do `RECIPES_DEF`.
  *  - `buffer_capacity` — max ks v `BUFFER` per slot. Generator output buffer
  *    50 (~100 s plný), transformer slot 20, sklad 200 (= „pufr sítě").
@@ -618,7 +619,7 @@ export const RECIPES_DEF = {
  */
 export const FACILITY_DEF = {
   // --- GENERATORs (produkují bez vstupu) ---
-  forest:    { type: "generator",   outputs: { logs:  0.5 }, buffer_capacity: 50,  color: 0x3e6a32, name_cs: "Les" },
+  forest:    { type: "generator",   outputs: { logs:  1.0 }, buffer_capacity: 50,  color: 0x3e6a32, name_cs: "Les" },
   quarry:    { type: "generator",   outputs: { stone: 0.4 }, buffer_capacity: 50,  color: 0x7a7a78, name_cs: "Lom" },
   well:      { type: "generator",   outputs: { water: 0.6 }, buffer_capacity: 50,  color: 0x4a7090, name_cs: "Studna" },
   coal_mine: { type: "generator",   outputs: { coal:  0.3 }, buffer_capacity: 50,  color: 0x2a2a2a, name_cs: "Důl uhlí" },
