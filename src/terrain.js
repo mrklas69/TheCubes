@@ -206,5 +206,206 @@ export function generateTerrain({ size, relief, surfaces, seed = 42 }) {
     }
   }
 
-  return { blocks, water };
+  // === Krok 5: ramp smoothing (DD-34 kandidát) — 2-pass kolaps vlnové funkce ===
+  // Per cell A spawn buď **TRRAMPS edge** (přístupový klín k direct vyššímu
+  // sousedovi B) nebo **TTRAMPS isolated peak** (estetické vyplnění rohového
+  // peakového voxelu, kde A nemá direct vyšší, ale diag vyšší existuje).
+  //
+  // Pass 1 — kandidát per cell:
+  //   if highDirs.length > 0:
+  //     skip pokud úzký rokle (2 protilehlé high bez jiných)
+  //     greedy criticality score (= count alt nižších sousedů B):
+  //       nižší score ⇒ víc critical ⇒ vyšší priorita
+  //       tie-break: N > E > S > W
+  //     kandidát = TRRAMPS edge k pick direction.
+  //   elif diag isolated peak (0 direct high, 1+ diag high s oběma direct rohu
+  //         na úrovni A):
+  //     kandidát = TTRAMPS corner k tomu rohu (preferenční pořadí NE>NW>SE>SW).
+  //   else: nic (rovinatá cell, jáma, nebo diag peak s asymetrickými direct).
+  //
+  // Pass 2 — compatibility filter (TRRAMPS jen):
+  //   pokud ramp A → dest B a B má taky TRRAMPS s **jinou** orientací než A,
+  //   postava narazí do BACK quad nebo LEFT/RIGHT triangle ramp B v sdílené
+  //   rovině (= „bok rampy", uživatel sez. 26). Drop ramp A.
+  //   Multi-level stairway (A k W → B s ramp k W) je validní pokračování.
+  //   TTRAMPS isolated peak nemají compatibility constraint (nepotkávají
+  //   se s TRRAMPS — vznikají v cells s flat direct sousedstvem).
+  //
+  // ORIENTATION (DD-26): default TRRAMPS high end na −Z, default TTRAMPS
+  // apex k rohu (−X, −Z). Rotace posune k cíli.
+  const cellAt = new Map();
+  for (const c of cells) cellAt.set(`${c.x},${c.z}`, c);
+
+  const NEIGHBORS = [
+    { dx:  0, dz: +1, name: "N" },  // +Z
+    { dx: +1, dz:  0, name: "E" },  // +X
+    { dx:  0, dz: -1, name: "S" },  // -Z
+    { dx: -1, dz:  0, name: "W" },  // -X
+  ];
+  const EDGE_ORIENT = { S: 0, W: 90, N: 180, E: 270 };
+  const PREF_ORDER  = { N: 0, E: 1, S: 2, W: 3 };
+
+  // Rohy pro TTRAMPS — preferenční pořadí NE>NW>SE>SW (deterministický výběr).
+  // Klíč CORNER_ORIENT je sorted alfa: NE=EN, ES=ES, NW=NW, SW=SW.
+  const CORNERS = [
+    { d1: "N", d2: "E", ddx: +1, ddz: +1, key: "EN" },
+    { d1: "N", d2: "W", ddx: -1, ddz: +1, key: "NW" },
+    { d1: "S", d2: "E", ddx: +1, ddz: -1, key: "ES" },
+    { d1: "S", d2: "W", ddx: -1, ddz: -1, key: "SW" },
+  ];
+  const CORNER_ORIENT = { SW: 0, NW: 90, EN: 180, ES: 270 };
+
+  // TDRAMP peak → ORIENTATION. Default ORIENTATION=0 má low corner v lokálním
+  // (-X, -Z), což v terrain.js naming (N=+Z) odpovídá rohu "SW", a peak v
+  // opačném rohu (+X, +Z) = "EN". Rotace +θ° CCW shora přesune low corner.
+  // Empirická korekce: uživatel sez. 26 hlásil, že peak ES dostával orient 0
+  // místo správného 90 (= +90° CCW).
+  //   peak "EN" (+X,+Z): default        → 0
+  //   peak "ES" (+X,-Z): rotace +90     → 90
+  //   peak "SW" (-X,-Z): rotace +180    → 180
+  //   peak "NW" (-X,+Z): rotace +270    → 270
+  const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
+
+  function cellAtXZ(x, z) {
+    return cellAt.get(`${x},${z}`) ?? null;
+  }
+  function isHigher(a, b) {
+    return b !== null && b.y_top === a.y_top + 1 && b.surface !== "water";
+  }
+  function isSameLevel(a, b) {
+    return b !== null && b.y_top === a.y_top;
+  }
+  function countLowDirectNeighbors(b) {
+    let n = 0;
+    for (const dir of NEIGHBORS) {
+      const c = cellAtXZ(b.x + dir.dx, b.z + dir.dz);
+      if (c !== null && c.y_top === b.y_top - 1 && c.surface !== "water") n++;
+    }
+    return n;
+  }
+  // Direct sousední cell A v daném směru (jméno "N"/"E"/"S"/"W").
+  function neighborInDir(a, dirName) {
+    const dir = NEIGHBORS.find((d) => d.name === dirName);
+    return cellAtXZ(a.x + dir.dx, a.z + dir.dz);
+  }
+
+  // Pass 1: kandidát per cell.
+  const candidatePerCell = new Map();  // "x,z" → { type, dir|corner, b, ... }
+  for (const a of cells) {
+    const aKey = `${a.x},${a.z}`;
+    const highDirs = [];
+    for (const dir of NEIGHBORS) {
+      const b = cellAtXZ(a.x + dir.dx, a.z + dir.dz);
+      if (isHigher(a, b)) highDirs.push({ dir, b });
+    }
+
+    if (highDirs.length > 0) {
+      // TRRAMPS edge case. Skip úzký rokle.
+      if (highDirs.length === 2) {
+        const names = new Set(highDirs.map((h) => h.dir.name));
+        if ((names.has("N") && names.has("S")) || (names.has("E") && names.has("W"))) continue;
+      }
+
+      // TDRAMP detekce — 2-stage:
+      //   Stage 1: 3-cell convex peak (oba direct rohu vyšší + diag vyšší).
+      //            Topologicky nejlepší — diag peak je pokryt + 2 přístupy.
+      //   Stage 2: plain L-shape (oba direct rohu vyšší, diag nemusí).
+      //            Pokrývá 2 přístupy, peak corner je BODEM v "air" nad diag.
+      //
+      // Strict dominuje 1× TRRAMPS edge (1 přístup) v obou stage. Iteruj
+      // CORNERS v pref. pořadí (EN > NW > ES > SW), vyber 1. match.
+      // Plain L-shape může vést k double-apex párům (= 2 TDRAMP špičky se
+      // dotýkají v 1 bodě) — řeší Pass 1.5 dedup níž.
+      let tdrampCorner = CORNERS.find((cc) => {
+        const h1 = highDirs.some((h) => h.dir.name === cc.d1);
+        const h2 = highDirs.some((h) => h.dir.name === cc.d2);
+        if (!h1 || !h2) return false;
+        const bd = cellAtXZ(a.x + cc.ddx, a.z + cc.ddz);
+        return isHigher(a, bd);  // Stage 1: diag vyšší
+      });
+      if (!tdrampCorner) {
+        tdrampCorner = CORNERS.find((cc) => {
+          const h1 = highDirs.some((h) => h.dir.name === cc.d1);
+          const h2 = highDirs.some((h) => h.dir.name === cc.d2);
+          return h1 && h2;  // Stage 2: L-shape (diag nemusí)
+        });
+      }
+      if (tdrampCorner) {
+        const bDiag = cellAtXZ(a.x + tdrampCorner.ddx, a.z + tdrampCorner.ddz);
+        const surfaceSrc = (bDiag && bDiag.y_top === a.y_top + 1)
+          ? bDiag
+          : highDirs.find((h) => h.dir.name === tdrampCorner.d1).b;
+        candidatePerCell.set(aKey, {
+          type: "diagonal",
+          a, bDiag,
+          orientation: TDRAMP_PEAK_ORIENT[tdrampCorner.key],
+          surface: surfaceSrc.surface,
+        });
+        continue;
+      }
+
+      // Fallback: TRRAMPS edge greedy criticality.
+      const scored = highDirs.map((h) => ({
+        ...h,
+        altLows: Math.max(0, countLowDirectNeighbors(h.b) - 1),
+      }));
+      scored.sort((x, y) =>
+        x.altLows - y.altLows || PREF_ORDER[x.dir.name] - PREF_ORDER[y.dir.name]
+      );
+      const pick = scored[0];
+      candidatePerCell.set(aKey, {
+        type: "edge",
+        a, dir: pick.dir, b: pick.b,
+        orientation: EDGE_ORIENT[pick.dir.name],
+        surface: pick.b.surface,
+      });
+      continue;
+    }
+
+    // Isolated diag peak case (TTRAMPS): A nemá direct vyšší, ale aspoň 1 diag
+    // vyšší s **oběma direct sousedy rohu na úrovni A** (= peak je geometricky
+    // osamělý voxel v rohu cellu A).
+    for (const c of CORNERS) {
+      const bDiag = cellAtXZ(a.x + c.ddx, a.z + c.ddz);
+      if (!isHigher(a, bDiag)) continue;
+      const b1 = neighborInDir(a, c.d1);
+      const b2 = neighborInDir(a, c.d2);
+      // Direct rohu musí být null (mimo grid) nebo same level (= ploskem rohu).
+      if (b1 !== null && !isSameLevel(a, b1)) continue;
+      if (b2 !== null && !isSameLevel(a, b2)) continue;
+      candidatePerCell.set(aKey, {
+        type: "corner",
+        a, bDiag,
+        orientation: CORNER_ORIENT[c.key],
+        surface: bDiag.surface,
+      });
+      break;  // 1. ten, který sedí (preferenční pořadí NE>NW>SE>SW)
+    }
+  }
+
+  // Pass 1.5 dedup — DROPPED (uživatel sez. 26): L-shape TDRAMP páry sdílející
+  // apex (double-tent v 1 bodě) jsou vizuálně OK. TDRAMP vyplňuje 1/2 voxelu
+  // (větší masa než TTRAMPS apex), maxim. zakrývá existující exposed walls.
+  // Cena: 1.0 new exposed walls per pár — akceptovatelný kompromis.
+
+  // Pass 2: compatibility filter (TRRAMPS jen). Drop ramp A pokud dest cell B
+  // má TRRAMPS s jinou orientací (= postava narazí do boku ramp B).
+  const ramps = [];
+  for (const cand of candidatePerCell.values()) {
+    if (cand.type === "edge") {
+      const destKey = `${cand.b.x},${cand.b.z}`;
+      const destCand = candidatePerCell.get(destKey);
+      if (destCand && destCand.type === "edge" && destCand.dir.name !== cand.dir.name) {
+        continue;  // konflikt — ramp B blokuje cestu, drop A
+      }
+    }
+    ramps.push({
+      kind: cand.type,
+      x: cand.a.x, y: cand.a.y_top + 1, z: cand.a.z,
+      surface: cand.surface,
+      orientation: cand.orientation,
+    });
+  }
+
+  return { blocks, water, ramps };
 }

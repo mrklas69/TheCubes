@@ -57,6 +57,67 @@
     #tooltip .tt-row { display: flex; gap: 6px; line-height: 1.35; }
     #tooltip .tt-key { opacity: 0.65; min-width: 80px; }
     #tooltip .tt-val { flex: 1; word-break: break-word; }
+
+    /* Terrain control panel — pravý dolní roh, ovládací prvky generátoru.
+       pointer-events: auto override nad globálním pointer-events: none HUDu. */
+    #terrainctrl {
+      position: fixed; bottom: 10px; right: 10px;
+      background: rgba(0, 0, 0, 0.65);
+      color: #fff;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+      user-select: none;
+      pointer-events: auto;
+      min-width: 240px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    }
+    #terrainctrl h3 {
+      margin: 0 0 8px 0;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #ff8066;  /* coral akcent shodný s infotipem */
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      padding-bottom: 4px;
+    }
+    #terrainctrl .tc-section { margin-top: 8px; }
+    #terrainctrl .tc-section > .tc-label {
+      opacity: 0.55; font-size: 11px; letter-spacing: 0.08em;
+      text-transform: uppercase; margin-bottom: 4px;
+    }
+    #terrainctrl .tc-row {
+      display: grid;
+      grid-template-columns: 56px 1fr 52px;
+      align-items: center;
+      gap: 6px;
+      margin: 2px 0;
+    }
+    #terrainctrl .tc-key { opacity: 0.7; }
+    #terrainctrl .tc-val { text-align: right; opacity: 0.9; }
+    #terrainctrl input[type="range"] {
+      width: 100%;
+      accent-color: #66ccdd;  /* tyrkysový akcent — projektová konvence */
+    }
+    #terrainctrl input[type="number"] {
+      width: 70px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 4px;
+      color: #fff;
+      padding: 2px 6px;
+      font-family: inherit;
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+    }
+    #terrainctrl .tc-relief-name {
+      text-align: right;
+      opacity: 0.85;
+      font-style: italic;
+      font-size: 12px;
+      margin-top: 2px;
+    }
   </style>
 
   <!-- Import map: mapuje holé názvy ("three", "three/addons/...") na CDN URL.
@@ -76,10 +137,169 @@
     <span class="label">TIME:</span><span id="time">0</span>
   </div>
   <div id="tooltip"></div>
+
+  <!-- Terrain control panel (DD-32 Fáze 3, sez. 26).
+       Slidery: size X/Z (3..30), relief (0..10), 4 surface biomy (auto-normalize),
+       seed (number). Trigger regenerace: `change` event (rozhodnutí sez. 26 —
+       ne `input`/debounce/button). `input` aktualizuje jen readout. -->
+  <div id="terrainctrl">
+    <h3>Terrain generator</h3>
+
+    <div class="tc-section">
+      <div class="tc-label">Size</div>
+      <div class="tc-row">
+        <span class="tc-key">X</span>
+        <input type="range" id="tc-size-x" min="3" max="30" step="1" value="10">
+        <span class="tc-val" id="tc-size-x-val">10</span>
+      </div>
+      <div class="tc-row">
+        <span class="tc-key">Z</span>
+        <input type="range" id="tc-size-z" min="3" max="30" step="1" value="10">
+        <span class="tc-val" id="tc-size-z-val">10</span>
+      </div>
+    </div>
+
+    <div class="tc-section">
+      <div class="tc-label">Relief</div>
+      <div class="tc-row">
+        <span class="tc-key">0–10</span>
+        <input type="range" id="tc-relief" min="0" max="10" step="1" value="3">
+        <span class="tc-val" id="tc-relief-val">3</span>
+      </div>
+      <div class="tc-relief-name" id="tc-relief-name">Rolling</div>
+    </div>
+
+    <div class="tc-section">
+      <div class="tc-label">Surfaces (auto-normalize)</div>
+      <div class="tc-row">
+        <span class="tc-key">grass</span>
+        <input type="range" id="tc-surf-grass" min="0" max="1" step="0.01" value="0.80" data-surf="grass">
+        <span class="tc-val" id="tc-surf-grass-val">0.80</span>
+      </div>
+      <div class="tc-row">
+        <span class="tc-key">stone</span>
+        <input type="range" id="tc-surf-stone" min="0" max="1" step="0.01" value="0.10" data-surf="stone">
+        <span class="tc-val" id="tc-surf-stone-val">0.10</span>
+      </div>
+      <div class="tc-row">
+        <span class="tc-key">sand</span>
+        <input type="range" id="tc-surf-sand" min="0" max="1" step="0.01" value="0.05" data-surf="sand">
+        <span class="tc-val" id="tc-surf-sand-val">0.05</span>
+      </div>
+      <div class="tc-row">
+        <span class="tc-key">water</span>
+        <input type="range" id="tc-surf-water" min="0" max="1" step="0.01" value="0.05" data-surf="water">
+        <span class="tc-val" id="tc-surf-water-val">0.05</span>
+      </div>
+    </div>
+
+    <div class="tc-section">
+      <div class="tc-label">Seed</div>
+      <div class="tc-row">
+        <span class="tc-key">int</span>
+        <span></span>
+        <input type="number" id="tc-seed" value="42" step="1">
+      </div>
+    </div>
+  </div>
+
   <canvas id="scene"></canvas>
 
   <!-- type="module" umožňuje ES modulové `import` / `export` v prohlížeči.
        Pozor: vyžaduje HTTP server (ne `file://`) kvůli CORS. -->
   <script type="module" src="src/main.js"></script>
+
+  <!-- Terrain panel controller — wire `#terrainctrl` slidery na
+       `window.regenerateScene` (exposed v main.js). `input` event = live
+       readout + surface auto-normalize; `change` event = regen scény.
+       Inline script po main.js (defer module): v okamžiku spuštění je
+       `window.regenerateScene` definovaný. -->
+  <script>
+    (() => {
+      const RELIEF_NAMES = [
+        "Flat", "Level", "Gently undulating", "Rolling", "Hilly",
+        "Uneven", "Rugged", "Craggy", "Mountainous", "Heavily dissected", "Alpine",
+      ];
+      const SURFACE_KINDS = ["grass", "stone", "sand", "water"];
+
+      const $ = (id) => document.getElementById(id);
+      const sizeX  = $("tc-size-x"),  sizeXVal  = $("tc-size-x-val");
+      const sizeZ  = $("tc-size-z"),  sizeZVal  = $("tc-size-z-val");
+      const relief = $("tc-relief"),  reliefVal = $("tc-relief-val"), reliefName = $("tc-relief-name");
+      const seed   = $("tc-seed");
+      const surfInputs = Object.fromEntries(
+        SURFACE_KINDS.map((k) => [k, $(`tc-surf-${k}`)]),
+      );
+      const surfVals = Object.fromEntries(
+        SURFACE_KINDS.map((k) => [k, $(`tc-surf-${k}-val`)]),
+      );
+
+      // Sestaví aktuální parametry z UI stavu. Volaný z `change` handleru.
+      function readParams() {
+        const surfaces = {};
+        SURFACE_KINDS.forEach((k) => { surfaces[k] = parseFloat(surfInputs[k].value); });
+        return {
+          size:     [parseInt(sizeX.value, 10), parseInt(sizeZ.value, 10)],
+          relief:   parseInt(relief.value, 10),
+          surfaces,
+          seed:     parseInt(seed.value, 10),
+        };
+      }
+
+      // Re-normalizace surface sliderů na sum = 1.0 po pohybu jednoho slideru.
+      // Strategie: scale ostatních proporčně, aby drželi původní vzájemné poměry.
+      // Edge case 1: změněný = 1.0 → ostatní vyfouknou na 0. Edge case 2: ostatní
+      // mají sum = 0 (vše 0) → rozděl `remaining` rovnoměrně.
+      function normalizeSurfaces(changedKind) {
+        const changedVal = parseFloat(surfInputs[changedKind].value);
+        const otherKinds = SURFACE_KINDS.filter((k) => k !== changedKind);
+        const otherSum   = otherKinds.reduce(
+          (s, k) => s + parseFloat(surfInputs[k].value), 0,
+        );
+        const remaining  = Math.max(0, 1 - changedVal);
+
+        if (otherSum < 0.0001) {
+          // Všechny ostatní jsou 0 — rozděl remaining rovnoměrně.
+          const share = remaining / otherKinds.length;
+          otherKinds.forEach((k) => { surfInputs[k].value = share.toFixed(2); });
+        } else {
+          const scale = remaining / otherSum;
+          otherKinds.forEach((k) => {
+            const newVal = parseFloat(surfInputs[k].value) * scale;
+            surfInputs[k].value = newVal.toFixed(2);
+          });
+        }
+        // Update readouts u ostatních (změněného aktualizuje vlastní `input` handler).
+        otherKinds.forEach((k) => {
+          surfVals[k].textContent = parseFloat(surfInputs[k].value).toFixed(2);
+        });
+      }
+
+      // `input` (live při dragu) — jen readout + auto-normalize. NEspouští regen.
+      sizeX.addEventListener("input",  () => { sizeXVal.textContent  = sizeX.value; });
+      sizeZ.addEventListener("input",  () => { sizeZVal.textContent  = sizeZ.value; });
+      relief.addEventListener("input", () => {
+        reliefVal.textContent  = relief.value;
+        reliefName.textContent = RELIEF_NAMES[parseInt(relief.value, 10)];
+      });
+      SURFACE_KINDS.forEach((k) => {
+        surfInputs[k].addEventListener("input", () => {
+          surfVals[k].textContent = parseFloat(surfInputs[k].value).toFixed(2);
+          normalizeSurfaces(k);
+        });
+      });
+
+      // `change` (po dotažení slideru / blur na number) — spustí regen.
+      // Programmatic update value (`surfInputs[k].value = ...`) `change` event
+      // NEemituje — auto-normalize je tedy bezpečný před cyklem (žádný feedback loop).
+      const onChange = () => {
+        if (typeof window.regenerateScene === "function") {
+          window.regenerateScene(readParams());
+        }
+      };
+      [sizeX, sizeZ, relief, seed].forEach((el) => el.addEventListener("change", onChange));
+      SURFACE_KINDS.forEach((k) => surfInputs[k].addEventListener("change", onChange));
+    })();
+  </script>
 </body>
 </html>

@@ -201,6 +201,48 @@ export class TTRAMPS extends BLOCKS {
 }
 
 /**
+ * TDRAMP = Diagonal Ramp = 1C blok bez jednoho horního rohu (DD-35 kandidát).
+ * Geometricky: krychle 1×1×1 minus tetrahedron odříznutý v jednom horním rohu
+ * (= "low corner"). Vznikne 7-vrcholový polyhedron — 4 dolní rohy (čtvercová
+ * podstava) + 3 horní rohy (trojúhelníková „horní podstava"). Vyhladí
+ * **3-cell convex peak** stepu, kde A má 2 sousední direct vyšší + diagonální
+ * peak (corner roh) vyšší. Jeden TDRAMP zakryje obě hrany stepu + roh peaku.
+ *
+ * 7 faces se 5 material groups:
+ *  - **TEXTURE_SLOPE** — diagonální šikmá plocha (trojúhelník) z low_bot k
+ *    hraně opačného rohu (NE_top–SW_top); walkable povrch.
+ *  - **TEXTURE_TOP** — plochý horní trojúhelník na Y=+0.5 (= „horní podstava").
+ *    Sdílí lomenou hranu s SLOPE plochou („lomená rampa tvořená dvěma
+ *    trojúhelníky" — uživatel sez. 26).
+ *  - **TEXTURE_BOTTOM** — čtvercová podstava na Y=−0.5.
+ *  - **TEXTURE_WALL_FULL** — 2 plné vertikální stěny (oba quad-y) na stěnách
+ *    obsahujících peak corner (= opačně k low corner).
+ *  - **TEXTURE_WALL_TRI** — 2 vertikální stěny tvaru pravoúhlého trojúhelníku
+ *    na stěnách obsahujících low corner (chybí horní hrana k NW_top).
+ *
+ * Default orientace (`ORIENTATION = 0`): low corner v lokálním (-0.5, ?, -0.5)
+ * (= NW-bot v project konvenci kde -Z=N). Peak corner k opačnému rohu
+ * (+X, +Z) = SE.
+ *
+ * `ORIENTATION` (DD-26, stupně, rotace okolo Y CCW shora):
+ *  - 0   → low corner NW (default), peak SE
+ *  - 90  → low corner SW, peak NE
+ *  - 180 → low corner SE, peak NW
+ *  - 270 → low corner NE, peak SW
+ */
+export class TDRAMP extends BLOCKS {
+  constructor(id, name, x, y, z, textures = {}, orientation = 0, description = "") {
+    super(id, name, x, y, z, description);
+    this.TEXTURE_SLOPE     = textures.SLOPE     ?? null;
+    this.TEXTURE_TOP       = textures.TOP       ?? null;
+    this.TEXTURE_BOTTOM    = textures.BOTTOM    ?? null;
+    this.TEXTURE_WALL_FULL = textures.WALL_FULL ?? null;
+    this.TEXTURE_WALL_TRI  = textures.WALL_TRI  ?? null;
+    this.ORIENTATION = orientation;
+  }
+}
+
+/**
  * TTUNELS = Tunnel Block = 1C blok s klenutým průchozím tunelem v jedné ose.
  * Geometricky: kvádr 1×1×1 minus obdélníkový spodek + půlkruhový oblouk
  * extrudovaný podél osy průchodu (= „od krychle odečtený válec a kvádr").

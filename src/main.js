@@ -8,7 +8,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
-import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TTUNELS, SPRITES, COMPOSITES, VOXEL_MODEL, PATH, TIMER, COUNTER, WORLD } from "./model.js";
+import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, TTUNELS, SPRITES, COMPOSITES, VOXEL_MODEL, PATH, TIMER, COUNTER, WORLD } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
 import { generateTerrain } from "./terrain.js";
 
@@ -917,6 +917,9 @@ function createMeshFor(instance) {
   } else if (instance instanceof TTRAMPS) {
     // Trojboký jehlan (trirectangular tetrahedron) se 4 per-face texturami.
     object3d = createTTRampFor(instance);
+  } else if (instance instanceof TDRAMP) {
+    // Diagonální rampa (1C blok bez 1 horního rohu) — 7 vrcholů, 5 materials.
+    object3d = createTDRampFor(instance);
   } else if (instance instanceof TTUNELS) {
     // Tunel skrz 1C blok (4 vnitřní stěny, 2 osy průchozí).
     object3d = createTTunnelFor(instance);
@@ -1247,6 +1250,163 @@ function createTTRampFor(instance) {
     faceMaterialFor(instance.TEXTURE_LEFT),    // 3
   ];
   const mesh = new THREE.Mesh(TTRAMP_GEOM_CACHE, materials);
+  snapToGrid(mesh, instance);
+  mesh.rotation.y = instance.ORIENTATION * (Math.PI / 180);
+  return mesh;
+}
+
+// === TDRAMP — Diagonální rampa (1C blok bez jednoho horního rohu) ===========
+//
+// DD-35 kandidát (sez. 26). Krychle 1×1×1 minus tetrahedron na 1 horním rohu
+// = 7-vrcholový polyhedron. Vyhladí **3-cell convex peak** stepu (A má 2
+// sousední direct vyšší + diagonální peak vyšší) jediným meshem.
+//
+// Vertices v lokálních souřadnicích (default ORIENTATION=0, low corner NW):
+//   v0 (-0.5, -0.5, -0.5)  bottom NW   (low corner)
+//   v1 ( 0.5, -0.5, -0.5)  bottom NE
+//   v2 ( 0.5, -0.5,  0.5)  bottom SE
+//   v3 (-0.5, -0.5,  0.5)  bottom SW
+//   v4 ( 0.5,  0.5, -0.5)  top NE
+//   v5 ( 0.5,  0.5,  0.5)  top SE        (peak corner)
+//   v6 (-0.5,  0.5,  0.5)  top SW
+//   (NW_top chybí — odříznutý roh)
+//
+// 7 faces se 5 material groups:
+//   0 SLOPE      — triangle (v0, v6, v4)         diagonální slope NW→NE-SW hrana
+//   1 TOP        — triangle (v6, v5, v4)         plochá horní podstava
+//   2 BOTTOM     — quad     (v0, v1, v2, v3)     čtvercová podstava
+//   3 WALL_FULL  — 2 quads  (E: v1,v4,v5,v2)     plné svislé stěny (peak side)
+//                           (S: v2,v5,v6,v3)
+//   4 WALL_TRI   — 2 trojúhelníky                šikmé svislé stěny (low side)
+//                  (N: v0, v4, v1)
+//                  (W: v0, v3, v6)
+//
+// SLOPE + TOP sdílí lomenou hranu v4-v6 → vizuálně 1 lomený povrch („dvěma
+// trojúhelníky" — uživatel sez. 26).
+//
+// Per-face vertices (non-shared) — flat shading bez computeVertexNormals.
+
+const TDRAMP_GEOM_CACHE = (() => {
+  const v0 = [-0.5, -0.5, -0.5];
+  const v1 = [ 0.5, -0.5, -0.5];
+  const v2 = [ 0.5, -0.5,  0.5];
+  const v3 = [-0.5, -0.5,  0.5];
+  const v4 = [ 0.5,  0.5, -0.5];
+  const v5 = [ 0.5,  0.5,  0.5];
+  const v6 = [-0.5,  0.5,  0.5];
+
+  const SQRT3 = Math.sqrt(3);
+
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const indices = [];
+  const groups = [];
+
+  function addQuad(p0, p1, p2, p3, n, uv0, uv1, uv2, uv3, materialIndex) {
+    const startVert = positions.length / 3;
+    positions.push(...p0, ...p1, ...p2, ...p3);
+    normals.push(...n, ...n, ...n, ...n);
+    uvs.push(...uv0, ...uv1, ...uv2, ...uv3);
+    const startIdx = indices.length;
+    indices.push(startVert, startVert + 1, startVert + 2);
+    indices.push(startVert, startVert + 2, startVert + 3);
+    groups.push({ start: startIdx, count: 6, materialIndex });
+  }
+  function addTri(p0, p1, p2, n, uv0, uv1, uv2, materialIndex) {
+    const startVert = positions.length / 3;
+    positions.push(...p0, ...p1, ...p2);
+    normals.push(...n, ...n, ...n);
+    uvs.push(...uv0, ...uv1, ...uv2);
+    const startIdx = indices.length;
+    indices.push(startVert, startVert + 1, startVert + 2);
+    groups.push({ start: startIdx, count: 3, materialIndex });
+  }
+
+  // SLOPE — diagonální šikmá plocha. Normála (−1, +1, −1)/√3 → ven k NW-up.
+  // UV: low corner v0 = (0.5, 0), high edge v6 = (0, 1), v4 = (1, 1).
+  addTri(
+    v0, v6, v4,
+    [-1 / SQRT3, 1 / SQRT3, -1 / SQRT3],
+    [0.5, 0], [0, 1], [1, 1],
+    0,
+  );
+
+  // TOP — plochý trojúhelník na Y=+0.5. CCW (v6, v5, v4) dává +Y normálu.
+  // UV: v6 (NW-most of triangle) = (0, 0), v5 (peak SE) = (1, 1), v4 = (1, 0).
+  addTri(
+    v6, v5, v4,
+    [0, 1, 0],
+    [0, 0], [1, 1], [1, 0],
+    1,
+  );
+
+  // BOTTOM — quad (v0, v1, v2, v3) na Y=−0.5. Stejné jako TRRAMPS.
+  addQuad(
+    v0, v1, v2, v3,
+    [0, -1, 0],
+    [0, 0], [1, 0], [1, 1], [0, 1],
+    2,
+  );
+
+  // WALL_FULL E — quad (v4, v5, v2, v1) na X=+0.5. CCW pro +X normálu.
+  // UV: top→bottom, N→S. v4 (top-N) = (0, 1), v5 (top-S) = (1, 1), v2 (bot-S) = (1, 0), v1 (bot-N) = (0, 0).
+  addQuad(
+    v4, v5, v2, v1,
+    [1, 0, 0],
+    [0, 1], [1, 1], [1, 0], [0, 0],
+    3,
+  );
+
+  // WALL_FULL S — quad (v5, v6, v3, v2) na Z=+0.5. CCW pro +Z normálu.
+  // UV: v5 (top-E) = (1, 1), v6 (top-W) = (0, 1), v3 (bot-W) = (0, 0), v2 (bot-E) = (1, 0).
+  addQuad(
+    v5, v6, v3, v2,
+    [0, 0, 1],
+    [1, 1], [0, 1], [0, 0], [1, 0],
+    3,
+  );
+
+  // WALL_TRI N — triangle (v0, v4, v1) na Z=−0.5. Pravoúhlý, normála (0,0,−1).
+  // UV: v0 (bot-W) = (0, 0), v4 (top-E, apex) = (1, 1), v1 (bot-E) = (1, 0).
+  addTri(
+    v0, v4, v1,
+    [0, 0, -1],
+    [0, 0], [1, 1], [1, 0],
+    4,
+  );
+
+  // WALL_TRI W — triangle (v0, v3, v6) na X=−0.5. Pravoúhlý, normála (−1,0,0).
+  // UV: v0 (bot-N) = (0, 0), v3 (bot-S) = (1, 0), v6 (top-S, apex) = (1, 1).
+  addTri(
+    v0, v3, v6,
+    [-1, 0, 0],
+    [0, 0], [1, 0], [1, 1],
+    4,
+  );
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geom.setAttribute("normal",   new THREE.Float32BufferAttribute(normals,   3));
+  geom.setAttribute("uv",       new THREE.Float32BufferAttribute(uvs,       2));
+  geom.setIndex(indices);
+  for (const g of groups) {
+    geom.addGroup(g.start, g.count, g.materialIndex);
+  }
+  return geom;
+})();
+
+// Sestaví TDRAMP instanci. 5 materials (SLOPE/TOP/BOTTOM/WALL_FULL/WALL_TRI).
+// Geometrie sdílená přes cache. ORIENTATION rotuje kolem Y.
+function createTDRampFor(instance) {
+  const materials = [
+    faceMaterialFor(instance.TEXTURE_SLOPE),      // 0
+    faceMaterialFor(instance.TEXTURE_TOP),        // 1
+    faceMaterialFor(instance.TEXTURE_BOTTOM),     // 2
+    faceMaterialFor(instance.TEXTURE_WALL_FULL),  // 3
+    faceMaterialFor(instance.TEXTURE_WALL_TRI),   // 4
+  ];
+  const mesh = new THREE.Mesh(TDRAMP_GEOM_CACHE, materials);
   snapToGrid(mesh, instance);
   mesh.rotation.y = instance.ORIENTATION * (Math.PI / 180);
   return mesh;
@@ -1743,7 +1903,66 @@ function createWaterPlane(w) {
   return mesh;
 }
 
-// Default parametry generátoru — UI panel je přepíše (fáze 3 sez. 25+).
+// === Ramp builders (DD-34 kandidát, sez. 26) ================================
+// `generateTerrain` krok 5 vrací `ramps[]` se 2 kindy:
+//   - "edge"   → TRRAMPS (klín) — primární přístupový ramp; volba směru
+//                greedy s criticality, compatibility check proti sousedním
+//                rampám (drop pokud dest má perpendikulární ramp = bok).
+//   - "corner" → TTRAMPS (jehlan) — sekundární estetický ramp pro isolated
+//                diag peak (A má 0 direct vyšších, ale diag corner vyšší
+//                + oba direct sousedi rohu jsou na úrovni A). Vyhladí ostrý
+//                rohový voxel; **není accessibility**, jen vyhlazení hrany.
+// SLOPE textura matchuje povrch vyššího cellu; boční stěny `:dirt` pro grass
+// (severská konvence „vrch grass, jinak dirt" sez. 17), jednotná pro stone/sand.
+const RAMP_EDGE_TEXTURES = {
+  grass: { SLOPE: ":grass-top", BOTTOM: ":dirt",  BACK: ":dirt",  LEFT: ":dirt",  RIGHT: ":dirt"  },
+  stone: { SLOPE: ":stone",     BOTTOM: ":stone", BACK: ":stone", LEFT: ":stone", RIGHT: ":stone" },
+  sand:  { SLOPE: ":sand",      BOTTOM: ":sand",  BACK: ":sand",  LEFT: ":sand",  RIGHT: ":sand"  },
+};
+const RAMP_CORNER_TEXTURES = {
+  grass: { SLOPE: ":grass-top", BOTTOM: ":dirt",  BACK: ":dirt",  LEFT: ":dirt"  },
+  stone: { SLOPE: ":stone",     BOTTOM: ":stone", BACK: ":stone", LEFT: ":stone" },
+  sand:  { SLOPE: ":sand",      BOTTOM: ":sand",  BACK: ":sand",  LEFT: ":sand"  },
+};
+// TDRAMP texture sety — severská konvence (vrch grass-top, ostatní dirt).
+// SLOPE + TOP sdílí texturu (vizuálně 1 lomený povrch).
+const RAMP_DIAGONAL_TEXTURES = {
+  grass: { SLOPE: ":grass-top", TOP: ":grass-top", BOTTOM: ":dirt",  WALL_FULL: ":dirt",  WALL_TRI: ":dirt"  },
+  stone: { SLOPE: ":stone",     TOP: ":stone",     BOTTOM: ":stone", WALL_FULL: ":stone", WALL_TRI: ":stone" },
+  sand:  { SLOPE: ":sand",      TOP: ":sand",      BOTTOM: ":sand",  WALL_FULL: ":sand",  WALL_TRI: ":sand"  },
+};
+
+function createRampEdge(r) {
+  const tex = RAMP_EDGE_TEXTURES[r.surface] ?? RAMP_EDGE_TEXTURES.grass;
+  return new TRRAMPS(
+    `ramp_edge_${r.surface}_${r.x}_${r.y}_${r.z}`,
+    `ramp_${r.surface}`,
+    r.x, r.y, r.z, tex, r.orientation,
+    `TRRAMPS — edge ramp (${r.surface}) na step generovaného terénu.`,
+  );
+}
+
+function createRampCorner(r) {
+  const tex = RAMP_CORNER_TEXTURES[r.surface] ?? RAMP_CORNER_TEXTURES.grass;
+  return new TTRAMPS(
+    `ramp_corner_${r.surface}_${r.x}_${r.y}_${r.z}`,
+    `ramp_${r.surface}`,
+    r.x, r.y, r.z, tex, r.orientation,
+    `TTRAMPS — corner ramp (${r.surface}) pro isolated diag peak.`,
+  );
+}
+
+function createRampDiagonal(r) {
+  const tex = RAMP_DIAGONAL_TEXTURES[r.surface] ?? RAMP_DIAGONAL_TEXTURES.grass;
+  return new TDRAMP(
+    `ramp_diagonal_${r.surface}_${r.x}_${r.y}_${r.z}`,
+    `ramp_${r.surface}`,
+    r.x, r.y, r.z, tex, r.orientation,
+    `TDRAMP — diagonální rampa (${r.surface}) pro 3-cell convex peak.`,
+  );
+}
+
+// Default parametry generátoru — UI panel `#terrainctrl` je přepíše (fáze 3).
 const TERRAIN_DEFAULTS = {
   size:     [10, 10],
   relief:   3,                                                     // Rolling hills (anglický venkov)
@@ -1751,18 +1970,66 @@ const TERRAIN_DEFAULTS = {
   seed:     42,
 };
 
+// Spawne terrain z parametrů do scény. Každý mesh dostane `userData.terrain
+// = true` jako marker pro `regenerateScene` (filter při wipe). Volaný z
+// `buildScene` (init) i z `regenerateScene` (UI panel `change` events).
+function spawnTerrain(params) {
+  const terrain = generateTerrain(params);
+  for (const [kind, x, y, z] of terrain.blocks) {
+    const mesh = createMeshFor(createBlock(kind, x, y, z));
+    mesh.userData.terrain = true;
+    scene.add(mesh);
+  }
+  for (const w of terrain.water) {
+    const mesh = createWaterPlane(w);
+    mesh.userData.terrain = true;
+    scene.add(mesh);
+  }
+  // Rampy vyhladí 1-voxel stepy (DD-34 kandidát) — kindy: edge (TRRAMPS),
+  // corner (TTRAMPS), diagonal (TDRAMP). Generátor v `terrain.js` kroku 5.
+  for (const r of terrain.ramps ?? []) {
+    let inst;
+    if      (r.kind === "edge")     inst = createRampEdge(r);
+    else if (r.kind === "corner")   inst = createRampCorner(r);
+    else if (r.kind === "diagonal") inst = createRampDiagonal(r);
+    else continue;
+    const mesh = createMeshFor(inst);
+    mesh.userData.terrain = true;
+    scene.add(mesh);
+  }
+}
+
+// Vymaže staré terrain meshes ze scény (filter dle `userData.terrain`) a
+// spawne nové dle `params`. Volaný z UI panelu `#terrainctrl` na `change`
+// event slideru (rozhodnutí sez. 26: ne `input`, ne debounce, ne button —
+// jeden regen per dotažení slideru).
+//
+// Cleanup `meshByInstance`: každý terrain block je TCUBES instance s unikátním
+// ID `terrain_<kind>_<x>_<y>_<z>` (viz `createBlock`); po odstranění mesh-e
+// pustíme i mapu, jinak by tooltip držel zmrtvělé reference.
+//
+// Geometrie + materiály: per-face textury TCUBES jsou sdílené singletony
+// (BLOCK_TEXTURES + texture cache), water plane sdílí `_waterGeom`/`_waterMat`
+// — tedy žádné `dispose()` (zničili bychom shared resource). GC posbírá jen
+// Mesh wrappery.
+function regenerateScene(params) {
+  const stale = scene.children.filter((c) => c.userData.terrain === true);
+  for (const mesh of stale) {
+    scene.remove(mesh);
+    const inst = mesh.userData.instance;
+    if (inst) meshByInstance.delete(inst.ID);
+  }
+  spawnTerrain(params);
+}
+// Globální expose pro HTML panel `#terrainctrl` (inline script v index.html).
+window.regenerateScene = regenerateScene;
+
 function buildScene(scene) {
   // Vizuální orientace — GridHelper (20×20) + AxesHelper (2 j červená/zelená/modrá).
   scene.add(new THREE.GridHelper(20, 20, 0x444444, 0x222222));
   scene.add(new THREE.AxesHelper(2));
 
-  const terrain = generateTerrain(TERRAIN_DEFAULTS);
-  for (const [kind, x, y, z] of terrain.blocks) {
-    scene.add(createMeshFor(createBlock(kind, x, y, z)));
-  }
-  for (const w of terrain.water) {
-    scene.add(createWaterPlane(w));
-  }
+  spawnTerrain(TERRAIN_DEFAULTS);
 }
 
 buildScene(scene);
