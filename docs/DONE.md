@@ -204,3 +204,17 @@ Archiv splněných úkolů z `docs/TODO.md`. DROP položky (zrušené nápady) j
 - [x] **F7 — historické komentáře zkráceny** — GridHelper komentář smazán, humanoidi+kolize+DD-19 z 14 řádků na 3, LIT z 3 na 1, click handler z 3 na 2.
 - [x] **F8/F9 — asset templates dokumentace** — sekce v GLOSSARY o `cube-grass.vox` + `scene-palette.vox` jako MV authoring šablony bez runtime konzumenta.
 - [x] **F10 — `castShadow` duplicita v `treeVoxel`** smazána (jednotně řeší traverze v `createMeshFor`).
+
+## Sezení 23 (2026-05-12)
+
+- [x] **Steady-state polish (bod #3 z Příště sez. 22)** — `FACILITY_DEF.forest.outputs.logs` 0.5 → 1.0 ks/s. Matchne sawmill recipe (1 log/cyklus × 1.0/s spotřeba), žádný source-starve, žádná PAUS/RSUM oscilace. Conveyor `THROUGHPUT=2` ks/s zůstává nad rate. Komentář v `FACILITY_DEF` docstringu aktualizován („60 klád za minutu, matchne sawmill, žádná oscilace; sez. 23 polish bod #3").
+- [x] **Lokální `CLAUDE.md` slim** — 150 → 32 řádků (78 % redukce). Diagnostika redundancí: Project / Status / scéna / 4-vrstvá taxonomie / hierarchie modelu / Aktuální obsah scény duplicitní s `README.md`; changelog sez. 14–22 duplicitní s `docs/DIARY.md` (a roste lineárně); Dokumenty seznam duplicitní s README; Design Principles / Workflow / Kudos!Censure subset globálního. Zůstává jen skutečný AI overlay: Code Style nuance (user-learner, podrobnější komentáře), `%THINK` bod 5 (sandbox/factory mechanika), Makra odkaz, Key Files mapa, „kde najít co" pointery.
+- [x] **Globální `~/.claude/CLAUDE.md` rozšíření — governance pravidla** *(mimo repo TheCubes, ale relevantní záznam):*
+  - `%CALIBRATE` sekce A o **„Role discipline řídících dokumentů"**: CLAUDE.md = jen AI overlay, project info patří do README/DIARY/DD. Najdi sekce v CLAUDE.md, které by člověk hledal v README — kandidát na přesun nebo smaz.
+  - **Sub-prah nezávislý na sezení-count:** *„nárůst projektového CLAUDE.md o ≥ 50 % od posledního CALIBRATE"* jako mimořádný trigger. Důvod: CLAUDE.md roste lineárně se sezeními (sez. 20+21+22 přidaly po odstavci), prah ≥ 15 sezení je pomalý.
+  - **Bariéra v `%DOCS`** — 4 explicitní pravidla, kam se *nikdy* nezapisuje: (1) sezení changelog → jen DIARY, ne CLAUDE.md; (2) status / hierarchie / scéna / milníky → jen README; (3) DD-XX → jen DESIGN_DECISIONS; (4) CLAUDE.md se mění *jen* když přibyla AI pravidla, ne fakta o projektu.
+- [x] **Verdict makra:** `%CALIBRATE` (governance) vs. `%AUDIT:DOCS` (content kvalita). Role-confusion mezi řídícím a content dokumentem je process-level → doména CALIBRATE A.
+
+### Sez. 22 → sez. 23 Příště — Hotové
+
+- [x] **Steady-state polish** — viz výše.

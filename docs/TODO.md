@@ -37,7 +37,7 @@
 - [x] **Migrace test scény** na PATH propojení: forest → conveyor → sawmill → conveyor → storage (smazán pre-stocked `BUFFER.logs = 50`). *(Sez. 22.)*
 - [ ] **Material gate vizualizace** — emissive boost (červená/amber) na PAUSED fasilitách, lazy material clone à la hover. *(Sez. 22 odloženo do scope, dál sez. 23.)*
 - [ ] **Druhý zdrojový řetězec** (parallel verification) — quarry → crusher → storage. Voda + uhlí zatím bez transformeru (jen těží a teče do skladu pipelinem). *(Sez. 23.)*
-- [ ] **Steady-state polish** — sawmill aktuálně osciluje PAUS↔RSUM kvůli source-limited supply (forest 0.5/s vs. recipe 1/s spotřeba). Řešení: druhý forest, ladění rates, nebo debounce v `setPaused` (min interval mezi PAUS/RSUM emit). *(Sez. 22 odhalilo, řešit sez. 23.)*
+- [x] **Steady-state polish** — sawmill osciloval PAUS↔RSUM kvůli source-limited supply (forest 0.5/s vs. recipe 1/s spotřeba). **Sez. 23:** forest output 0.5 → 1.0 logs/s, 1:1 matchne sawmill recipe, žádný source-starve. Conveyor THROUGHPUT=2 ks/s zůstává nad rate, není bottleneck.
 
 ### Fáze C — Editor MVP (sez. 24+)
 
