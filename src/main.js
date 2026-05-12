@@ -10,6 +10,7 @@ import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
 import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TTUNELS, SPRITES, COMPOSITES, VOXEL_MODEL, PATH, TIMER, COUNTER, WORLD } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
+import { generateTerrain } from "./terrain.js";
 
 // === Renderer ===
 // WebGLRenderer = Three.js komponenta, která překládá scénu na GPU volání.
@@ -288,6 +289,8 @@ const GRASS_BASE = "#5d9446";
 const GRASS_ACCENTS = ["#4e823c", "#3e6a32", "#6ea054"];
 const STONE_BASE = "#8a8278";
 const STONE_ACCENTS = ["#6f6860", "#a09890", "#5a5450"];
+const SAND_BASE = "#d4b97c";
+const SAND_ACCENTS = ["#c5a86b", "#e3c98a", "#b89858", "#dec595"];
 
 function makeDirtTexture() {
   return makePatchTexture(DIRT_BASE, DIRT_ACCENTS);
@@ -299,6 +302,10 @@ function makeGrassTopTexture() {
 
 function makeStoneTexture() {
   return makePatchTexture(STONE_BASE, STONE_ACCENTS);
+}
+
+function makeSandTexture() {
+  return makePatchTexture(SAND_BASE, SAND_ACCENTS);
 }
 
 // Štěrková cesta — šedé kameny různých odstínů, kropenatý šum (žádné stopy).
@@ -348,6 +355,7 @@ const NAMED_TEXTURE_FACTORIES = {
   ":dirt":       () => makeDirtTexture(),
   ":grass-top":  () => makeGrassTopTexture(),
   ":stone":      () => makeStoneTexture(),
+  ":sand":       () => makeSandTexture(),
   ":rail-top":   () => makeRailTopTexture(),
   ":path-dirt":  () => makePathDirtTexture(),
 };
@@ -1689,11 +1697,72 @@ function createPathFor(instance) {
   return group;
 }
 
+// === Terrain builder (DD-32, sez. 24) ===
+// `generateTerrain` (src/terrain.js) vrátí { blocks, water }; `buildScene`
+// spawne TCUBES (per-face textury dle kind) + water planes do scény.
+
+// Per-surface texture sety pro TCUBES. „Boky/spodek = vždy `:dirt`" je
+// pravidlo z severské diorámy (sez. 17) — drží rodinu BLOCKS jednotnou.
+// Stone/sand top jdou bez gradientu (terén je tvořen většinou plochou paletou).
+const BLOCK_TEXTURES = {
+  grass: { TOP: ":grass-top", BOTTOM: ":dirt", NORTH: ":dirt",  SOUTH: ":dirt",  EAST: ":dirt",  WEST: ":dirt"  },
+  dirt:  { TOP: ":dirt",      BOTTOM: ":dirt", NORTH: ":dirt",  SOUTH: ":dirt",  EAST: ":dirt",  WEST: ":dirt"  },
+  stone: { TOP: ":stone",     BOTTOM: ":stone",NORTH: ":stone", SOUTH: ":stone", EAST: ":stone", WEST: ":stone" },
+  sand:  { TOP: ":sand",      BOTTOM: ":sand", NORTH: ":sand",  SOUTH: ":sand",  EAST: ":sand",  WEST: ":sand"  },
+};
+
+function createBlock(kind, x, y, z) {
+  const tex = BLOCK_TEXTURES[kind] ?? BLOCK_TEXTURES.dirt;
+  return new TCUBES(
+    `terrain_${kind}_${x}_${y}_${z}`,
+    kind,
+    x, y, z, tex,
+    `TCUBES — terrain ${kind} blok (generateTerrain).`,
+  );
+}
+
+// Vodní plane(y) — sdílený materiál + geometrie (DRY: water cells sdílí jeden
+// MeshStandardMaterial, šetří GPU pamět). Transparent + nízká opacity =
+// částečně vidět dno (dirt) pod vodou. Plane v rovině XZ (rotace −π/2 kolem X).
+const _waterMat = new THREE.MeshStandardMaterial({
+  color:        0x3a7090,
+  transparent:  true,
+  opacity:      0.7,
+  metalness:    0.15,
+  roughness:    0.35,
+  side:         THREE.DoubleSide,
+});
+const _waterGeom = new THREE.PlaneGeometry(1, 1);
+
+function createWaterPlane(w) {
+  const mesh = new THREE.Mesh(_waterGeom, _waterMat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(w.x, w.y, w.z);
+  mesh.scale.set(w.w, 1, w.d);  // X šířka, Z hloubka; plane je teď v XZ rovině po rotaci
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+// Default parametry generátoru — UI panel je přepíše (fáze 3 sez. 25+).
+const TERRAIN_DEFAULTS = {
+  size:     [10, 10],
+  relief:   3,                                                     // Rolling hills (anglický venkov)
+  surfaces: { grass: 0.80, stone: 0.10, sand: 0.05, water: 0.05 }, // čtyři biomy
+  seed:     42,
+};
+
 function buildScene(scene) {
-  // Sez. 24 (DD-32): obsah scény delegován na terrain generator.
-  // Pro start prázdné: GridHelper + AxesHelper jako vizuální orientace.
+  // Vizuální orientace — GridHelper (20×20) + AxesHelper (2 j červená/zelená/modrá).
   scene.add(new THREE.GridHelper(20, 20, 0x444444, 0x222222));
   scene.add(new THREE.AxesHelper(2));
+
+  const terrain = generateTerrain(TERRAIN_DEFAULTS);
+  for (const [kind, x, y, z] of terrain.blocks) {
+    scene.add(createMeshFor(createBlock(kind, x, y, z)));
+  }
+  for (const w of terrain.water) {
+    scene.add(createWaterPlane(w));
+  }
 }
 
 buildScene(scene);
