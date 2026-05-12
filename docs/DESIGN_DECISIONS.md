@@ -530,3 +530,145 @@ OBJECTS
 - DD-30 (factory toy pivot, sez. 21) — superseded jen v *aktivním vývoji*, immutable jako historický záznam.
 - DD-31 (resource model & FACILITY, sez. 21) — totéž.
 - TODO sekce „Terrain generator" (sez. 24, zápis před tímto DD) — implementační plán.
+
+## DD-33 — Ramp smoothing layer: TRRAMPS edge + TTRAMPS isolated diag peak
+
+**Stav:** Sez. 26. Terrain generator vyrábí čtvercovou heightmapu — vznikají 1-voxel stepy mezi sousedními cells. Bez vyhlazení vypadá scéna „schodovitě". User: *„Bloky jsou hotové, nyní přibude vrstva vyhlazování pomocí korekce nerovností. Kde to jde, vyhladit!"*
+
+**Rozhodnutí:** Krok 5 v `generateTerrain` produkuje **`ramps[]`** array — list ramp instancí, které vyhladí stepy. Per cell A spawn maximálně 1 ramp ve voxelu `(A.x, A.y_top + 1, A.z)`. Pravidla:
+
+1. **TRRAMPS edge ramp** (klín, 1 přístupová hrana):
+   - Předpoklad: A má **alespoň 1 direct vyšší souseda** (= step na té hraně).
+   - Volba směru: **greedy criticality score** = počet alternativních nižších sousedů cílového B (mimo A). Nižší score → critical → vyšší priorita (= A je B's only access; jinde k B nelze vystoupit).
+   - Tie-break preferenčního pořadí: N > E > S > W.
+   - Skip: `highDirs.length === 2 protilehlé` (= úzký rokle N+S / E+W → ramp nepokrývá obě strany).
+
+2. **TTRAMPS isolated diag peak** (jehlan, vyplňuje rohový voxel):
+   - Předpoklad: A má **0 direct vyšších** + alespoň 1 diag corner +1 vyšší + oba direct sousedi rohu jsou na úrovni A.
+   - **Není accessibility**: TTRAMPS apex je bodový vrchol — postava nedosáhne na vyšší top povrch (přechod přes bod nemá souvislou plochu).
+   - Užitek: **estetické vyplnění rohového peakového voxelu** (1/6 voxelu vyplněn malým jehlanem místo holé hrany). Současně **0 nových odhalených svislých stěn** (3 vertikální faces jsou triangly, podloženy aktualním terénem).
+   - Preferenční pořadí rohů: NE > NW > SE > SW.
+
+3. **Compatibility filter** (2-pass): Ramp A→B s direct ramp na cellu B s **jinou orientací** → drop A (postava narazí do BACK/LEFT/RIGHT face ramp B). Multi-level stairway (A k W → B k W = stejná orient) je validní pokračování.
+
+4. **Pravidlo Y modifier**: Vyšší souseda je `y_top === A.y_top + 1` (přesně 1 voxel). Větší rozdíly = cliff, zachované (feature pro relief 6+).
+
+5. **Surface dědičnost**: SLOPE textura ramp dědí z vyššího cellu (B nebo B_diag), aby vrchol slope navazoval barvou na top povrch.
+
+**Důvod:**
+- Bez ramp smoothing jsou stepy ostře viditelné jako vertikální stěny. Vyhlazení redukuje plochu odhalených svislých stěn (= „kolaps vlnové funkce" zadání user sez. 26: minimalize svislé stěny + maximalize přístupy).
+- TRRAMPS striktně dominuje pro 1-direct přístup (1 přístup + 1 zakrytá stěna). Greedy criticality = sub-optimální ale rozumný kompromis (globální optimum je NP-hard bipartite matching).
+- TTRAMPS apex je sice nepřístupný, ale jeho přidání nevytvoří NOVÉ svislé stěny (= cleaner než alternativy pro isolated diag peak).
+
+**Důsledek:**
+- `src/terrain.js` krok 5 detekce + spawn (~80 řádků).
+- `src/main.js` `createRampEdge` (TRRAMPS) + `createRampCorner` (TTRAMPS) builders + texture sety per surface (`RAMP_EDGE_TEXTURES`, `RAMP_CORNER_TEXTURES`).
+- `spawnTerrain` smyčka přidá ramp instances do scény s `userData.terrain = true`.
+- Sez. 26 smoke test default 10×10 relief 3 seed 42: **20 TRRAMPS + 7 TTRAMPS** (= ~27 ramp meshes nad existující heightmap).
+
+**Otevřené body (kandidáty pro budoucí DD):**
+- 2-voxel a větší stepy zůstávají hranaté (schodišťové vzory mimo MVP).
+- 4-cell jámy (4 stěny vyšší) zůstávají hranaté.
+
+**Reference:**
+- DD-32 (terrain generator identity, sez. 24) — kontext.
+- DD-26 (sjednocená ORIENTATION) — TRRAMPS/TTRAMPS rotace ve stupních.
+- DD-35 (TDRAMP class, sez. 26) — třetí ramp typ pro 3-cell convex peak + L-shape.
+
+## DD-34 — TRRAMPS/TTRAMPS empirické ORIENTATION mapování (sez. 26)
+
+**Stav:** Sez. 26. Při implementaci DD-33 ramp algoritmu padly **3 oddělené orientation bugy**, které user empiricky chytil v 3D scéně. Tento DD zaznamenává finální korrespondenci mezi peak/edge direction a ORIENTATION hodnotou jako referenci.
+
+**Pozadí:**
+- TRRAMPS / TTRAMPS / TDRAMP geometrie v `src/main.js` používá **autorskou konvenci kde N = −Z** (TRRAMPS default high edge na `z = −0.5` = autorské „NORTH").
+- `terrain.js` `NEIGHBORS` používá **opačnou konvenci kde N = +Z** (`{ dx: 0, dz: +1, name: "N" }`).
+- Konvence se prokříží: terrain.js „N" = autorské „S" (+Z). ORIENTATION mapy musí kompenzovat.
+
+**Finální mapování** (terrain.js konvence kde +Z = N):
+
+```javascript
+// TRRAMPS edge — high end (apex hrana) ve směru B (vyššího cellu):
+const EDGE_ORIENT = { S: 0, W: 90, N: 180, E: 270 };
+
+// TTRAMPS corner — apex (bod) ve směru peak rohu (sorted alfa klíč):
+const CORNER_ORIENT = { SW: 0, NW: 90, EN: 180, ES: 270 };
+
+// TDRAMP peak — peak roh (sorted alfa klíč, low corner opačně):
+const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
+```
+
+**Postup ověření:**
+1. Default geometrie TRRAMPS má high edge na lokální `z = −0.5`. Pokud cíl B je terrain.js „N" (= +Z), high edge musí být na +Z → rotace +180° → ORIENTATION 180. ✓
+2. Default TTRAMPS apex je lokálně `(-X, +Y, -Z)` = (-X, -Z) v terrain.js = sorted „SW" → ORIENTATION 0.
+3. Default TDRAMP peak v5 je lokálně `(+X, +Y, +Z)` = (+X, +Z) v terrain.js = sorted „EN" → ORIENTATION 0. Low corner opačný = (-X, -Z) = „SW".
+
+**Důvod (proč explicit DD):**
+- Při sez. 26 padl 1 bug u EDGE_ORIENT (prohozené hodnoty o 180°, user „obdélníkové rampy otočené 0 180 st."), 1 bug u CORNER_ORIENT klíče („NE" → správně „EN" sorted alfa), 1 bug u TDRAMP_PEAK_ORIENT (rotováno o 90° navíc, user „TDRAMP otočit o 90 st. CCW").
+- Empirická verifikace přes user feedback je pomalá (1 commit per bug). Centralizace mapování v 1 DD = zabraňuje opakování v dalších sezeních.
+
+**Klíčový princip pro budoucí třídy:**
+- Default geometrie v `main.js` používá autorskou konvenci N=-Z.
+- `terrain.js` NEIGHBORS používá N=+Z.
+- ORIENTATION mapování v `terrain.js` musí kompenzovat (typicky +180° proti naivní mapování).
+
+**Reference:**
+- DD-26 (sjednocená ORIENTATION, stupně, rotace okolo Y CCW shora).
+- DD-33 (ramp smoothing layer) — konzument.
+- DD-35 (TDRAMP class) — konzument.
+
+## DD-35 — TDRAMP: diagonální rampa (klín bez 1 horního rohu, sez. 26)
+
+**Stav:** Sez. 26. Pro **3-cell convex peak** (cell A má 2 sousední direct vyšší + diag corner mezi nimi vyšší) je TRRAMPS edge nedostatečný (pokryje 1 hranu, druhou nechá schod). Pro **L-shape** (2 sousední direct vyšší bez diag peaku) totéž. User návrh sez. 26: *„dá se přidat jediný nový druh TDRAMP (DoubleTriangle) rampy — čtvercová podstava, trojúhelníková horní podstava, lomená rampa tvořená dvěma trojúhelníky"*.
+
+**Rozhodnutí:** Nová třída **`TDRAMP extends BLOCKS`** (sourozenec TRRAMPS / TTRAMPS / TTUNELS) — 1C blok s odříznutým 1 horním rohem.
+
+**Geometrie:**
+- 7 vrcholů: 4 dolní rohy (čtvercová podstava na Y=−0.5) + 3 horní rohy (jeden „low corner" je na Y=−0.5 místo Y=+0.5).
+- 7 stěn:
+  - **BOTTOM** — čtverec 1×1.
+  - **TOP** — trojúhelník 3 corners na Y=+0.5 („horní podstava").
+  - **SLOPE** — trojúhelník šikmý od low corner k diagonální hraně horního trojúhelníku („lomená rampa" sdílí lomenou hranu s TOP).
+  - **WALL_FULL × 2** — 2 plné svislé stěny (peak side, opačně k low corner).
+  - **WALL_TRI × 2** — 2 vertikální trojúhelníkové stěny (low corner side, chybí horní hrana).
+
+**Texture atributy** (5 material groups):
+- `TEXTURE_SLOPE`, `TEXTURE_TOP`, `TEXTURE_BOTTOM`, `TEXTURE_WALL_FULL`, `TEXTURE_WALL_TRI`.
+- Severská konvence pro grass: SLOPE + TOP = `:grass-top`, ostatní = `:dirt`.
+- Stone/sand: vše jednolitě.
+
+**ORIENTATION** (DD-26 + DD-34): default 0 má **low corner v rohu (−X, −Z)** = terrain.js „SW" → peak v opačném rohu (+X, +Z) = „EN". Rotace přesune low corner:
+- 0 → low SW, peak EN
+- 90 → low NW, peak ES
+- 180 → low EN, peak SW
+- 270 → low ES, peak NW
+
+**Use case detekce v algoritmu DD-33:**
+
+**Stage 1: 3-cell convex peak** — A má 2 sousední direct vyšší + diag corner mezi nimi vyšší. TDRAMP s peakem v tom rohu pokryje:
+- 2 přístupové hrany top tri (sdílené s top povrchy 2 vyšších direct sousedů).
+- Diagonální peak corner (sdílený s top povrchu B_diag — apex BOD, kontinuální plocha).
+- 2 svislé plochy (WALL_FULL × 2) zakryjí stepy E + S.
+
+**Stage 2: L-shape** — A má 2 sousední direct vyšší bez diag peaku. TDRAMP s peakem v L-corner pokryje 2 přístupy a 2 stepy (apex je bod v „air" nad flat diag cell — vizuální koncentrátor, ne accessibility).
+
+**Surface dědičnost**: prefer diag cell (pokud vyšší = 3-cell peak); jinak prvního vyššího direct souseda rohu.
+
+**Důvod:**
+- TDRAMP **strict-dominuje 1× TRRAMPS edge** pro 3-cell peak: 2 přístupy místo 1, 2 zakryté stěny místo 1.
+- L-shape: 2 přístupy přes 1 mesh.
+- Compromise: může vzniknout „double-tent" apex pár (2 TDRAMPs sdílí peak bod) — user sez. 26 akceptuje (vizuálně OK).
+
+**Důsledek:**
+- `src/model.js` nová třída TDRAMP (10 řádků).
+- `src/main.js` `TDRAMP_GEOM_CACHE` (geometry s 7 faces, 5 material groups), `createTDRampFor`, dispatch v `createMeshFor`, `createRampDiagonal` + `RAMP_DIAGONAL_TEXTURES`.
+- `src/terrain.js` 2-stage detekce v krok 5 (3-cell peak prio 1, L-shape prio 2). Edge case: shared apex dvojice obě dostanou TDRAMP (no dedup, user-confirmed).
+- Sez. 26 smoke test default 10×10 relief 3 seed 42: **7 TDRAMPs** (1 3-cell peak ES `(-2,-2)`, 1 3-cell peak NW `(0,3)`, 5 L-shape: `(2,-2) (1,-1) (1,1) (2,2) (1,4)`).
+
+**Otevřené body:**
+- TDRAMP nemá compatibility check proti rampám sousedů (B_E, B_S). Pokud B_E má perpendikulární ramp, postava může narazit. Empirická validace ukáže potřebu.
+- Performance při 30×30 pomalý — user feedback sez. 26 (TODO priority pro sez. 27).
+
+**Reference:**
+- DD-33 (ramp smoothing layer) — kontext, ramp detection algoritmus.
+- DD-34 (orientation mapping) — TDRAMP_PEAK_ORIENT empirické hodnoty.
+- DD-25 (4-vrstvá taxonomie scény) — TDRAMP přibyl do BLOCKS rodiny.
