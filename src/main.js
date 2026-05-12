@@ -8,7 +8,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
-import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TTUNELS, SPRITES, COMPOSITES, TREE, GRASS_TUFT, ROCK_PIXEL, LOG, VOXEL_MODEL, PATH, TIMER, COUNTER, WORLD } from "./model.js";
+import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TTUNELS, SPRITES, COMPOSITES, TREE, GRASS_TUFT, ROCK_PIXEL, LOG, VOXEL_MODEL, PATH, TIMER, COUNTER, WORLD, FACILITY, GENERATOR, TRANSFORMER, STORAGE, RESOURCES_DEF, RECIPES_DEF, FACILITY_DEF } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
 
 // === Renderer ===
@@ -413,6 +413,21 @@ const animators = [];
 // bezvětří. Pokud přibude víc dev singletonů, dá se sjednotit pod `window.tc.*`.
 const world = new WORLD();
 window.world = world;
+
+// TIME_SCALE slider (DD-31, sez. 22 fáze B) — HUD ovladač rychlosti simulace.
+// `input` event mutuje `world.TIME_SCALE` a aktualizuje text. Render loop si
+// `world.TIME_SCALE` čte každý frame, takže změna se projeví okamžitě bez reloadu.
+{
+  const slider = document.getElementById("time-scale-slider");
+  const valEl  = document.getElementById("time-scale-val");
+  if (slider && valEl) {
+    slider.addEventListener("input", () => {
+      const v = parseFloat(slider.value);
+      world.TIME_SCALE = v;
+      valEl.textContent = `${v.toFixed(1)}×`;
+    });
+  }
+}
 
 // Plný kruh v radiánech — pojmenovaná konstanta, aby `(TAU * t) / period` šel
 // číst jako „kolik period uplynulo v radiánech". Math.PI * 2 = 2π.
@@ -906,6 +921,252 @@ function registerBehavior(instance) {
 
 // Sez. 15 cleanup: LIT fade system + BALLOON třída smazány (DD-23 „all-voxel" pivot).
 
+// =============================================================================
+// FACTORY TOY ENGINE (DD-30 / DD-31, sez. 21)
+//
+// Tick-based ekonomický loop. `productionTick(dt)` se volá z render loopu
+// (continuous, ne 1 wall-s tick), s `dt = wall second elapsed * TIME_SCALE`.
+// Generátory produkují do `BUFFER`, transformery čerpají z `BUFFER` dle
+// `RECIPES_DEF[KIND]`. Material gate pauzuje na chybějícím inputu / plném outputu.
+// Sklady (zatím) pasivní — drží zásoby, transport přijde v Phase B (PATH).
+//
+// HUD: 6 čítačů top bar (Σ napříč fasilitami), event log bottom bar (5 řádků).
+// Eventy se loguji jen na **state change** (PAUS/RSUM) a každý whole-unit krok
+// produkce (`PROD` na floor cross), aby se log neutopil v per-frame spamu.
+// =============================================================================
+
+// Registry všech aktivních fasilit — naplňuje `createMeshFor` při FACILITY
+// větvi. Iterujeme každý frame v `productionTick`.
+const facilities = [];
+
+// Registry všech aktivních PATH instancí — naplňuje `createPathFor`. Iterujeme
+// každý frame v `pathTick` (DD-31, sez. 22 fáze B). Dekorativní cesty
+// (`KIND="dirt"`, bez SOURCE/SINK) jsou v registry také, pathTick je tolerantně
+// přeskočí — větvení by bylo zbytečné, missing-fields check je levný.
+const paths = [];
+
+// Event log = ring buffer (max 100). Render zobrazuje posledních 5.
+const EVENT_LOG_CAPACITY = 100;
+const EVENT_LOG_VISIBLE = 5;
+const events = [];
+
+// Verb → CSS třída pro barvení v #eventlog. Voidspan-derived (DD-30) zúžené
+// na MVP set verb: PROD = green (produkce), DRN = neutral (čerpání inputu),
+// PAUS = amber (gate spadla), RSUM = cyan (gate uvolněna).
+const EVENT_VERB_CLASS = {
+  PROD: "evt-prod",
+  DRN:  "evt-drn",
+  PAUS: "evt-paus",
+  RSUM: "evt-rsum",
+};
+
+function logEvent(verb, target, detail) {
+  events.push({ tick: TIME.tick, verb, target, detail });
+  if (events.length > EVENT_LOG_CAPACITY) events.shift();
+  renderEventLog();
+}
+
+// Vykresli posledních N eventů do #eventlog elementu. Volá se po každém
+// `logEvent` (jednorázový DOM patch). KISS: vyrobíme řádky odznova; 5 řádků
+// = zanedbatelná cena.
+function renderEventLog() {
+  const el = document.getElementById("eventlog");
+  if (!el) return;
+  el.innerHTML = "";
+  const start = Math.max(0, events.length - EVENT_LOG_VISIBLE);
+  for (let i = start; i < events.length; i++) {
+    const e = events[i];
+    const line = document.createElement("div");
+    line.className = `evt-line ${EVENT_VERB_CLASS[e.verb] || ""}`;
+    line.textContent = `[T${e.tick}] ${e.verb}  ${e.target}  ${e.detail}`;
+    el.appendChild(line);
+  }
+}
+
+// Logger produkce s thresholdem: emit PROD jen když `BUFFER[r]` překročí novou
+// celou jednotku (floor crossing). Bez toho by 60 FPS produkce zahltila log.
+// Sleduje předchozí floor v `prevFloor` mapě per (facility, resource).
+const _prodFloorCache = new Map(); // klíč `${id}::${r}` → poslední floor
+
+function maybeLogProduction(facility, resource_id, prevAmount, newAmount) {
+  const key = `${facility.ID}::${resource_id}`;
+  const prevFloor = Math.floor(prevAmount);
+  const newFloor = Math.floor(newAmount);
+  if (newFloor > prevFloor) {
+    _prodFloorCache.set(key, newFloor);
+    logEvent("PROD", facility.NAME, `+1 ${resource_id} (${newFloor} celkem)`);
+  }
+}
+
+function maybeLogConsumption(facility, resource_id, prevAmount, newAmount) {
+  const prevFloor = Math.floor(prevAmount);
+  const newFloor = Math.floor(newAmount);
+  if (newFloor < prevFloor) {
+    logEvent("DRN", facility.NAME, `−1 ${resource_id} (${newFloor} zbývá)`);
+  }
+}
+
+// Pauza / resume tracking — emit jen na state change.
+function setPaused(facility, paused, reason) {
+  const wasPaused = facility.PAUSED;
+  facility.PAUSED = paused;
+  facility.PAUSE_REASON = paused ? reason : null;
+  if (paused && !wasPaused) {
+    logEvent("PAUS", facility.NAME, reason);
+  } else if (!paused && wasPaused) {
+    logEvent("RSUM", facility.NAME, "běží");
+  }
+}
+
+// Generator tick: produkuje `outputs[r]` * dt ks/s. Backpressure pauza na
+// plný buffer. Žádný input check (generator = unlimited source — les nikdy
+// nedojde, KISS pro MVP).
+function generatorTick(facility, def, dt) {
+  // Předpoklad: def.outputs existuje a je objekt {resource_id: rate_per_s}.
+  // Pro každý výstup nezávisle: spočítej kolik bys přidal, ořež na kapacitu.
+  let anyProduced = false;
+  let anyBlocked = false;
+  for (const [r, rate] of Object.entries(def.outputs)) {
+    const prev = facility.BUFFER[r] ?? 0;
+    const capacity_left = def.buffer_capacity - prev;
+    if (capacity_left <= 0) {
+      anyBlocked = true;
+      continue;
+    }
+    const wanted = rate * dt;
+    const actual = Math.min(wanted, capacity_left);
+    const next = prev + actual;
+    facility.BUFFER[r] = next;
+    maybeLogProduction(facility, r, prev, next);
+    anyProduced = true;
+  }
+  // Pauza pokud je VŠECHNO blokované a NIC se nevyprodukovalo. Smíšený stav
+  // (1 ze 2 output plný) generator nehlásí — zbylé výstupy stále tečou.
+  if (anyBlocked && !anyProduced) {
+    setPaused(facility, true, "buffer plný");
+  } else {
+    setPaused(facility, false);
+  }
+}
+
+// Transformer tick: dle recipe spotřebuje `inputs`, vyrobí `outputs`.
+// Material gate: pauza s důvodem, pokud chybí input nebo je plný output.
+function transformerTick(facility, def, dt) {
+  const recipe = RECIPES_DEF[def.recipe];
+  if (!recipe) {
+    console.warn(`TRANSFORMER ${facility.ID} má neznámý recept "${def.recipe}"`);
+    return;
+  }
+  const cycles = recipe.rate_per_tick * dt;
+  // 1) Check input availability.
+  for (const [r, need_per_cycle] of Object.entries(recipe.inputs)) {
+    const have = facility.BUFFER[r] ?? 0;
+    const need = need_per_cycle * cycles;
+    if (have < need) {
+      setPaused(facility, true, `chybí ${r}`);
+      return;
+    }
+  }
+  // 2) Check output capacity.
+  for (const [r, out_per_cycle] of Object.entries(recipe.outputs)) {
+    const prev = facility.BUFFER[r] ?? 0;
+    const would_add = out_per_cycle * cycles;
+    if (prev + would_add > def.buffer_capacity) {
+      setPaused(facility, true, `buffer ${r} plný`);
+      return;
+    }
+  }
+  // 3) Apply: drén inputs, plnění outputs.
+  for (const [r, need_per_cycle] of Object.entries(recipe.inputs)) {
+    const prev = facility.BUFFER[r];
+    const next = prev - need_per_cycle * cycles;
+    facility.BUFFER[r] = next;
+    maybeLogConsumption(facility, r, prev, next);
+  }
+  for (const [r, out_per_cycle] of Object.entries(recipe.outputs)) {
+    const prev = facility.BUFFER[r] ?? 0;
+    const next = prev + out_per_cycle * cycles;
+    facility.BUFFER[r] = next;
+    maybeLogProduction(facility, r, prev, next);
+  }
+  setPaused(facility, false);
+}
+
+// Hlavní produkční tick — volá se z render loopu s `dt` v sekundách
+// (už škálovaný `TIME_SCALE`). Storage je pasivní (transport řeší pathTick).
+function productionTick(dt) {
+  for (const f of facilities) {
+    const def = FACILITY_DEF[f.KIND];
+    if (!def) continue;
+    if (def.type === "generator")        generatorTick(f, def, dt);
+    else if (def.type === "transformer") transformerTick(f, def, dt);
+    // storage: no-op v MVP
+  }
+}
+
+// PATH transport tick (DD-31, sez. 22 fáze B). Iteruje `paths[]`, per cesta
+// s validním transportem (SOURCE+SINK+RESOURCE+THROUGHPUT) přesune
+// `min(THROUGHPUT*dt, source_have, sink_free_capacity)` daného resource
+// ze source BUFFER do sink BUFFER. Dekorativní `"dirt"` cesty engine přeskočí.
+//
+// Volá se z render loopu **po** productionTick — jinak by transport mohl
+// odvézt items, které generator/transformer právě v tomto tick vyrobil
+// (= mikro-zpoždění o jeden frame, ale ekonomicky korektní: tick = produkce,
+// pak distribuce).
+function pathTick(dt) {
+  for (const p of paths) {
+    if (!p.SOURCE || !p.SINK || !p.RESOURCE || !p.THROUGHPUT) continue;
+    transferOnPath(p, dt);
+  }
+}
+
+// Jednotka transportu. Source-dry → 0, sink-full → 0; jinak min(want, have, free).
+// Loguje DRN/PROD přes existující floor-crossing helpery — stejná granularita
+// jako u generator/transformer eventů (1 řádek per whole-unit krok).
+function transferOnPath(path, dt) {
+  const src = path.SOURCE;
+  const dst = path.SINK;
+  const r   = path.RESOURCE;
+  const sinkDef = FACILITY_DEF[dst.KIND];
+  if (!sinkDef) return;
+
+  const have = src.BUFFER[r] ?? 0;
+  if (have <= 0) return;
+  const dstHave = dst.BUFFER[r] ?? 0;
+  const free = sinkDef.buffer_capacity - dstHave;
+  if (free <= 0) return;
+
+  const wanted = path.THROUGHPUT * dt;
+  const amount = Math.min(wanted, have, free);
+  if (amount <= 0) return;
+
+  const newSrc = have - amount;
+  const newDst = dstHave + amount;
+  src.BUFFER[r] = newSrc;
+  dst.BUFFER[r] = newDst;
+  maybeLogConsumption(src, r, have, newSrc);
+  maybeLogProduction(dst, r, dstHave, newDst);
+}
+
+// Přepočítá `world.RESOURCES` jako Σ `BUFFER` napříč všemi fasilitami a
+// aktualizuje HUD čítače (#res-<id> spany).
+function aggregateResources() {
+  // Reset všech klíčů na 0.
+  for (const r of Object.keys(world.RESOURCES)) world.RESOURCES[r] = 0;
+  // Sečti přes facilities.
+  for (const f of facilities) {
+    for (const [r, amount] of Object.entries(f.BUFFER)) {
+      if (r in world.RESOURCES) world.RESOURCES[r] += amount;
+    }
+  }
+  // HUD update — jen jednou za frame, formátované jako celé číslo (zlomky
+  // v buffer interně, UI nepotřebuje precizi).
+  for (const r of Object.keys(world.RESOURCES)) {
+    const el = document.getElementById(`res-${r}`);
+    if (el) el.textContent = Math.floor(world.RESOURCES[r]);
+  }
+}
+
 // === Vizualizační dispatch: instance → Three.js Object3D ===
 // Podle konkrétní třídy instance rozhodujeme, jaký vizuál sestrojit.
 // `instanceof` testuje řetěz dědičnosti. Pořadí větví je důležité:
@@ -923,6 +1184,11 @@ function createMeshFor(instance) {
   if (instance instanceof COMPOSITES) {
     // 3D mesh složený z primitivů. Konkrétní tvar řešíme podle podtřídy.
     object3d = createCompositeFor(instance);
+  } else if (instance instanceof FACILITY) {
+    // Factory toy fasilita (DD-31, sez. 21) — 1×1×1 placeholder box s plochou
+    // barvou z `FACILITY_DEF[KIND].color`. Pixel-art asset (VOXEL_MODEL per
+    // KIND) přijde v Phase 2. Snap-to-grid jako BLOCKS (DD-28 grid-center).
+    object3d = createFacilityFor(instance);
   } else if (instance instanceof PATH) {
     // 1D křivka (DD-25 vrstva 3 Linie) — strip mesh sledující POINTS.
     object3d = createPathFor(instance);
@@ -1522,6 +1788,38 @@ function createTTunnelFor(instance) {
   return mesh;
 }
 
+// Sdílená box geometrie pro FACILITY placeholdery — 1×1×1 jednotka. Per-KIND
+// barva se řeší materiálem, ne geometrií, tak že geometrie může být sdílená.
+const _facilityGeom = new THREE.BoxGeometry(1, 1, 1);
+// Materiály cache per KIND (sdílené napříč instancemi stejného druhu).
+const _facilityMatCache = new Map();
+function facilityMat(kind) {
+  let mat = _facilityMatCache.get(kind);
+  if (!mat) {
+    const def = FACILITY_DEF[kind];
+    if (!def) {
+      console.warn(`Neznámý FACILITY KIND "${kind}", použiji fallback`);
+      mat = new THREE.MeshStandardMaterial({ color: 0x888888 });
+    } else {
+      mat = new THREE.MeshStandardMaterial({ color: def.color });
+    }
+    _facilityMatCache.set(kind, mat);
+  }
+  return mat;
+}
+
+// Sestaví placeholder mesh pro FACILITY: 1×1×1 box s plochou barvou dle KIND.
+// Snap-to-grid (DD-28 grid-center jako BLOCKS). Registruje instanci do
+// `facilities[]` pro per-frame produkční tick.
+function createFacilityFor(instance) {
+  const mesh = new THREE.Mesh(_facilityGeom, facilityMat(instance.KIND));
+  snapToGrid(mesh, instance);
+  // Registrace do produkčního registru. Idempotence: po reloadu scény (kdyby
+  // se kdy dělal hot-reload) by se duplikovala — pro MVP jednorázový build.
+  facilities.push(instance);
+  return mesh;
+}
+
 // Sestaví 2D billboard pro SPRITES instanci. Vrací `THREE.Sprite` — speciální
 // Three.js objekt, který se sám stará o to, aby byl vždy otočený ke kameře
 // (tzv. billboard). Nepotřebuje per-frame `lookAt(camera)`, projekce se řeší
@@ -1723,6 +2021,21 @@ function createPathFor(instance) {
   // Vlastní stín strip-mesh je benigní (cesta je 0.005 j nad ground, stín splyne
   // s podkladem). Stromy nad cestou vrhají stín na ni → receive je užitečný.
   group.add(mesh);
+
+  // Registrace do paths registry — pathTick iteruje v render loopu. Dekorativní
+  // PATH (KIND="dirt", bez SOURCE/SINK) je zde také; pathTick je přeskočí
+  // missing-fields checkem. Boot-time validace category × KIND pro factory PATH.
+  paths.push(instance);
+  if (instance.RESOURCE && instance.KIND !== "dirt") {
+    const cat = RESOURCES_DEF[instance.RESOURCE]?.category;
+    const expected = cat === "fluid" ? "pipeline" : "conveyor";
+    if (instance.KIND !== expected) {
+      console.warn(
+        `[PATH] ${instance.ID}: RESOURCE "${instance.RESOURCE}" je ${cat}, ` +
+        `očekáván KIND="${expected}", máš "${instance.KIND}".`,
+      );
+    }
+  }
 
   return group;
 }
@@ -2415,6 +2728,62 @@ function buildScene(scene) {
   )));
 
   populateNorthernScene(scene, pathOccupiedCells(pathPoints));
+
+  // === Factory toy test scéna (DD-31, sez. 21–22, fáze A→B) ===
+  // 3 fasility na grass podlaze (Y=0 = jeden blok nad podlahou gy=−1, BLOCKS
+  // grid-center konvence DD-28) propojené 2 conveyor PATH (sez. 22 fáze B).
+  // Tok: forest → conveyor → sawmill → conveyor → storage. Bez pre-stocku —
+  // sawmill čeká na první klády z transportu (PAUS „chybí logs" na startu,
+  // RSUM jakmile forest stihne vyprodukovat & conveyor přesune).
+  const forest = new GENERATOR(
+    "fac_forest_0", "Les (test)", -2, 0, 2, "forest",
+    "GENERATOR — produkuje klády (0.5/s) do lokálního BUFFER.",
+  );
+  scene.add(createMeshFor(forest));
+
+  const sawmill = new TRANSFORMER(
+    "fac_sawmill_0", "Pila (test)", 0, 0, 2, "sawmill",
+    "TRANSFORMER — recept sawmill (1 kláda → 0.8 prkna / cyklus, 1 cyklus/s).",
+  );
+  scene.add(createMeshFor(sawmill));
+
+  const storage = new STORAGE(
+    "fac_storage_0", "Sklad (test)", 2, 0, 2,
+    "STORAGE — pasivní pufr pro prkna z pily (cap 200).",
+  );
+  scene.add(createMeshFor(storage));
+
+  // Conveyor PATH 1: forest → sawmill (resource: logs). POINTS na Y=−0.5
+  // (grass surface, stejná konvence jako dekorativní path_0). Throughput 2 ks/s
+  // (DD-31 default conveyor) — větší než forest production 0.5/s, takže transport
+  // není bottleneck a forest BUFFER zůstává ~0 (source-limited).
+  const pathForestSawmill = new PATH(
+    "path_forest_sawmill", "Dopravník Les → Pila",
+    [[-2, -0.5, 2], [0, -0.5, 2]],
+    "Conveyor — přemisťuje klády z lesa do pily.",
+    "conveyor",
+  );
+  pathForestSawmill.SOURCE     = forest;
+  pathForestSawmill.SINK       = sawmill;
+  pathForestSawmill.RESOURCE   = "logs";
+  pathForestSawmill.THROUGHPUT = 2;
+  scene.add(createMeshFor(pathForestSawmill));
+
+  // Conveyor PATH 2: sawmill → storage (resource: planks). Pila výstup 0.8/s,
+  // throughput 2/s — také source-limited. Storage cap 200 = ~250 s plnění
+  // dokud sklad nebude full a sawmill nehlásí PAUS „buffer planks plný"
+  // (≈ až pila vyprodukuje 200 prken, což při 0.4-0.8/s effective trvá ~5 min).
+  const pathSawmillStorage = new PATH(
+    "path_sawmill_storage", "Dopravník Pila → Sklad",
+    [[0, -0.5, 2], [2, -0.5, 2]],
+    "Conveyor — přemisťuje prkna z pily do skladu.",
+    "conveyor",
+  );
+  pathSawmillStorage.SOURCE     = sawmill;
+  pathSawmillStorage.SINK       = storage;
+  pathSawmillStorage.RESOURCE   = "planks";
+  pathSawmillStorage.THROUGHPUT = 2;
+  scene.add(createMeshFor(pathSawmillStorage));
 }
 
 // Spočítá grid buňky (X, Z), kterými PATH prochází — populate je pak skipne,
@@ -2864,6 +3233,15 @@ function animate() {
   const dt  = now - _lastFrameTime;
   _lastFrameTime = now;
   updateAnimations(now);
+  // Factory toy produkční tick (DD-31). `dt` v sekundách × `world.TIME_SCALE`
+  // (DD-29 nový konzument). TIME_SCALE=0 → pauza simulace, =2 → 2× zrychleně.
+  // Cap na 0.1 s (kdyby tab uspal a `dt` byl velký) — žádné spikes v ekonomice.
+  const simDt = Math.min(dt, 0.1) * world.TIME_SCALE;
+  if (simDt > 0) {
+    productionTick(simDt);
+    pathTick(simDt);
+  }
+  aggregateResources();
   // Ocásky dialogových bublin: přepočítáme až **po** animátorech, aby jsme
   // četli aktuální `object3d.position` případných pohybujících se mluvčí
   // (tbox_0002 orbituje, …).

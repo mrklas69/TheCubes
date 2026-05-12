@@ -364,3 +364,116 @@ Sez. 17 měl tři konvence (BLOCKS = grid, VOXEL_MODEL = surface, pixel-voxel = 
 **Důvod (DO/DROP rozhodnutí v sez. 20):** `tree_sway` má hardcoded amplitudu — globální regulátor je první přirozený „světový stav" a uvolní pattern pro další (až bude konzument). „Foundations before curtains" princip: model nezaplňovat dopředu. WORLD bez X/Y/Z **demonstruje hodnotu DD-01** (OBJECTS = cokoli v modelu, CUBES = cokoli s polohou) — singleton tu separaci ospravedlní.
 
 **Důsledek:** nový `instanceof WORLD` dispatch v `registerBehavior` se zatím **nezavádí** — singleton žije jako modul-level konstanta. Pokud přibude druhá podobná entita (např. `CLIMATE_ZONES` registry), zvážit obecnější „registry singletons" pattern. Dev exposure přes `window.world` = jednorázová pragma pro test v konzoli.
+
+## DD-30 — TheCubes pivot: 3D factory-observer toy, Voidspan jako inspirační referent
+
+TheCubes přebírá identitu **3D analogie projektu Voidspan** (sourozenecký projekt v `~/source/Voidspan`): minimalistický model-first factory toy, jehož **cílem je pozorování** (sledování ukazatelů, účinnosti strojů, toku surovin), ne dosažení win-condition. Žádný narativ, žádné kolonisty, žádné HP. Sez. 21.
+
+**Změna identity vůči předchozím sezením:**
+- **Sez. 1–13** — model-first sandbox s ad-hoc COMPOSITES (BALLOON, TREE classic, CHARACTER).
+- **Sez. 15 (DD-23)** — „Kostičky = jen voxely", smazány non-voxel třídy.
+- **Sez. 16–17** — pixel-voxel apartmá (TREE 10 KIND, GRASS_TUFT, ROCK_PIXEL, LOG, populateNorthernScene, PATH).
+- **Sez. 21 (toto DD)** — vizuální regrese na holé BLOCKS + nová **FACILITY** vrstva pro tick-based ekonomický loop. Pixel-voxel apartmá ze sez. 16–17 určen k cleanupu po stabilizaci nového modelu (fáze D, viz TODO).
+
+**Vztah k Voidspanu (selektivní inspirace, ne dogma):**
+
+Voidspan má ~25 sezení odsezených na herním a resource modelu — řadu konceptů má smysl převzít. **Filter je přísný** — TheCubes není sci-fi vesmírná kolonie:
+
+| Z Voidspanu převzato (DD-31 nebo Phase 2) | Z Voidspanu odmítnuto |
+|---|---|
+| Resource jako data registry, ne třídy | 2D Belt/Segment topologie (3D vlastní svět) |
+| Recipe matrix (inputs/outputs per tick) | Cosmology / lore / Colony Goal / kolonisté |
+| Material gate (pauza při deficitu, čitelný důvod) | Protocol / QuarterMaster AI vrstva |
+| Event Log s 4-znakovými verbs (PROD/HAUL/DRN/PAUS) | Status tree, Citizen tiers, Capsule |
+| Module Specialization (malé multi = slabé, velké dedikované = silné) — Phase 2 | Coin / Credit měna |
+| Resource Taxonomy (rarity 5 stupňů, logistics matrix S/F) — designový baseline | W (Work) jako resource (TIMER+tick stačí) |
+| `formatScalar` pro UI čísla — Phase 2 | TypeScript / Phaser / pnpm stack (TheCubes zůstává vanilla JS + Three.js) |
+
+**Důvod:** Po sez. 16–17 (pixel-voxel apartmá) projekt postrádá funkční smyčku — je to jen statická dioráma. „Hezky vypadá" je méně důležité než „je čitelný" (Factorio vs. Satisfactory). Convergence s Voidspanem dává TheCubes konečně účel (factory loop) a sourozeneckým projektům **sdílenou designovou DNA**, kterou lze stavět vzájemně.
+
+**Důsledek:** Identita projektu se mění z „meta-sandbox s živým OOP modelem" na **„model-first factory-observer toy s OOP modelem jako runtime"**. Sandbox aspekt zůstává (editor MVP, free building), ale s konkrétní herní smyčkou. Pixel-voxel COMPOSITES (TREE 10 KIND, GRASS_TUFT, ROCK_PIXEL, LOG, populateNorthernScene, tree_sway) jsou v cleanup queue. `VOXEL_MODEL` zůstává jako kapability pro pozdější asset pipeline (pixel-art fasility z MagicaVoxelu).
+
+## DD-31 — Resource model & FACILITY: 6 surovin, lokální buffery, fixed-KIND transformers
+
+Nová vrstva v `OBJECTS → CUBES` hierarchii: **`FACILITY` rodina** (`GENERATOR`, `STORAGE`, `TRANSFORMER`) jako protějšek BLOCKS pro produkční ekonomiku. Sez. 21.
+
+**MVP surovinový set (6, kategoricky pokrývá solid + fluid):**
+
+| ID | CZ | EN | Kategorie | Zdroj (GENERATOR KIND) | Spotřebitel |
+|---|---|---|---|---|---|
+| `logs` | Klády | Logs | solid | `forest` | `sawmill` → `planks` |
+| `planks` | Prkna | Planks | solid | (transformer output) | (sklad / budoucí stavba) |
+| `stone` | Kámen | Stone | solid | `quarry` | `crusher` → `gravel` |
+| `gravel` | Štěrk | Gravel | solid | (transformer output) | (sklad / budoucí beton) |
+| `water` | Voda | Water | fluid | `well` | (sklad / budoucí recepty) |
+| `coal` | Uhlí | Coal | solid | `coal_mine` | (sklad / budoucí recepty) |
+
+Soviet Republic surovinový graph je referenční inspirace (https://wiki.hoodedhorse.com/Workers_Resources_Soviet_Republic/Resources) — Phase 2 vlna doplní bricks/cement/steel a multi-input recepty.
+
+**Resource jako data, ne třídy.** Modul-level registry `RESOURCES_DEF[id] = { name_cs, name_en, category, unit }`. Žádné `LOGS extends RESOURCE`.
+
+**Lokální buffery per fasilita (model B, ne globální pool):**
+
+Každá `FACILITY` instance má vlastní `BUFFER = { resource_id: amount }`. PATH skutečně přemisťuje units mezi buffery (ne dekoračně). Bottlenecks emergují přirozeně — plný output buffer pauzuje generátor („Les pauza — buffer plný"), prázdný input buffer pauzuje transformer („Pila pauza — chybí klády"). HUD agreguje globální totals přes `Σ buffer.contents napříč fasilitami`.
+
+**Kapacity buffer per KIND** (konstanta v `FACILITY_DEF`, žádný per-instance UI tuning):
+- Generátor output buffer: 50 ks (default)
+- Transformer input/output buffery: 20 ks per slot
+- Storage capacity: 200 ks (větší než ostatní = role „pufru sítě")
+
+**Fixed-KIND transformers, ne data-driven recept atribut:**
+
+Recept je odvozený od `KIND` (izomorfie s TREE.KIND / PATH.KIND / GRASS_TUFT.KIND). Editor vybírá `KIND`, ne recept:
+- `sawmill` → `RECIPES_DEF["sawmill"]` = `{ inputs: {logs: 1}, outputs: {planks: 0.8}, rate_per_tick: 1.0 }`
+- `crusher` → `RECIPES_DEF["crusher"]` = `{ inputs: {stone: 1}, outputs: {gravel: 1.2}, rate_per_tick: 0.8 }`
+
+Multi-recipe transformer (jedna fasilita, switchable recept) = pozdější rozšíření, **kdyby vůbec**.
+
+**PATH rozšíření (kanonizováno pro factory pipeline):**
+
+Nový atribut `KIND` na `PATH`:
+- `"conveyor"` — pevné suroviny (logs/planks/stone/gravel/coal), `THROUGHPUT = 2 ks/s` default
+- `"pipeline"` — tekutiny (water), `THROUGHPUT = 5 L/s` default
+
+Atributy `SOURCE`, `SINK` (instance ID references) — engine drén/dopis mezi buffery. PATH je teleport-per-tick (žádná animace cargo balíčků v MVP).
+
+**Globální tick rate:** 1 wall sekunda = 1 tick. Existující `TIME.tick` (DD-04, dosud nepoužitý) konečně získá konzumenta. `productionTick()` v render loopu agreguje generators/transformers/paths. `WORLD.TIME_SCALE` (nový DD-29 konzument) škáluje rychlost simulace.
+
+**Globální resources agregát** v `world.RESOURCES = { logs: 0, planks: 0, ... }` — derived z buffer sumy přes všechny fasility. Druhý živý konzument DD-29 (vedle `TIME_SCALE`). `WIND_STRENGTH` zůstává v DD-29, ale po smazání `tree_sway` (fáze D cleanup) ztratí konzumenta a migruje do IDEAS — sez. 20 práce se neanuluje, jen se její konzument retired.
+
+**Hierarchie po DD-31:**
+
+```
+OBJECTS
+ ├── CUBES (X, Y, Z)
+ │    ├── BLOCKS (TCUBES, TRRAMPS, TTRAMPS, TTUNELS)
+ │    ├── SPRITES
+ │    ├── COMPOSITES (VOXEL_MODEL — TREE/GRASS_TUFT/ROCK_PIXEL/LOG v cleanup queue, DD-30 fáze D)
+ │    ├── PATH (KIND, POINTS, SOURCE?, SINK?, THROUGHPUT)
+ │    └── FACILITY (KIND, BUFFER)
+ │         ├── GENERATOR  (vstup KIND ∈ "forest" | "quarry" | "well" | "coal_mine")
+ │         ├── STORAGE    (vstup KIND ∈ "storage", HOLDS = filter resource_id whitelist)
+ │         └── TRANSFORMER (vstup KIND ∈ "sawmill" | "crusher")
+ ├── TIMER, COUNTER
+ └── WORLD (WIND_STRENGTH, TIME_SCALE, RESOURCES)
+```
+
+**Důvod (zhuštěně):**
+- Konkrétní suroviny dají TheCubes charakter, který kvintet (E/W/S/F/◎) postrádá.
+- Lokální buffery dělají PATH herně relevantní (vs. globální pool, kde PATH je dekorativní).
+- Fixed-KIND transformers udržují izomorfii s existujícím `KIND` paradigmatem.
+- Material gate + Event Log = čitelný debugging a tamagotchi-feel.
+- Tick = 1 wall s je dostatečně rychlý pro pozorování bez kavárenských čekání.
+
+**Důsledek:**
+- `model.js` přibude třída `FACILITY` + 3 potomci.
+- `main.js` nový `productionTick()` v render loopu + `createMeshFor` dispatch.
+- HUD: top bar 6 čítačů (Σ napříč fasilitami) + bottom bar event log ticker (5 posledních).
+- Editor MVP (fáze C) = klik = paleta KIND + place, R-klik = delete, drag = PATH.
+- `world.RESOURCES` + `world.TIME_SCALE` = silní konzumenti DD-29 (politika splněna).
+
+**Otevřená rozhodnutí (do Phase 2):**
+- Multi-input recepty (cement = gravel + water).
+- Module Specialization Principle (1×1×1 pila slabá vs. 2×2×2 mega-pila silná).
+- VOXEL_MODEL asset per fasilita (pixel-art „PILA" model místo placeholder TCUBES).
+- Smazat TRRAMPS/TTRAMPS/TTUNELS, pokud factory toy nepotřebuje rampy a tunely (sentimentální vs. KISS, diskuse v sez. 24+ při fázi D).

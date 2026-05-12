@@ -1,6 +1,8 @@
 # Glossary
 
-Canonical terminologie projektu TheCubes. Stav po sez. 17–20 (DD-26 sjednocená `ORIENTATION`, DD-27 `PATH` + LINES vrstva 3, DD-28 sjednocená Y konvence, DD-29 `WORLD` singleton). Smazané třídy a koncepty žijí v immutable diary jako historický kontext — zde se neuvádějí.
+Canonical terminologie projektu TheCubes. Stav po sez. 17–22 (DD-26 sjednocená `ORIENTATION`, DD-27 `PATH` + LINES vrstva 3, DD-28 sjednocená Y konvence, DD-29 `WORLD` singleton, **DD-30 pivot na 3D factory-observer toy** s Voidspan inspirací, **DD-31 Resource model & FACILITY** + PATH transport fáze B sez. 22). Smazané třídy a koncepty žijí v immutable diary jako historický kontext — zde se neuvádějí.
+
+**Identita projektu po DD-30 (sez. 21):** model-first factory-observer toy s OOP modelem jako runtime. Cíl = **pozorování ukazatelů** (observer game, Voidspan-derived Perpetual Observer Simulation axiom), ne win/loss. Sandbox/free-building aspekt zůstává (editor MVP plánovaný v Phase C). Pixel-voxel apartmá (TREE 10 KIND, GRASS_TUFT, ROCK_PIXEL, LOG, `populateNorthernScene`, `tree_sway`, `:grass-top`) je v Phase D cleanup queue — TheCubes nadále nevyžaduje organickou dekoraci, identita kostek = mřížkové fasility.
 
 ## Model
 
@@ -42,13 +44,61 @@ Historicky (před DD-26, sez. 16) byla `BLOCKS.ORIENTATION` integer enum 0..3 a 
 
 ### Linie (LINES vrstva 3, DD-25)
 
-- **PATH** — 1D křivka jako plochý strip mesh. Potomek CUBES (= LINES rodina abstract base třída zatím nezavedena, čeká na druhého sourozence TRACK). Atributy: `KIND` (string, default `"dirt"`) řídí texturu povrchu, `POINTS` (pole `[x, y, z]` kontrolních bodů ve world coords). `instance.X/Y/Z` se nepoužívá (cesta žije v world coords; constructor volá `super(0, 0, 0, ...)`). Engine `createPathFor`: `THREE.CatmullRomCurve3` (typ `catmullrom`, tension 0.5), 64 vzorků, generuje strip BufferGeometry s positions/uvs/indices. Šířka 0.5 j, Y offset +0.005 j proti z-fightingu, repeating texture UV scale 8× podél délky. **Rovný směr v krajních bodech** — Three.js v non-closed Catmull-Rom curvě používá v krajních bodech reflexi sousedního, tj. tangenta v `P[0]` = `P[1] − P[0]`; pokud `P[0].Z = P[1].Z`, tangenta je čistě podél X (= rovný vstup/výstup). `pathOccupiedCells(points)` vzorkuje curve 128× a vrátí Set grid buněk → `populateNorthernScene` skipne dekorace v koridoru cesty. *(Sez. 17, DD-27.)*
+- **PATH** — 1D křivka jako plochý strip mesh. Potomek CUBES (= LINES rodina abstract base třída zatím nezavedena, čeká na druhého sourozence TRACK). **Dvojí role** (sez. 22 fáze B): dekorativní (`KIND="dirt"`) nebo factory transport (`KIND ∈ "conveyor"|"pipeline"`). Atributy:
+  - `KIND` (string, default `"dirt"`) — řídí texturu povrchu i transport sémantiku. `"conveyor"` pro solid resources, `"pipeline"` pro fluid. Engine boot-time validuje `RESOURCES_DEF[RESOURCE].category` proti `KIND` (warn na neshodu).
+  - `POINTS` (pole `[x, y, z]` kontrolních bodů ve world coords). `instance.X/Y/Z` se nepoužívá (cesta žije v world coords; constructor volá `super(0, 0, 0, ...)`).
+  - `SOURCE`, `SINK` (instance ref na `FACILITY`, default null) — endpointy transportu. Dekorativní `"dirt"` cesty nechávají null.
+  - `RESOURCE` (string klíč do `RESOURCES_DEF`, default null) — **explicit** resource ID. Derived ze SOURCE by byl nejednoznačný u STORAGE (drží libovolné suroviny).
+  - `THROUGHPUT` (float ks/s, default null) — rychlost transportu. Doporučené: conveyor 2 ks/s, pipeline 5 L/s.
+
+  Engine `createPathFor`: `THREE.CatmullRomCurve3` (typ `catmullrom`, tension 0.5), 64 vzorků, generuje strip BufferGeometry s positions/uvs/indices. Šířka 0.5 j, Y offset +0.005 j proti z-fightingu, repeating texture UV scale 8× podél délky. **Rovný směr v krajních bodech** — Three.js v non-closed Catmull-Rom curvě používá v krajních bodech reflexi sousedního, tj. tangenta v `P[0]` = `P[1] − P[0]`; pokud `P[0].Z = P[1].Z`, tangenta je čistě podél X (= rovný vstup/výstup). `pathOccupiedCells(points)` vzorkuje curve 128× a vrátí Set grid buněk → `populateNorthernScene` skipne dekorace v koridoru cesty.
+
+  Transport tick (`pathTick(dt)` sez. 22): per cesta s validním transportem (`SOURCE+SINK+RESOURCE+THROUGHPUT` all set) přesune `min(THROUGHPUT*dt, source_have, sink_free_capacity)` ze source BUFFER do sink BUFFER. Loguje `DRN` na source, `PROD` na sink přes existující floor-crossing helpery (stejná 1-event-per-whole-unit granularita jako productionTick). Volá se **po** `productionTick` v render loopu — tick = nejprve produkce, pak distribuce. *(Sez. 17 DD-27 dekorativní + sez. 22 DD-31 fáze B transport.)*
+
+### Fasility (FACILITY rodina, DD-31 sez. 21)
+
+Vrstva nad CUBES pro tick-based ekonomický loop. Sourozenec BLOCKS (oba 1C grid-aligned, snap-to-int, DD-28 grid-center Y). Engine logika v `productionTick()` v `src/main.js`.
+
+- **FACILITY** *(abstract)* — base třída factory-toy entit. Atributy: `KIND` (string, klíč do `FACILITY_DEF`), `BUFFER` (`{resource_id: amount}` lokální zásoby), `PAUSED` (bool), `PAUSE_REASON` (string | null, lidsky čitelný důvod material gate spadnutí). DD-31 *„fixed-KIND"* pravidlo: třída-jako-recipe (izomorfie s `TREE.KIND` / `PATH.KIND` / `ANIMATE.kind`), ne data atribut.
+- **GENERATOR** — FACILITY produkující 1+ surovinu bez vstupu (les → klády, lom → kámen, studna → voda, důl → uhlí). Engine v `productionTick`: `BUFFER[r] += outputs[r] * dt * TIME_SCALE`, pauza na backpressure (`buffer plný`).
+- **TRANSFORMER** — FACILITY zpracovávající `inputs` na `outputs` dle `RECIPES_DEF[KIND]` (pila: logs → planks, drtič: stone → gravel). Material gate (Voidspan-derived): pauza s reasonem `chybí <input>` nebo `buffer <output> plný`. 3-fázový tick: input check → output capacity check → apply.
+- **STORAGE** — FACILITY držící zásoby bez produkce/transformace. „Pufr sítě" mezi generátory a transformery. Atribut `HOLDS` (volitelný whitelist `resource_id`; null = drží cokoli, MVP default). V Phase A pasivní (transport přijde v Phase B přes PATH).
+
+#### Data registries (DD-31)
+
+- **`RESOURCES_DEF`** — registry surovin (data, ne třídy). MVP set 6 surovin: `logs/planks/stone/gravel/water/coal`. Pole per surovinu: `name_cs`, `name_en`, `category ∈ {"solid", "fluid"}`, `unit` (MVP = `"ks"` napříč). Voidspan-derived **Logistics matrix** (DD-30): solidy → `PATH.KIND="conveyor"`, fluidy → `"pipeline"`. Phase 2 vlna: `bricks/cement/steel` + multi-input recepty (Soviet Republic inspirace).
+- **`RECIPES_DEF`** — registry transformerových receptů. Klíč = `recipe_id = FACILITY.KIND` (fixed-KIND mapping). Aktuální 2 recepty: `sawmill {logs:1 → planks:0.8, 1.0 cyklus/s}`, `crusher {stone:1 → gravel:1.2, 0.8/s}`. Pole: `inputs {r: ks_per_cycle}`, `outputs {r: ks_per_cycle}`, `rate_per_tick` (cykly/s při TIME_SCALE=1). Multi-recipe transformer (jedna fasilita, switchable recept) = pozdější rozšíření, kdyby vůbec.
+- **`FACILITY_DEF`** — registry KINDů fasilit s mesh hinty + ekonomickými parametry. 7 KINDů: 4 generátory (`forest/quarry/well/coal_mine`), 2 transformery (`sawmill/crusher`), 1 storage. Pole: `type`, `outputs` (generator) nebo `recipe` (transformer), `buffer_capacity` (per slot — generator 50, transformer 20, sklad 200), `color` (0xRRGGBB placeholder mesh), `name_cs`. Editor v Phase C bude číst pro paletu KINDů.
+
+#### Tick model (DD-31)
+
+- **1 wall sekunda = 1 tick.** `TIME.tick` (DD-04, dosud nepoužitý) konečně získává konzumenta — `productionTick(dt)` v render loopu (continuous, ne 1 wall-s setInterval). `dt = wall second elapsed × world.TIME_SCALE` s clamping `dt ≤ 0.1 s` (proti tab-sleep spikes).
+- **Generator tick**: `produced = rate * dt`, oříznuto na `buffer_capacity - have`. Pauza na all-blocked.
+- **Transformer tick**: `cycles = recipe.rate_per_tick * dt`. 3 fáze: (1) input check (any `have < cycles * need` → pauza `chybí <r>`), (2) output capacity check (any `have + cycles * out > capacity` → pauza `buffer <r> plný`), (3) apply (drén inputs, plnění outputs).
+- **`world.RESOURCES`** (DD-29 nový konzument) — globální agregát `Σ facility.BUFFER[r]`. Derived (engine `aggregateResources()` recompute každý frame), ne SSoT. Konzument: HUD top bar 6 čítačů (`#res-<resource_id>` DOM elementy).
+- **`world.TIME_SCALE`** (DD-29 nový konzument) — multiplikátor rychlosti simulace. `0` = pauza, `2` = 2× rychleji. Test v konzoli: `world.TIME_SCALE = 0/1/2`.
+
+#### Event Log (DD-31, Voidspan-derived)
+
+Ring buffer 100 events v paměti (`events[]`), viditelných posledních 5 v `#eventlog` (left bottom, monospace, severity-colored). **4-znakové verbs** (Voidspan v0.1 inspirace):
+
+- **`PROD`** (zelená) — produkce dokončila celou jednotku resource (floor crossing per `(facility, resource)`). Tedy emit jen jednou za sekundu při 1 ks/s rate, ne per-frame.
+- **`DRN`** (neutrální šedá) — transformer čerpá input, celé jednotka spotřebována.
+- **`PAUS`** (amber) — material gate spadla. State change false→true. Důvod v textu: `chybí logs`, `buffer planks plný`, `buffer plný` (generator).
+- **`RSUM`** (cyan) — gate uvolněna. State change true→false.
+
+Per-frame produkce 60× by zahltila log — proto **emit jen na state change** (PAUS/RSUM) a **floor crossing** (PROD/DRN). Verb catalog Phase 2 rozšíření: `BUILD`/`DEMO` (editor v Phase C), `HAUL` (PATH transport v Phase B).
 
 ### Nevizuální potomky OBJECTS
 
 - **TIMER** — atributy: `INTERVAL` (počet ticků mezi firem) a `ACTION = { kind, target, attr, value? }`. První skutečná reakce na `TIME.tick` (DD-04 dostal use case). Engine dispatch `ACTIONS[kind]` — aktuálně `toggle` (flip bool) a `set` (nastavit hodnotu). Registrace přes `registerBehavior(instance)` (symetrický sibling `scene.add(createMeshFor(...))` pro vizuální entity). Viz DD-17. *(M8+.)*
 - **COUNTER** — atributy `VALUE` (int, default 0) a `INCREMENT` (int, default 1, může být záporné). Engine při `registerBehavior` dynamicky přidá řádek do HUD elementu `#hud` a v tick handleru mutuje `VALUE += INCREMENT`. Demonstruje **HUD observability** — nevizuální ≠ neviditelný, COUNTER je čitelný vedle `TIME`. `VALUE` je obyčejné datové pole, TIMER.ACTION `set` ho může kdykoli přepsat (např. reset). *(M8+.)*
-- **WORLD** — singleton globálního stavu scény (DD-29, sez. 20). Bez `X/Y/Z` (žije v modelu, ne v prostoru) — demonstruje DD-01 separation. Atribut `WIND_STRENGTH` (float, default `1.0`) — multiplikátor amplitudy `tree_sway` animátoru: `1.0` = aktuální stav, `0` = bezvětří, `2` = bouře. Instance `world` v `src/main.js`, dev exposure přes `window.world` (test v konzoli `world.WIND_STRENGTH = 2`). Žádná `registerBehavior` registrace (žije čistě jako data, žádný tickHandler ani DOM). Další atributy (`SUN_ANGLE`, `CLIMATE`, `SEASON`, `DAY`, `WIND_DIRECTION`) přibudou jen s živým konzumentem (politika DD-29) — viz `IDEAS.md`. *(M8+, sez. 20.)*
+- **WORLD** — singleton globálního stavu scény (DD-29 sez. 20; rozšířeno DD-31 sez. 21). Bez `X/Y/Z` (žije v modelu, ne v prostoru) — demonstruje DD-01 separation. Atributy:
+  - **`WIND_STRENGTH`** (float, default `1.0`) — multiplikátor amplitudy `tree_sway` animátoru. Konzument zmizí po Phase D cleanup (DD-30), pak migrace do `IDEAS.md`.
+  - **`TIME_SCALE`** (float, default `1.0`) — multiplikátor rychlosti `productionTick`. `0` = pauza simulace, `2` = 2× rychleji. Konzument: render loop `productionTick(dt × world.TIME_SCALE)`. *(DD-31 sez. 21.)*
+  - **`RESOURCES`** (objekt `{resource_id: amount}`, default vše 0) — globální agregát napříč `BUFFER` všech FACILITY instancí. Derived (engine `aggregateResources()` recompute každý frame), ne SSoT. Konzument: HUD top bar 6 čítačů. *(DD-31 sez. 21.)*
+  
+  Instance `world` v `src/main.js`, dev exposure přes `window.world`. Žádná `registerBehavior` registrace (žije čistě jako data). Další atributy (`SUN_ANGLE`, `CLIMATE`, `SEASON`, `DAY`, `WIND_DIRECTION`) přibudou jen s živým konzumentem (politika DD-29) — viz `IDEAS.md`. *(M8+, sez. 20+21.)*
 
 ## Čas
 
