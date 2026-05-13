@@ -264,3 +264,40 @@ Archiv splněných úkolů z `docs/TODO.md`. DROP položky (zrušené nápady) j
 ### Sez. 23 → sez. 24 Příště — Přepsáno DD-32 pivotem
 
 Tři neudělané body („Material gate vizualizace", „Druhý zdrojový řetězec", „Merge fáze B → main", „Fáze C plánování") byly **přepsány DD-32 revokem factory toy identity** — `feat/factory` byl mergován do `main` jako uzavřená kapitola (sez. 21–23 v git historii), pak `feat/terrain` start. Tyto úkoly nejsou ani hotové, ani aktivní — jsou v immutable history. Body C plánování (editor MVP) může v budoucnu vrátit jako editor terrainu, ne fasilit.
+
+## Sezení 28 (2026-05-13) — TCUBES atlas performance refactor
+
+`feat/terrain-perf` větev. %THINK z TODO sez. 27 (performance při 30×30).
+
+### Diagnostika (před refactorem)
+
+- [x] **`faceMaterialFor` memoizace** — `_faceMaterialCache` Map keyed na stringifikovaný `val`. Před cache: ~16 000 alokací `MeshStandardMaterial` per 30×30 regen (drahý GC). Po cache: 4 unikáty (`:grass-top` / `:dirt` / `:stone` / `:sand`).
+- [x] **`console.time` v `spawnTerrain`** — 3 fáze: `generateTerrain` / `spawnTerrain.blocks` / `spawnTerrain.water+ramps`. Odhalil ratio (a) generace 5 % / (b) scene mutace 90 % / (c) per-frame render = dominant. **Diagnostika smazána po atlas refactoru** (cleanup před `%END`).
+- [x] **Perf HUD `#perfhud`** — pravý horní roh, throttled 1×/s (`renderer.info.render.calls/triangles` + `info.memory.geometries` + `_faceMaterialCache.size` + FPS rolling avg). **Permanent** (projektová observability pro budoucí refactory).
+- [x] **Three.js verze check** — r160 (z `index.html` import map). `BatchedMesh` přidán r167+, takže ne použitelný bez bumpu. InstancedMesh OK. Pro sez. 28 atlas refactor nezáleží.
+
+### Refactor (atlas pipeline)
+
+- [x] **`getSharedAtlasBoxGeom()`** — lazy singleton sdílený `BoxGeometry` (1 instance pro všechny terrain TCUBES). UVs přepsané: face N získá u ∈ [N/6, (N+1)/6] (1/6-tice atlasu horizontálně). Three.js BoxGeometry face order (+X, −X, +Y, −Y, +Z, −Z) shodný s našim ATLAS_FACE_KEYS.
+- [x] **`getTcubesKindMaterial(kind)`** — per-kind lazy atlas material. Slep 6 facelets do `document.createElement("canvas")` 96×16 px (16 px per dlaždice = shoda s `:named-texture` rozlišením). Každý facelet vytaženo z `NAMED_TEXTURE_FACTORIES[texName]().image`. `NearestFilter` + `SRGBColorSpace` shoda s ostatními pixel-art texturami. Negative cache (`null` pro non-terrain kindy) brání opakovaným pokusům o build.
+- [x] **`createTCubeFor` fast/slow path dispatch** — terrain TCUBES (`instance.NAME` match v `BLOCK_TEXTURES`) → shared geom + atlas material (1 draw call per box). Non-terrain (emoji demo boxy) → původní `material[6]` array (cache materiálů v `faceMaterialFor` stačí).
+- [x] **Hover sez. 16 pattern** ne dotčen — `Array.isArray(orig) ? orig.map(m => m.clone()) : orig.clone()` přepíná pole↔single dispatch automaticky.
+
+### Výsledky (30×30)
+
+| metrika | před | po | změna |
+|---|---|---|---|
+| FPS | 15 | **92** | **6.1×** |
+| draw calls | 25 106 | ~5 050 | 0.20× |
+| triangles | 49 432 | 49 480 | shoda |
+| geometries | ~5 500 | **8** | sdílená box geom |
+| spawnTerrain.blocks ms | 38.6 | 6.5 | 5.9× rychlejší |
+| total regen ms | 43 | 9 | 4.8× rychlejší |
+| `[Violation]` rAF | 50-64 ms | žádné | — |
+
+10×10 baseline ne změněno (175 FPS, pod limitem), 20×20 propad z 32 → 142 FPS. Cíl 30×30 playable splněn.
+
+### Cleanup před `%END`
+
+- [x] **`console.time` + `console.log("[terrain]...")` v `spawnTerrain` smazány** — diagnostika byla sez. 28 dev-only, projekt-level pravidlo (CLAUDE.md) zakazuje debug výpisy v produkčním kódu. Pokud sez. 29 rampy refactor je znovu potřebuje, snadno přidat.
+- [x] **Perf HUD ZACHOVÁN** — projektová observability, ne dev-only feature. Permanent UI v pravém horním rohu.

@@ -373,33 +373,54 @@ const NAMED_TEXTURE_FACTORIES = {
 //    všechny voxely sdílejí stejný `THREE.Texture` instance.
 //  - `string` `#rrggbb` / CSS barva → plocha barva.
 //  - jiný `string` (emoji/text) → canvas s textem.
+// Memoizační cache materiálů (sez. 28 — `feat/terrain-perf`). Před cache
+// vytvářel každý TCUBES/ramp 6× nový `MeshStandardMaterial` — při 30×30 terénu
+// to znamenalo ~16000 alokací per regen (drahé GC + GPU state spam mezi
+// stejně-vypadajícími objekty). Po cache cca ~30 unikátů (4 surfaces × ~6 faces).
+//
+// Klíč: stringifikace `val`. Stejná `val` = stejný materiál = renderer batches
+// dle reference rovnosti = výrazně méně state changes. Hover (sez. 16) klonuje
+// per-mesh (`mat.clone()`), takže sdílený materiál se neporuší — klony jsou
+// nezávislé kopie.
+//
+// `null` má vlastní bucket (`"__null__"`), aby šel rozlišit od stringu `"null"`.
+const _faceMaterialCache = new Map();
+
 function faceMaterialFor(val) {
+  const key = val == null ? "__null__" : (typeof val === "number" ? `0x${val.toString(16)}` : val);
+  const cached = _faceMaterialCache.get(key);
+  if (cached) return cached;
+
+  let mat;
   if (val == null) {
-    return new THREE.MeshStandardMaterial({ map: checkerboardTexture });
-  }
-  if (typeof val === "number") {
-    return new THREE.MeshStandardMaterial({ color: val });
-  }
-  if (typeof val === "string") {
+    mat = new THREE.MeshStandardMaterial({ map: checkerboardTexture });
+  } else if (typeof val === "number") {
+    mat = new THREE.MeshStandardMaterial({ color: val });
+  } else if (typeof val === "string") {
     // Prefix `:` značí pojmenovanou sdílenou texturu (Minecraft-style).
     if (val.startsWith(":")) {
       const factory = NAMED_TEXTURE_FACTORIES[val];
       if (factory) {
-        return new THREE.MeshStandardMaterial({ map: factory() });
+        mat = new THREE.MeshStandardMaterial({ map: factory() });
+      } else {
+        console.warn(`Neznámá pojmenovaná textura: "${val}"`);
+        mat = new THREE.MeshStandardMaterial({ map: checkerboardTexture });
       }
-      console.warn(`Neznámá pojmenovaná textura: "${val}"`);
-      return new THREE.MeshStandardMaterial({ map: checkerboardTexture });
+    } else if (/^#[0-9a-f]{3,8}$/i.test(val)) {
+      // `#rrggbb` → Three.js Color parse (stejné jako number). Test přes regex,
+      // aby např. `"red"` prošlo stejnou cestou (pojmenované CSS barvy).
+      mat = new THREE.MeshStandardMaterial({ color: val });
+    } else {
+      // Jinak canvas s textem / emoji
+      mat = new THREE.MeshStandardMaterial({ map: makeEmojiTexture(val) });
     }
-    // `#rrggbb` → Three.js Color parse (stejné jako number). Test přes regex,
-    // aby např. `"red"` prošlo stejnou cestou (pojmenované CSS barvy).
-    if (/^#[0-9a-f]{3,8}$/i.test(val)) {
-      return new THREE.MeshStandardMaterial({ color: val });
-    }
-    // Jinak canvas s textem / emoji
-    return new THREE.MeshStandardMaterial({ map: makeEmojiTexture(val) });
+  } else {
+    // Neznámý typ → fallback (defensive; model by neměl dodat nic jiného)
+    mat = new THREE.MeshStandardMaterial({ map: checkerboardTexture });
   }
-  // Neznámý typ → fallback (defensive; model by neměl dodat nic jiného)
-  return new THREE.MeshStandardMaterial({ map: checkerboardTexture });
+
+  _faceMaterialCache.set(key, mat);
+  return mat;
 }
 
 // === Animátory: reakce objektů na TIME ===
@@ -994,6 +1015,27 @@ function snapToGrid(mesh, instance) {
 // atributu vrátí barvený nebo textúrovaný materiál, případně fallback
 // šachovnici (DD-07).
 function createTCubeFor(instance) {
+  // === Fast path (sez. 28 atlas, `feat/terrain-perf`) ===
+  // Pokud `instance.NAME` je známý terrain kind (`BLOCK_TEXTURES[kind]`
+  // existuje), použij **shared BoxGeometry + per-kind atlas material** —
+  // místo 6× material array = 6 draw calls per box jedeme 1× draw call.
+  // Při 30×30 terrainu (~4000 TCUBES) redukuje calls z ~25k na ~4k =
+  // přes 60 FPS místo 15 FPS.
+  //
+  // Atlas = 6 facelets (E,W,T,B,S,N) slepené horizontálně do 1 CanvasTexture
+  // 96×16 px (16 px per face); BoxGeometry UVs přepsané na 1/6-tice viz
+  // `makeAtlasBoxGeometry`. Visualní parita s array verzí beze změny.
+  const atlasMat = getTcubesKindMaterial(instance.NAME);
+  if (atlasMat) {
+    const mesh = new THREE.Mesh(getSharedAtlasBoxGeom(), atlasMat);
+    snapToGrid(mesh, instance);
+    return mesh;
+  }
+
+  // === Slow path ===
+  // Non-terrain TCUBES (např. emoji demo boxy v sez. 4 testu) — nemají
+  // matching kind, per-face material array zůstává. Cache v `faceMaterialFor`
+  // sdílí materials napříč instancemi.
   const materials = [
     faceMaterialFor(instance.TEXTURE_EAST),    // +X
     faceMaterialFor(instance.TEXTURE_WEST),    // −X
@@ -1871,6 +1913,79 @@ const BLOCK_TEXTURES = {
   sand:  { TOP: ":sand",      BOTTOM: ":sand", NORTH: ":sand",  SOUTH: ":sand",  EAST: ":sand",  WEST: ":sand"  },
 };
 
+// === TCUBES atlas pipeline (sez. 28, `feat/terrain-perf`) ===========
+// Místo `mesh.material = [m0..m5]` pole (= 6 draw calls per box) generujeme
+// atlas: 6 facelets (East/West/Top/Bottom/South/North) slepené horizontálně
+// do 1 CanvasTexture 96×16 px; sdílená BoxGeometry s UVs přepsanými na
+// 1/6-tice atlasu; 1 MeshStandardMaterial per kind. → 1 draw call per box.
+//
+// Pořadí dlaždic v atlas matchuje Three.js BoxGeometry face order
+// (+X, −X, +Y, −Y, +Z, −Z) — žádné UV transformace per-face navíc.
+const ATLAS_TILE_PX  = 16;                                       // 1 dlaždice = 16×16 px (shoda s :named-texture)
+const ATLAS_FACE_KEYS = ["EAST", "WEST", "TOP", "BOTTOM", "SOUTH", "NORTH"];
+
+// Lazy singleton — sdílená geometrie pro všechny atlas TCUBES (všechny kindy
+// mají stejný UV layout, jen jinou texturu).
+let _sharedAtlasBoxGeom = null;
+function getSharedAtlasBoxGeom() {
+  if (_sharedAtlasBoxGeom) return _sharedAtlasBoxGeom;
+  const geom = new THREE.BoxGeometry(1, 1, 1);
+  // BoxGeometry default UVs per face: TL=(0,1) TR=(1,1) BL=(0,0) BR=(1,0).
+  // Přepíšeme každou face na 1/6-tici v X: face N gets u ∈ [N/6, (N+1)/6].
+  const uv = geom.attributes.uv;
+  for (let face = 0; face < 6; face++) {
+    const u0 = face / 6;
+    const u1 = (face + 1) / 6;
+    const base = face * 4;
+    uv.setXY(base + 0, u0, 1);  // TL
+    uv.setXY(base + 1, u1, 1);  // TR
+    uv.setXY(base + 2, u0, 0);  // BL
+    uv.setXY(base + 3, u1, 0);  // BR
+  }
+  uv.needsUpdate = true;
+  _sharedAtlasBoxGeom = geom;
+  return geom;
+}
+
+// Per-kind atlas material cache. Klíč = kind ("grass"/"dirt"/"stone"/"sand"),
+// hodnota = MeshStandardMaterial s 96×16 atlas texturou. Build je idempotentní.
+const _tcubesAtlasMatCache = new Map();
+function getTcubesKindMaterial(kind) {
+  let cached = _tcubesAtlasMatCache.get(kind);
+  if (cached !== undefined) return cached;  // může být i `null` cached miss
+  const faces = BLOCK_TEXTURES[kind];
+  if (!faces) {
+    _tcubesAtlasMatCache.set(kind, null);   // negative cache — non-terrain kindy
+    return null;
+  }
+  // Slep 6 facelet do jednoho canvasu 96×16. Každý facelet vytaha z
+  // odpovídající `:named-texture` factory (cache textur uvnitř naší
+  // memoizace `_faceMaterialCache` zde nepomáhá — pracujeme přímo s canvas
+  // image, ne přes MeshStandardMaterial wrapper).
+  const canvas = document.createElement("canvas");
+  canvas.width  = ATLAS_TILE_PX * 6;
+  canvas.height = ATLAS_TILE_PX;
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;  // pixel-art look (žádný blur)
+  for (let i = 0; i < 6; i++) {
+    const texName = faces[ATLAS_FACE_KEYS[i]];
+    if (typeof texName !== "string" || !texName.startsWith(":")) continue;
+    const factory = NAMED_TEXTURE_FACTORIES[texName];
+    if (!factory) continue;
+    const subTex = factory();              // THREE.CanvasTexture (s `.image` = source canvas)
+    if (subTex?.image) {
+      ctx.drawImage(subTex.image, i * ATLAS_TILE_PX, 0, ATLAS_TILE_PX, ATLAS_TILE_PX);
+    }
+  }
+  const atlasTex = new THREE.CanvasTexture(canvas);
+  atlasTex.magFilter = THREE.NearestFilter;
+  atlasTex.minFilter = THREE.NearestFilter;
+  atlasTex.colorSpace = THREE.SRGBColorSpace;  // shoda s :named-texture barvami
+  const mat = new THREE.MeshStandardMaterial({ map: atlasTex });
+  _tcubesAtlasMatCache.set(kind, mat);
+  return mat;
+}
+
 function createBlock(kind, x, y, z) {
   const tex = BLOCK_TEXTURES[kind] ?? BLOCK_TEXTURES.dirt;
   return new TCUBES(
@@ -2296,6 +2411,22 @@ setInterval(() => {
 // Prohlížeč to obvykle dělá 60× za vteřinu, a synchronizuje to s refresh
 // rate monitoru. Uvnitř aktualizujeme controls a překreslíme scénu.
 let _lastFrameTime = performance.now() / 1000;
+
+// === Perf HUD throttle (sez. 28) ===
+// Čteme `renderer.info` po každém render() a 1× za sekundu propisujeme do DOM.
+// FPS = počet snímků mezi reporty / dobu mezi reporty (rolling, ne instant).
+const _perfHud = {
+  frameCount:  0,
+  lastReport:  performance.now() / 1000,
+  el: {
+    fps:   document.getElementById("ph-fps"),
+    calls: document.getElementById("ph-calls"),
+    tri:   document.getElementById("ph-tri"),
+    geom:  document.getElementById("ph-geom"),
+    mat:   document.getElementById("ph-mat"),
+  },
+};
+
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
@@ -2313,5 +2444,21 @@ function animate() {
   updateBubbleTails();
   updateKeyboardCamera(dt);
   renderer.render(scene, camera);
+
+  // Perf HUD report 1×/s — `renderer.info.render.*` reflektuje *poslední*
+  // render() (právě výš), takže čteme po něm. `info.memory.*` jsou kumulativní
+  // counts napříč scénou (geometries+textures alive). `mat` = velikost
+  // sdílené cache `_faceMaterialCache` (Three.js nemá native material count).
+  _perfHud.frameCount++;
+  if (now - _perfHud.lastReport >= 1.0) {
+    const fps = _perfHud.frameCount / (now - _perfHud.lastReport);
+    _perfHud.el.fps.textContent   = fps.toFixed(0);
+    _perfHud.el.calls.textContent = renderer.info.render.calls;
+    _perfHud.el.tri.textContent   = renderer.info.render.triangles.toLocaleString("cs-CZ");
+    _perfHud.el.geom.textContent  = renderer.info.memory.geometries;
+    _perfHud.el.mat.textContent   = _faceMaterialCache.size;
+    _perfHud.frameCount = 0;
+    _perfHud.lastReport = now;
+  }
 }
 animate();

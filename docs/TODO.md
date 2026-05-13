@@ -32,7 +32,8 @@
 
 ### Otevřené body / kandidáti DD
 
-- [!] **Performance při 30×30** — pomalé vykreslování po regeneraci. Sez. 26 user feedback. Možné cesty: instancing per TCUBES kind, mesh merge per cell, BatchedMesh (Three.js r172+), web worker pro generateTerrain. *(sez. 27 priorita)*
+- [ ] **Rampy atlas refactor** (TRRAMPS / TTRAMPS / TDRAMP / TTUNELS) — sez. 28 atlas pattern pro TCUBES dodal 6× redukci draw calls. Rampy mají per-instance `material[N]` array (5/4/5/4 faces) = ~1 200 calls @ 30×30 (24 % celkem). Atlas pro rampy by ušetřil ~17 % incremental. 4× repeat patternu (per-(type, surface) atlas, ~9 unique combos, shared geom s UV remap na 1/N-tice). *(Sez. 29 follow-up, diminishing return ale stejně přímočaré.)*
+- [ ] **Vizuální parita TCUBES atlas** — sez. 28 pre-flight check. User nepotvrdil explicitně, že grass/dirt/stone/sand bloky vypadají identicky po refactoru. Sez. 29 by ověřit screenshotem před dalšími changes.
 - [ ] **`LIQUID` třída** (DD-25 vrstva 4) pro vodní plane(y) — momentálně mimo OOP model (DD-33 kandidát).
 - [ ] **Klastrování spojitých water cells** do bounding boxů (flood-fill, jeden plane na celé jezero) místo 1×1 per cell.
 - [ ] **Roadmap relief 9..10**: valley carving / ridge noise algoritmus (heavily dissected / alpine plně).
@@ -51,9 +52,9 @@
 
 - [!] **PROMPTS.md `%END` aktualizovat o topic-branch workflow** — současný text *„Commit na větev `main`"* je zastaralý od sez. 21 (DD-30 zavedl `feat/factory`, dále `feat/terrain`). Doplnit explicitní krok: rozhodnutí merge teď vs. pokračovat na topic branch + návrh `git merge --no-ff`. Censure ze sez. 27.
 
-## Audit cadence (po sez. 27)
+## Audit cadence (po sez. 28)
 
-- **`%AUDIT:CODE`** — 9/8 sezení od sez. 18 (**práh překročen o 1**, sez. 28 priorita po performance refactoru).
-- **`%AUDIT:DOCS`** — 11/10 sezení od sez. 16 (**práh překročen o 1**, sez. 28).
-- **IDEAS/TODO pruning** — 8/12.
+- **`%AUDIT:CODE`** — 10/8 sezení od sez. 18 (**práh překročen o 2**, sez. 29 priorita — `feat/terrain-perf` přepsal `createTCubeFor` + přidal atlas pipeline, audit by zachytil případné dluhy).
+- **`%AUDIT:DOCS`** — 12/10 sezení od sez. 16 (**práh překročen o 2**, sez. 29).
+- **IDEAS/TODO pruning** — 9/12.
 - **`%CALIBRATE`** — sub-prah „CLAUDE.md +50 %" resetnut sez. 23 slimem.

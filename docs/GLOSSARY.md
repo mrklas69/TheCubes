@@ -137,6 +137,10 @@ Voxely **CCUBES** (flat color) a **TCUBES** (per-face textury) jsou speciální 
 **Pro:** parametrizovatelné (atributy → vzhled), dynamické (animátor přístup k parts), izomorfní s DD-11 (model je data, engine staví mesh).
 **Proti:** tedious to author — každý nový tvar = ~30–100 řádků kódu.
 
+#### TCUBES atlas (sez. 28 perf refactor)
+
+Terrain TCUBES (kind ∈ grass/dirt/stone/sand z `BLOCK_TEXTURES`) používají **shared `BoxGeometry` + per-kind atlas material** místo `material[6]` pole. Atlas = 6 facelets slepené horizontálně do CanvasTexture 96×16 px (16 px per dlaždice, shoda s `:named-texture` rozlišením); BoxGeometry UVs přepsané na 1/6-tice (face N → u ∈ [N/6, (N+1)/6]); 1 `MeshStandardMaterial` per kind místo 6 per blok. **Důsledek:** 1 draw call per box místo 6 → 30×30 terrain z 25k calls @ 15 FPS na ~5k calls @ 92 FPS. Non-terrain TCUBES (emoji demo boxy) padají na slow path s původním `material[6]` array (cache materiálů v `faceMaterialFor` šetří GPU state changes mezi calls). Hover sez. 16 pattern (`Array.isArray(orig) ? orig.map(...) : orig.clone()`) přepíná pole↔single dispatch automaticky.
+
 ### 2. Procedurální canvas textury (`:named-texture`)
 
 JS-generované pixel-art textury 16×16 px. Sdílené přes `NAMED_TEXTURE_FACTORIES` lookup v `faceMaterialFor` dispatchu (DD-14 prefix `:`). Aktuální:
@@ -258,6 +262,7 @@ VOXEL_MODELy s **jednolitým povrchem** se rozdělují na ortogonální dimenze:
 ## UI
 
 - **HUD** (head-up display) — překryvný panel v levém horním rohu pro globální stavy (`TIME` + dynamické řádky pro COUNTER instance).
+- **Perf HUD** *(sez. 28)* — diagnostický overlay v pravém horním rohu, throttled report 1×/s: **FPS** (rolling avg přes vteřinu), **calls** (`renderer.info.render.calls` per frame), **tri** (`renderer.info.render.triangles`), **geom** (`renderer.info.memory.geometries`), **mat** (velikost `_faceMaterialCache` Map = počet unikátních sdílených materiálů). Permanent UI, ne dev-only — observability pro budoucí perf refactory (např. sez. 29 rampy atlas).
 - **Infotip** — hover panel zobrazený po najetí myší na 3D reprezentaci instance. Obsah: název třídy + všechny vlastní atributy instance. Generický přes `Object.entries` — funguje pro libovolnou třídu dědící z OBJECTS. Viz DD-08.
 - **Hover highlight** — žluté světélkování celého objektu pod kurzorem (sez. 16). Emissive boost na materiálu (`mat.emissive = 0x404020`). Lazy clone-on-first-hover — při prvním hoveru engine klonuje materials per mesh, originály v `userData.hoverOrigMat`, klony s yellow emissive v `userData.hoverHotMat`. Při on/off přepneme `child.material` mezi originálem a klonem. Sdílené materials (TREE `_treeMatCache`) zůstávají nedotčené — sourozenci se nezvýrazní. Nahrazuje dřívější edge highlight (žluté hrany).
 - **Šachovnicová textura** — vizuální idiom „vizuál není definován" (jako průhledné pozadí v PS/GIMP). Default vizualizace instance mateřské třídy `CUBES`. Potomci override. Viz DD-07.
