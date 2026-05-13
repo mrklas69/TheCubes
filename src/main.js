@@ -12,7 +12,7 @@ import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, TTUNELS, SPRITES, COMPOSITES, LAMP, PATH, TIMER, COUNTER, WORLD } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
-import { generateTerrain, maxReliefForSize, BIOME_NAMES } from "./terrain.js";
+import { generateTerrain, maxReliefForSize, BIOME_NAMES, BIOME_SURFACES, surfacesForBiome } from "./terrain.js";
 
 // === Renderer ===
 // WebGLRenderer = Three.js komponenta, která překládá scénu na GPU volání.
@@ -2337,12 +2337,14 @@ function createRampDiagonal(r) {
   );
 }
 
-// Default parametry generátoru — UI panel `#terrainctrl` je přepíše (fáze 3).
+// Default parametry generátoru — UI panel `#terrainctrl` je přepíše.
+// G3 (sez. 36, DD-44): `surfaces` driver-derived z `world.LATITUDE/HUMIDITY`
+// (helper `surfacesForBiome` z terrain.js). TERRAIN_DEFAULTS proto `surfaces`
+// nemá — `buildScene`/`regenerateScene` ho dohnají per call.
 const TERRAIN_DEFAULTS = {
-  size:     [10, 10],
-  relief:   3,                                                     // Rolling hills (anglický venkov)
-  surfaces: { grass: 0.80, stone: 0.10, sand: 0.05, water: 0.05 }, // čtyři biomy
-  seed:     42,
+  size:   [10, 10],
+  relief: 3,         // Rolling hills (anglický venkov)
+  seed:   42,
 };
 
 // Spawne terrain z parametrů do scény. Sez. 31 InstancedMesh refactor:
@@ -2492,9 +2494,20 @@ window.regenerateScene = regenerateScene;
 window.maxReliefForSize = maxReliefForSize;
 // G2 (sez. 35) — biome matice 4×3 pro UI Climate sekci (display readout).
 window.BIOME_NAMES = BIOME_NAMES;
+// G3 (sez. 36, DD-44) — surface mix driver (12 buněk × 4 koef.) + helper
+// pro UI controller (HTML inline IIFE volá při sestavování `readParams`).
+window.BIOME_SURFACES = BIOME_SURFACES;
+window.surfacesForBiome = surfacesForBiome;
 
 function buildScene(scene) {
-  spawnTerrain(TERRAIN_DEFAULTS);
+  // G3 (sez. 36) — surfaces driver-derived z WORLD climate atributů. UI
+  // Climate slidery mutují `world.LATITUDE/HUMIDITY` (přes `window.settings`)
+  // a regen-trigger volá `regenerateScene(readParams())` z HTML controlleru,
+  // který surface mix dohnají identicky z aktuálního WORLD stavu.
+  spawnTerrain({
+    ...TERRAIN_DEFAULTS,
+    surfaces: surfacesForBiome(world.LATITUDE, world.HUMIDITY),
+  });
 }
 
 buildScene(scene);

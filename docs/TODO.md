@@ -22,7 +22,7 @@
 - [x] **G0 Lowpoly vertex-color pipeline** *(sez. 34, DD-41 supersede DD-36 atlas)* — atlas textury → vertex colors per face na sdíleném `MeshLambertMaterial({ vertexColors: true })`. G0a TCUBES + G0b rampy + cleanup atlas builders. Viz DONE.md + DD-41.
 - [x] **G1 Volba max Y** *(sez. 35, žádný DD)* — `maxReliefForSize(sx,sz)` export z `terrain.js`, `relief.max` clamp dynamicky dle MIN(sx,sz). KISS quick win. 10×10 → 0..3 (Rolling), 30×30 → 0..5 (Uneven), 60+ → 0..10 (Alpine). Viz DONE.md.
 - [x] **G2 Severní šířka / podnební pásmo** *(sez. 35, DD-42 + DD-43)* — `world.LATITUDE` (4 enum) + `world.HUMIDITY` (3 enum) atributy, `SUN_TILT_BY_LATITUDE` lookup nahrazuje DD-38 fixed `SUN_TILT`, `BIOME_NAMES` 4×3 tabulka, UI Climate sekce v `#terrainctrl`. MVP konzument: sun tilt + UI biome readout. Pre-G2 fix: DD-43 DAY mapping 0.5=poledne. Viz DONE.md + DD-42 + DD-43.
-- [ ] **G3 SURFACES driver-derived per biome** — biome map z `generateTerrain` (Tundra → snow+stone, Sahara → sand+stone, Tropický deštný prales → grass+water, ...). Refactor `surfaces: { grass, stone, sand, water }` z UI prop na driver-derived per `BIOME_SURFACES[LATITUDE][HUMIDITY]` lookup. Polar/wet fallback rozhodnutí (Tundra default vs. validation error). UI: skrýt 4 surface slidery v Climate-driven módu, případně toggle "Manual surfaces".
+- [x] **G3 SURFACES driver-derived per biome** *(sez. 36, DD-44)* — `BIOME_SURFACES` 4×3 lookup v `terrain.js` (12 buněk × 4 koef.), `surfacesForBiome(lat, hum)` helper. Hard override v UI: surface slidery smazány, Climate slidery `change` triggerují regen. `polar.wet` = alias `polar.mid` + rename `BIOME_NAMES.polar.wet` na "Polární tundra". Viz DONE.md + DD-44.
 
 ### Otevřené body / kandidáti DD
 
@@ -46,14 +46,18 @@
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — 6/8 sezení od sez. 29. Další doporučený sez. 37+.
-- **`%AUDIT:DOCS`** — 6/10 sezení od sez. 29. Další doporučený sez. 39+.
-- **IDEAS/TODO pruning** — 2/12 (sez. 35: close G1+G2, add 2 G2 sub-prah follow-up).
+- **`%AUDIT:CODE`** — 7/8 sezení od sez. 29. Další doporučený sez. 37 *(prah dosažen)*.
+- **`%AUDIT:DOCS`** — 7/10 sezení od sez. 29. Další doporučený sez. 39+.
+- **IDEAS/TODO pruning** — 3/12 (sez. 36: close G3, close polar/wet sub-prah, add snow surface G4 sub-prah).
 - **`%CALIBRATE`** — sub-prah „CLAUDE.md +50 %" stále resetnut.
+
+## Sub-prah (G3 follow-up, sez. 36)
+
+- [ ] **Snow surface (G4 kandidát)** — dnes `polar.*` v `BIOME_SURFACES` používá `sand` jako proxy pro sníh. Vizuálně to vypadá jako poušť, ne sníh. G4: přidat `snow` surface kind do `SURFACE_Y_OFFSET` v terrain.js + atlas paleta (klon `grass-top` s bílou). Migrate `polar.*` z `sand` na `snow`. Drobný DD scope.
 
 ## Sub-prah (G2 follow-up, sez. 35)
 
-- [ ] **Polar/wet biome fallback** — dnes `BIOME_NAMES.polar.wet = "—"`, UI zobrazí prázdné. Rozhodnutí v G3: Tundra fallback (geograficky nejbližší) vs. validation error (force user volbu). Závislé na G3 surface mix design.
+- [x] **Polar/wet biome fallback** *(sez. 36, DD-44 alias polar.mid)* — `BIOME_SURFACES.polar.wet` = alias `polar.mid` + `BIOME_NAMES.polar.wet` rename na "Polární tundra". Transparent fallback (Arktická tundra geografi nejbližší). Viz DONE.md.
 - [ ] **`SUN_TILT_BY_LATITUDE.tropical` tweak** — dnes 0° = sun přímo overhead = žádné stíny v poledne, objekty ploché (degenerate shadow plane). Kandidát `π/24` (~7.5°) zachová stínovou viditelnost. Wait pro user feedback (ne každý uvidí jako problém).
 
 ## Sub-prah (G0 follow-up)

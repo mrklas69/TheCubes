@@ -247,29 +247,10 @@
       </div>
     </div>
 
-    <div class="tc-section">
-      <div class="tc-label">Surfaces (auto-normalize)</div>
-      <div class="tc-row">
-        <span class="tc-key">grass</span>
-        <input type="range" id="tc-surf-grass" min="0" max="1" step="0.01" value="0.80" data-surf="grass">
-        <span class="tc-val" id="tc-surf-grass-val">0.80</span>
-      </div>
-      <div class="tc-row">
-        <span class="tc-key">stone</span>
-        <input type="range" id="tc-surf-stone" min="0" max="1" step="0.01" value="0.10" data-surf="stone">
-        <span class="tc-val" id="tc-surf-stone-val">0.10</span>
-      </div>
-      <div class="tc-row">
-        <span class="tc-key">sand</span>
-        <input type="range" id="tc-surf-sand" min="0" max="1" step="0.01" value="0.05" data-surf="sand">
-        <span class="tc-val" id="tc-surf-sand-val">0.05</span>
-      </div>
-      <div class="tc-row">
-        <span class="tc-key">water</span>
-        <input type="range" id="tc-surf-water" min="0" max="1" step="0.01" value="0.05" data-surf="water">
-        <span class="tc-val" id="tc-surf-water-val">0.05</span>
-      </div>
-    </div>
+    <!-- Surfaces sekce: smazána v G3 (sez. 36, DD-44). Surface mix je
+         driver-derived z Climate (LATITUDE × HUMIDITY) — viz BIOME_SURFACES
+         v `src/terrain.js`. Debug surface mix přes konzoli:
+         `window.regenerateScene({ ...defaults, surfaces: {...} })`. -->
 
     <div class="tc-section">
       <div class="tc-label">Seed</div>
@@ -280,9 +261,12 @@
       </div>
     </div>
 
-    <!-- Climate sekce (G2, sez. 35) — WORLD atributy LATITUDE × HUMIDITY (4×3
-         biome matice). MVP konzument: sun tilt fce LATITUDE (per-frame v
-         updateSun()) + biome name readout (display-only). G3: surface mix driver. -->
+    <!-- Climate sekce (G2 sez. 35 + G3 sez. 36 DD-44) — WORLD atributy
+         LATITUDE × HUMIDITY (4×3 biome matice). Konzumenti:
+           — sun tilt fce LATITUDE (per-frame v updateSun()) ;
+           — biome name readout (display, BIOME_NAMES) ;
+           — surface mix driver (G3, BIOME_SURFACES → generateTerrain).
+         `change` event Climate slideru trigger regen scény. -->
     <div class="tc-section">
       <div class="tc-label">Climate</div>
       <div class="tc-row climate-row">
@@ -325,7 +309,8 @@
 
   <!-- Terrain panel controller — wire `#terrainctrl` slidery na
        `window.regenerateScene` (exposed v main.js). `input` event = live
-       readout + surface auto-normalize; `change` event = regen scény.
+       readout; `change` event = regen scény. Surfaces jsou driver-derived
+       z Climate (G3, DD-44) — žádný surface slider.
        Inline script po main.js (defer module): v okamžiku spuštění je
        `window.regenerateScene` definovaný. -->
   <script>
@@ -334,67 +319,39 @@
         "Flat", "Level", "Gently undulating", "Rolling", "Hilly",
         "Uneven", "Rugged", "Craggy", "Mountainous", "Heavily dissected", "Alpine",
       ];
-      const SURFACE_KINDS = ["grass", "stone", "sand", "water"];
+
+      // Climate enum + display jména. Sloučeno z dřívější Climate sekce IIFE
+      // (G3, sez. 36) protože `readParams()` níž potřebuje LATITUDE_KEYS /
+      // HUMIDITY_KEYS pro `surfacesForBiome` lookup.
+      const LATITUDE_KEYS  = ["tropical", "subtropical", "temperate", "polar"];
+      const LATITUDE_NAMES = ["Tropický", "Subtropický", "Mírný", "Polární"];
+      const HUMIDITY_KEYS  = ["wet", "mid", "dry"];
+      const HUMIDITY_NAMES = ["Vlhko", "Středně", "Sucho"];
 
       const $ = (id) => document.getElementById(id);
       const sizeX  = $("tc-size-x"),  sizeXVal  = $("tc-size-x-val");
       const sizeZ  = $("tc-size-z"),  sizeZVal  = $("tc-size-z-val");
       const relief = $("tc-relief"),  reliefVal = $("tc-relief-val");
       const seed   = $("tc-seed");
-      const surfInputs = Object.fromEntries(
-        SURFACE_KINDS.map((k) => [k, $(`tc-surf-${k}`)]),
-      );
-      const surfVals = Object.fromEntries(
-        SURFACE_KINDS.map((k) => [k, $(`tc-surf-${k}-val`)]),
-      );
+      const lat      = $("tc-latitude"), latVal   = $("tc-latitude-val");
+      const hum      = $("tc-humidity"), humVal   = $("tc-humidity-val");
+      const biomeVal = $("tc-biome-val");
 
       // Sestaví aktuální parametry z UI stavu. Volaný z `change` handleru.
-      // Sez. 35 fix: divide-by-sum normalize finální surfaces — eliminuje rounding
-      // drift z `toFixed(2)` v `normalizeSurfaces()` (worst case ±0.02 po sekvenci
-      // multi-slider pohybů). Generátor má tolerance jen ±0.001 → drift = throw =
-      // tichá failure regen. Sum-based divide garantuje sum=1.0 přesně.
+      // G3 (sez. 36, DD-44): `surfaces` je driver-derived z aktuálních
+      // Climate sliderů přes `window.surfacesForBiome(lat, hum)` (lookup do
+      // `BIOME_SURFACES` v terrain.js, fallback temperate.mid při neznámu).
       function readParams() {
-        const surfaces = {};
-        SURFACE_KINDS.forEach((k) => { surfaces[k] = parseFloat(surfInputs[k].value); });
-        const sum = Object.values(surfaces).reduce((a, b) => a + b, 0);
-        if (sum > 0) {
-          SURFACE_KINDS.forEach((k) => { surfaces[k] /= sum; });
-        }
+        const latKey = LATITUDE_KEYS[parseInt(lat.value, 10)];
+        const humKey = HUMIDITY_KEYS[parseInt(hum.value, 10)];
+        const surfaces = window.surfacesForBiome?.(latKey, humKey)
+                      ?? { grass: 0.65, stone: 0.20, sand: 0.05, water: 0.10 };  // fallback = temperate.mid
         return {
           size:     [parseInt(sizeX.value, 10), parseInt(sizeZ.value, 10)],
           relief:   parseInt(relief.value, 10),
           surfaces,
           seed:     parseInt(seed.value, 10),
         };
-      }
-
-      // Re-normalizace surface sliderů na sum = 1.0 po pohybu jednoho slideru.
-      // Strategie: scale ostatních proporčně, aby drželi původní vzájemné poměry.
-      // Edge case 1: změněný = 1.0 → ostatní vyfouknou na 0. Edge case 2: ostatní
-      // mají sum = 0 (vše 0) → rozděl `remaining` rovnoměrně.
-      function normalizeSurfaces(changedKind) {
-        const changedVal = parseFloat(surfInputs[changedKind].value);
-        const otherKinds = SURFACE_KINDS.filter((k) => k !== changedKind);
-        const otherSum   = otherKinds.reduce(
-          (s, k) => s + parseFloat(surfInputs[k].value), 0,
-        );
-        const remaining  = Math.max(0, 1 - changedVal);
-
-        if (otherSum < 0.0001) {
-          // Všechny ostatní jsou 0 — rozděl remaining rovnoměrně.
-          const share = remaining / otherKinds.length;
-          otherKinds.forEach((k) => { surfInputs[k].value = share.toFixed(2); });
-        } else {
-          const scale = remaining / otherSum;
-          otherKinds.forEach((k) => {
-            const newVal = parseFloat(surfInputs[k].value) * scale;
-            surfInputs[k].value = newVal.toFixed(2);
-          });
-        }
-        // Update readouts u ostatních (změněného aktualizuje vlastní `input` handler).
-        otherKinds.forEach((k) => {
-          surfVals[k].textContent = parseFloat(surfInputs[k].value).toFixed(2);
-        });
       }
 
       // G1 (sez. 35) — dynamický clamp `#tc-relief` slider `max` dle MIN(sx, sz).
@@ -415,7 +372,7 @@
         }
       }
 
-      // `input` (live při dragu) — jen readout + auto-normalize. NEspouští regen.
+      // `input` (live při dragu) — jen readout. NEspouští regen.
       sizeX.addEventListener("input",  () => { sizeXVal.textContent  = sizeX.value; updateReliefSliderMax(); });
       sizeZ.addEventListener("input",  () => { sizeZVal.textContent  = sizeZ.value; updateReliefSliderMax(); });
       relief.addEventListener("input", () => {
@@ -424,40 +381,25 @@
         // native tooltip při hover na slider. Sync per `input` event.
         relief.title = RELIEF_NAMES[parseInt(relief.value, 10)];
       });
-      SURFACE_KINDS.forEach((k) => {
-        surfInputs[k].addEventListener("input", () => {
-          surfVals[k].textContent = parseFloat(surfInputs[k].value).toFixed(2);
-          normalizeSurfaces(k);
-        });
-      });
 
       // `change` (po dotažení slideru / blur na number) — spustí regen.
-      // Programmatic update value (`surfInputs[k].value = ...`) `change` event
-      // NEemituje — auto-normalize je tedy bezpečný před cyklem (žádný feedback loop).
       const onChange = () => {
         if (typeof window.regenerateScene === "function") {
           window.regenerateScene(readParams());
         }
       };
       [sizeX, sizeZ, relief, seed].forEach((el) => el.addEventListener("change", onChange));
-      SURFACE_KINDS.forEach((k) => surfInputs[k].addEventListener("change", onChange));
 
       // Init — sync `relief.max` s defaultním size 10×10 (= relief 0..3).
       // `defer` na `<script type="module">` (main.js) garantuje, že
       // `window.maxReliefForSize` je v okamžiku tohoto IIFE běhu definován.
       updateReliefSliderMax();
 
-      // === Climate (G2, sez. 35) — LATITUDE × HUMIDITY slidery + biome readout. ===
-      // Ne-regenerace pattern: changes mutují jen `world.LATITUDE`/`world.HUMIDITY`
-      // přes `window.settings`. Sun tilt změny jsou viditelné per-frame v updateSun()
-      // (žádný terrain rebuild). G3 přidá `change` event regen pro surface mix.
-      const LATITUDE_KEYS  = ["tropical", "subtropical", "temperate", "polar"];
-      const LATITUDE_NAMES = ["Tropický", "Subtropický", "Mírný", "Polární"];
-      const HUMIDITY_KEYS  = ["wet", "mid", "dry"];
-      const HUMIDITY_NAMES = ["Vlhko", "Středně", "Sucho"];
-      const lat      = $("tc-latitude"), latVal   = $("tc-latitude-val");
-      const hum      = $("tc-humidity"), humVal   = $("tc-humidity-val");
-      const biomeVal = $("tc-biome-val");
+      // === Climate (G2 sez. 35 + G3 sez. 36 DD-44) ===
+      // `input` event mutuje WORLD atributy (per-frame sun tilt + biome readout).
+      // `change` event triggeruje regen (driver-derived surface mix).
+      // Konstanty (LATITUDE_KEYS/NAMES, HUMIDITY_KEYS/NAMES) + DOM refs deklarované
+      // nahoře v IIFE — readParams() je potřebuje pro `surfacesForBiome` lookup.
 
       // Biome name readout = derivovaný z aktuální LATITUDE × HUMIDITY combo.
       // BIOME_NAMES tabulka v `src/terrain.js`, exposed jako `window.BIOME_NAMES`.
@@ -479,6 +421,11 @@
         window.settings.setHumidity(HUMIDITY_KEYS[idx]);
         updateBiomeReadout();
       });
+
+      // G3 (sez. 36) — regen na `change` (po dotažení slideru). Surface mix
+      // se přepočítá z aktuálního Climate stavu (BIOME_SURFACES lookup).
+      lat.addEventListener("change", onChange);
+      hum.addEventListener("change", onChange);
 
       // Init readout (default LATITUDE=temperate idx 2, HUMIDITY=mid idx 1 →
       // biome = "Step / Prérie"). Sync HTML default `value` s WORLD constructor.

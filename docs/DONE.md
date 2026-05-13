@@ -574,3 +574,21 @@ TEST 1 OK (G1 — relief slider clamp na různých size). TEST 2 OK (DD-43 DAY 0
 ### Diff celkem
 
 `src/terrain.js` +33/0 ř. (G1 `maxReliefForSize` + G2 `BIOME_NAMES`), `src/main.js` ~+55/−23 ř. (G1 import+expose + G2 SUN_TILT_BY_LATITUDE/updateSun-tilt-lookup/setLatitude+setHumidity/BIOME_NAMES expose, DD-43 updateSun+updateAtmosphere math posun + komentáře), `src/model.js` ~+22/−1 ř. (WORLD JSDoc rozšíření + DAY=0.5 + LATITUDE+HUMIDITY atributy), `index.html` ~+104/0 ř. (G1 updateReliefSliderMax + wire, G2 CSS .climate-row+.tc-biome + Climate sekce DOM + IIFE wire-up + biome readout, surface fix readParams divide-by-sum, set-day default 0.5), `docs/DESIGN_DECISIONS.md` ~+95 ř. (DD-42 + DD-43), `docs/*` ~+150 ř. (TODO close G1+G2 + 2 G2 sub-prah; DIARY index + sez. 35 sekce; GLOSSARY WORLD update).
+
+## Sezení 36 (2026-05-13) — G3 SURFACES driver-derived per biome (DD-44)
+
+- [x] **`BIOME_SURFACES` 4×3 lookup** v `src/terrain.js` (12 buněk × 4 koef. `grass`/`stone`/`sand`/`water`, sum=1.0). Tabulka hardcoded — 12 řádků, per-cell volnost (Tropický prales 0.55/0.05/0.05/0.35; Sahara 0.00/0.10/0.90/0.00; Tundra 0.10/0.50/0.30/0.10). HUMIDITY → water+grass, LATITUDE → stone vs. sand.
+- [x] **`surfacesForBiome(lat, hum)` helper** + `BIOME_SURFACES` export. Fallback na `temperate.mid` při neznámém klíči (defensive).
+- [x] **`BIOME_NAMES.polar.wet` rename** z `"—"` na `"Polární tundra"`. `BIOME_SURFACES.polar.wet = polar.mid` alias (Arktická tundra geografi nejbližší).
+- [x] **`src/main.js` driver wire** — import `BIOME_SURFACES`/`surfacesForBiome`, expose `window.BIOME_SURFACES`/`window.surfacesForBiome`. `TERRAIN_DEFAULTS` zbavené hardcoded `surfaces`. `buildScene()` dohnají z `world.LATITUDE/HUMIDITY` při bootu.
+- [x] **UI hard override** v `index.html`: Surface DOM sekce (4 slidery + auto-normalize) **smazána**. IIFE refactor — `SURFACE_KINDS`/`surfInputs`/`surfVals`/`normalizeSurfaces` pryč. `LATITUDE_KEYS/NAMES`/`HUMIDITY_KEYS/NAMES` + Climate DOM refs přesunuty nahoru (sloučeno do jedné deklarace, `readParams()` je potřebuje pro `surfacesForBiome` lookup). Climate slidery `change` event triggeruje regen (kromě dnešního `input` per-frame sun tilt).
+- [x] **Sub-prah TODO snow surface** (G4 kandidát) zapsán — `polar.*` v `BIOME_SURFACES` aktuálně používá `sand` jako sníh proxy.
+- [x] **DD-44 zápis** (immutable log, aktivace DD-29 odložený `CLIMATE` slot full — 2 živí konzumenti: sun tilt G2 + surface mix G3).
+
+### Smoke test
+
+Node ESM test `src/terrain.js` — sum check 12/12 buněk OK (sum=1.0 ±0.001), `polar.wet === polar.mid` alias OK, `surfacesForBiome(tropical, dry) = sand 0.90` OK, fallback `(garbage, garbage) = temperate.mid` OK, `generateTerrain({surfaces: surfacesForBiome(lat, hum)})` všech 12 combiny bez chyby. Browser test (user): verify Tropický+Sucho = Sahara look, Polár+Vlhko = "Polární tundra" readout, surface slidery zmizely.
+
+### Diff celkem
+
+`src/terrain.js` +60/−1 ř. (BIOME_SURFACES + surfacesForBiome + polar.wet rename), `src/main.js` ~+15/−5 ř. (import + expose + TERRAIN_DEFAULTS bez surfaces + buildScene driver wire), `index.html` ~+35/−95 ř. (DOM Surfaces sekce delete, IIFE refactor — SURFACE_KINDS/surfInputs/normalizeSurfaces pryč, Climate KEYS/NAMES/DOM nahoru, readParams přes surfacesForBiome, climate change → regen), `docs/DESIGN_DECISIONS.md` ~+50 ř. (DD-44), `docs/*` ~+80 ř. (TODO close G3 + close polar/wet sub-prah + add snow surface sub-prah; DONE sez. 36; DIARY index + sez. 36 sekce; GLOSSARY DD-44 termíny).
