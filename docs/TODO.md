@@ -47,9 +47,13 @@
 - [ ] **TRACK třída** *(IDEAS — sourozenec PATH, vlaky odloženy)*.
 - [ ] **`mtllib` reference fix** *(drobnost)*.
 
-## Audit cadence (po sez. 26)
+## Governance (po sez. 27)
 
-- **`%AUDIT:CODE`** — 8/8 sezení od sez. 18 (**práh dosažen**, doporučit pro sez. 27).
-- **`%AUDIT:DOCS`** — 10/10 sezení od sez. 16 (**práh dosažen**, doporučit pro sez. 27).
-- **IDEAS/TODO pruning** — 7/12.
+- [!] **PROMPTS.md `%END` aktualizovat o topic-branch workflow** — současný text *„Commit na větev `main`"* je zastaralý od sez. 21 (DD-30 zavedl `feat/factory`, dále `feat/terrain`). Doplnit explicitní krok: rozhodnutí merge teď vs. pokračovat na topic branch + návrh `git merge --no-ff`. Censure ze sez. 27.
+
+## Audit cadence (po sez. 27)
+
+- **`%AUDIT:CODE`** — 9/8 sezení od sez. 18 (**práh překročen o 1**, sez. 28 priorita po performance refactoru).
+- **`%AUDIT:DOCS`** — 11/10 sezení od sez. 16 (**práh překročen o 1**, sez. 28).
+- **IDEAS/TODO pruning** — 8/12.
 - **`%CALIBRATE`** — sub-prah „CLAUDE.md +50 %" resetnut sez. 23 slimem.
