@@ -103,14 +103,18 @@ Sezení 26 user feedback: 30×30 terrain vykreslování pomalé (FPS ~15). %THIN
 - **C. Mesh merge per cell (greedy meshing)** — Minecraft-style. Drastická redukce vertices (−90 %). Hover degraduje na „celý sloupec". Komplexní algoritmus (geom + UV + atlas) = 2 sezení minimum.
 - **D. Web worker pro `generateTerrain`** — off-main-thread CPU work. **Po sez. 28 měření vyloučeno:** generace 2.5 ms @ 30×30 (5 % regen) — bottleneck nikdy nebyl tady.
 
-**Sez. 28 implementoval atlas pattern (varianta A.1)** — single material per box přes shared geom + 6-tile atlas texture. 6× redukce draw calls bez InstancedMesh refactoru. Výsledek: 30×30 z 15 → 92 FPS. Detail v `docs/diary/2026-05-13.md` (sez. 28) + `docs/DONE.md`.
+**Sez. 28 implementoval atlas pattern pro TCUBES (varianta A.1)** — single material per box přes shared geom + 6-tile atlas texture. 6× redukce draw calls bez InstancedMesh refactoru. Výsledek: 30×30 z 15 → 92 FPS. Detail v `docs/diary/2026-05-13.md` (sez. 28) + `docs/DONE.md`.
 
-**Otevřené cesty pro budoucnost** (pokud 50×50+ scale chce ≥120 FPS):
-- **A. InstancedMesh** — kdyby ramps × 4 type × 3 surface = 12 batchů zúžilo current ~256 ramp drawcalls na ~12. Velký refactor + hover instanceId pattern.
-- **B. BatchedMesh** — bump Three.js → r172+ a refactor TCUBES+rampy na jediný BatchedMesh. Riziko ale velký řád redukce.
-- **C. Mesh merge** — kdyby terrain měl 200×200 cells (50k+ TCUBES), greedy meshing nutný. Zatím over-engineering.
+**Sez. 30 dotáhl atlas pattern na rampy (varianta A.2)** — TRRAMPS/TTRAMPS/TDRAMP single-material atlas, 3 typy × 3 surfaces = 9 lazy-cached atlas materials. Generický `getRampAtlasMaterial(type, surface)` factory DRY. 30×30: FPS 92 → **123** (+34 %), calls ~5050 → 4290 (−14 %). Plus size 100×100 unlock (slider max 30 → 100) + F12 reaktivní shadow frustum. TTUNELS skipnut (0 producentů).
 
-Per-frame draw call hygiene browser: <10k bezpečno, <5k snadno 60 FPS, <2k 120+ FPS. Sez. 28 atlas dotáhl na ~5k @ 30×30. Pro typický use case stačí.
+**Sez. 30 100×100 stress test odhalil atlas ceiling** — FPS 7, calls **47 642**, tri 549 698, `geom: 8`, `mat: 7`. Sdílení geom + material konstantní, ale **1 `THREE.Mesh` = 1 draw call** v Three.js — atlas merger materials, ne instances. Pro další skok je nutná abstrakce instances v 1 draw call.
+
+**Otevřené cesty pro budoucnost** (100×100+ scale, predikce):
+- **A. InstancedMesh** *(DD-37 kandidát, sez. 31+ %THINK)* — per atlas material → 1 batch. TCUBES 4 + rampy 9 = ~13 batchů celkem. 47k calls → ~13 calls. Predikce FPS 7 → **~150+** @ 100×100 (GPU bound, 549k tri easily). Hover refactor: `raycaster.intersectObject().instanceId` → `modelInstance` map. Pool strategy: lazy per (kind, surface) nebo eager preallocated? Regen cost: rebuild matrices per regen — měřit.
+- **B. BatchedMesh (Three.js r172+)** — bump Three.js r160 → r172+ a refactor TCUBES + rampy na jediný BatchedMesh. Riziko ale velký řád redukce. Novější API, méně příkladů.
+- **C. Mesh merge** — pro 200×200+ cells. Drastická redukce vertices, ale ztráta hover granularity (celé sloupce). Zatím over-engineering.
+
+Per-frame draw call hygiene browser: <10k bezpečno, <5k snadno 60 FPS, <2k 120+ FPS. Sez. 28 + 30 atlas dotáhl na 4.3k @ 30×30 (123 FPS). 100×100 = 47k = nad hranicí, InstancedMesh nutný pro playability.
 
 ## Inspirace
 - PocketStory `Board` view (Three.js diorama + meeples)

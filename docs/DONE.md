@@ -301,3 +301,52 @@ Tři neudělané body („Material gate vizualizace", „Druhý zdrojový řetě
 
 - [x] **`console.time` + `console.log("[terrain]...")` v `spawnTerrain` smazány** — diagnostika byla sez. 28 dev-only, projekt-level pravidlo (CLAUDE.md) zakazuje debug výpisy v produkčním kódu. Pokud sez. 29 rampy refactor je znovu potřebuje, snadno přidat.
 - [x] **Perf HUD ZACHOVÁN** — projektová observability, ne dev-only feature. Permanent UI v pravém horním rohu.
+
+## Sezení 30 (2026-05-13) — Rampy atlas + F9/F12 fix + size 100×100
+
+Single-instance na main (bez topic branche per user volba, KISS — atomický refactor s jasným fallback `git revert`).
+
+### Governance fix (z TODO sez. 27)
+
+- [x] **PROMPTS.md `%END` (3.) Git** — topic-branch workflow update. Doplněn `(3a.) Commit + push na aktuální větev` (default `feat/<topic>` od DD-30) + `(3b.) Merge rozhodnutí` (otázka „úkol dokončen?", `git merge --no-ff feat/<topic>` syntax) + zdůvodnění `--no-ff` (hranice topic branch viditelná v `git log`). Sub-prah governance z Příště sez. 27 → 28 → 29 → 30 (4× — pod stale-prahem 5 ale blížil se).
+
+### Ramp atlas refactor (z TODO Otevřené body)
+
+Izomorfně s TCUBES atlas pipeline (DD-36, sez. 28). Před refactorem: 3 ramp typy (TRRAMPS/TTRAMPS/TDRAMP) měly per-instance `materials[N]` array (5/4/5 faces) přes `faceMaterialFor` dispatch — 5/4/5 draw calls per ramp instance.
+
+- [x] **3× IIFE geom cache transformace** — `TRRAMP_GEOM_CACHE` / `TTRAMP_GEOM_CACHE` / `TDRAMP_GEOM_CACHE`. `addQuad`/`addTri` helpery dostaly `remapU(uv, faceIdx)` (`faceIdx/N + uv[0]/N` na U-axis), parametr `materialIndex` přejmenován na `faceIdx` (semantika jen pro UV slot, ne pro material array). `groups.push` + `for (const g of groups) geom.addGroup(...)` smazáno — single-material mesh.
+- [x] **Generický `getRampAtlasMaterial(type, surface)` factory** — DRY pro 3 typy. Klíč cache `${type}_${surface}` → MeshStandardMaterial. Specs v `RAMP_ATLAS_SPECS` (per typ klíče faces + texTable). 9 unique kombinací = 9 atlas materials lazy-cached (3 surfaces × 3 typy).
+- [x] **`RAMP_SURFACE_FROM_KIND` lookup** — `instance.KIND` má tvar `ramp_<surface>` (z `createRampEdge/Corner/Diagonal`), surface se odvodí konstantním mapingem (`ramp_grass` → `"grass"`, atd.). Žádná změna modelu.
+- [x] **3× `createXxxRampFor` přepis** — atlas-only, `new Mesh(GEOM_CACHE, mat)`, žádný `materials[N]` array. ORIENTATION (DD-26) zůstává `mesh.rotation.y` (geom je rotation-invariant).
+- [x] **Slow path `faceMaterialFor` pro rampy odstraněn** — user volba: žádný producer non-fixed surfaces (grass/stone/sand fixed). TTUNELS skipnut (žádný producer ve scéně — model existuje od sez. 16, terrain ho negeneruje).
+
+**Výsledky 30×30 seed 42:**
+
+| metrika | sez. 28 (TCUBES atlas) | sez. 30 (rampy atlas) | změna |
+|---|---|---|---|
+| FPS | 92 | **123** | +34 % |
+| draw calls | ~5050 | 4290 | −710 (−14 %) |
+| `_rampsAtlasMatCache.size` | n/a | 3 (jen aktivní surfaces) | — |
+
+Odhad TODO byl ~17 % incremental redukce → reálných 14 % matchne dobrým způsobem.
+
+### F9 (sez. 29 follow-up) — perf HUD `mat` součet
+
+- [x] **`_perfHud.el.mat`** = `_faceMaterialCache.size + _tcubesAtlasMatCache.size + _rampsAtlasMatCache.size`. Předtím měřilo jen `_faceMaterialCache.size` — po atlas refactoru TCUBES + rampy hodnota klesla na 0 (slow path se prakticky nevolá, TTUNELS bez producenta). Po fix HUD ukazuje **7** @ 30×30 (4 TCUBES atlas + 3 ramp atlas).
+
+### F12 (sez. 29 follow-up) — shadow frustum reaktivně
+
+- [x] **`updateShadowFrustum(maxDim)` helper** — derivuje `half = ceil(maxDim/2) + 4` (buffer pro vyšší objekty), nastaví `sun.shadow.camera.left/right/top/bottom` + `updateProjectionMatrix()`. Volaný z `spawnTerrain(params)` po každém regen.
+- [x] **Module-load default `±8`** zachován jako fallback před prvním `buildScene` (technicky se nikdy nepoužije — `buildScene` volá `spawnTerrain(TERRAIN_DEFAULTS)`). Komentář aktualizován.
+
+### Size 100×100 unlock
+
+User žádost *„Zkus umožnit v generátoru SIZE 100×100"*.
+
+- [x] **HTML slidery `tc-size-x` + `tc-size-z` max 30 → 100**. Žádná `terrain.js` validation úprava (už open-ended bez horního limitu).
+- [x] **100×100 stress test (user)** — FPS 7, calls **47642**, tri **549k**, `geom: 8`, `mat: 7`. **Atlas pipeline exhausted** — sdílení geom/material funguje optimálně, ale 1 Mesh = 1 draw call neumí překročit. Bottleneck: CPU draw call validation. **Roadmap:** `InstancedMesh` per atlas material (TCUBES 4 + rampy 9 = ~13 batchů celkem) by smrslo na ~13 calls → FPS predikce **~150+** (GPU bound; 549k tri je easily). TODO follow-up s odhadem.
+
+### Diff celkem (2 commity)
+
+`2f6ac79` (rampy atlas + F9 + PROMPTS.md): `+143/−67`, 2 files.
+`<sez. 30 commit>` (size 100 + F12 + docs sez. 30): `~+200/−40`, ~6 files.

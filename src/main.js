@@ -68,7 +68,8 @@ sun.position.set(-10, 8, 10);
 // Slunce vrhá stíny. DirectionalLight používá **ortografickou** stínovou
 // kameru — je jako slunce v nekonečnu, paprsky jsou rovnoběžné. Frustum
 // této kamery musí obalit celou scénu, jinak objekty mimo frustum stín
-// vrhat nebudou. Grid je 10×10, balón Y=4 → bezpečný rozměr 16×16, near/far
+// vrhat nebudou. Default ±8 = vhodný pro malé scény před `spawnTerrain` (DD-32
+// generátor přepíše dle `params.size` přes `updateShadowFrustum`). near/far
 // 1..50 pokrývá pozici slunce (≈17 jednotek od středu).
 sun.castShadow = true;
 sun.shadow.camera.left   = -8;
@@ -90,6 +91,18 @@ sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.bias = -0.0001;
 sun.shadow.normalBias = 0;
 scene.add(sun);
+
+// F12 (sez. 29) — fix: shadow frustum reaktivně dle aktuální velikosti terrain.
+// Volaný z `spawnTerrain` po každém regen. Buffer +4 j pokrývá vyšší objekty
+// (balon, sprites). `updateProjectionMatrix` je nutné po mutaci ortho parametrů.
+function updateShadowFrustum(maxDim) {
+  const half = Math.ceil(maxDim / 2) + 4;
+  sun.shadow.camera.left   = -half;
+  sun.shadow.camera.right  =  half;
+  sun.shadow.camera.top    =  half;
+  sun.shadow.camera.bottom = -half;
+  sun.shadow.camera.updateProjectionMatrix();
+}
 
 // === Ground plane pro zachytávání stínů ===
 // PlaneGeometry je default v rovině XY (ležící vertikálně). Otočíme ji
@@ -2101,6 +2114,9 @@ function spawnTerrain(params) {
     mesh.userData.terrain = true;
     scene.add(mesh);
   }
+  // F12: shadow frustum dle aktuální size — bez updatu by stíny ostříhly
+  // na ±8 (aktuální i 30×30 už mimo, 100×100 by drželo stíny v centrální 1/6).
+  updateShadowFrustum(Math.max(params.size[0], params.size[1]));
 }
 
 // Vymaže staré terrain meshes ze scény (filter dle `userData.terrain`) a

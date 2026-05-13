@@ -68,7 +68,7 @@ V BLOCKS rodině v praxi jen násobky 90° (cardinální orientace svahu / osy t
 
 ### Parametry
 
-- **`size`** — `[sx, sz]` rozměr terénu v 1C voxelech (default `[10, 10]`, slider rozsah 3..30).
+- **`size`** — `[sx, sz]` rozměr terénu v 1C voxelech (default `[10, 10]`, slider rozsah 3..100 — sez. 30; 100×100 je playable s draw-call ceiling FPS ~7, pro hladký 100×100 čeká `InstancedMesh` refactor DD-37 kandidát).
 - **`relief`** — integer 0..10 řídící amplitudu + frekvenci heightmap. **11 pojmenovaných stupňů** (slider label): `0 Flat`, `1 Level`, `2 Gently undulating`, `3 Rolling hills`, `4 Hilly`, `5 Uneven`, `6 Rugged`, `7 Craggy`, `8 Mountainous`, `9 Heavily dissected` *(roadmap valley carving)*, `10 Alpine` *(roadmap ridge noise)*. Aktuálně `9` a `10` clamp na `8` s warningem.
 - **`surfaces`** — `{ grass, stone, sand, water }` mix v rozsahu [0, 1], auto-normalizovaný na sumu 1 (UI panel programmatic). Mapuje biome map noise → kind: low-freq noise → sort + exact-match thresholds = souvislé klastry. Y modifier: `sand−1`, `water−2` (eroze/depresse).
 - **`seed`** — integer pro `mulberry32` RNG (default `42`). Determinismus = stejný seed + parametry → bit-identical scéna.
@@ -101,11 +101,17 @@ TheCubes scéna se buduje ze tří vizuálních zdrojů:
 - **Dekorativní cesty** → **PATH** strip mesh (Catmull-Rom + procedural texture).
 - **Dialog / štítek / UI** → **SPRITES**.
 
-### TCUBES atlas pipeline (DD-36, sez. 28)
+### Atlas pipeline (DD-36, sez. 28 + sez. 30)
 
-Terrain TCUBES (kind ∈ `BLOCK_TEXTURES` = `grass`/`dirt`/`stone`/`sand`) používají **shared `BoxGeometry` + per-kind atlas material** místo `material[6]` pole. Atlas = 6 facelets slepené horizontálně do CanvasTexture 96×16 px (16 px per dlaždice, shoda s `:named-texture` rozlišením); BoxGeometry UVs přepsané na 1/6-tice (face N → u ∈ [N/6, (N+1)/6]); 1 `MeshStandardMaterial` per kind místo 6 per blok. **Důsledek:** 1 draw call per box místo 6 → 30×30 terrain z 25k calls @ 15 FPS na ~5k calls @ 92 FPS (6× zrychlení).
+**Princip:** sdílená atlas geom (UVs přemapnuté na 1/N-tici U-axis = jeden výsek atlas textury per face) + per-(typ, varianta) atlas material (N facelet textur slepených horizontálně do CanvasTexture). Single material per mesh místo `material[N]` pole → 1 draw call per instance místo N.
 
-Non-terrain TCUBES (emoji demo boxy) padají na slow path s původním `material[6]` array. Cache materiálů v `faceMaterialFor` (`_faceMaterialCache` Map) šetří GPU state changes mezi calls. Hover sez. 16 pattern (`Array.isArray(orig) ? orig.map(...) : orig.clone()`) přepíná pole↔single dispatch automaticky.
+**Sez. 28 — TCUBES (4 atlas materials):** Shared `BoxGeometry`, atlas 96×16 px (6 facelets × 16 px tile), per kind ∈ `BLOCK_TEXTURES` = `grass`/`dirt`/`stone`/`sand`. Důsledek 30×30: 25k calls @ 15 FPS → ~5k calls @ 92 FPS (6× zrychlení).
+
+**Sez. 30 — rampy (3 typy × 3 surfaces = 9 atlas materials):** Per ramp typ TRRAMPS/TTRAMPS/TDRAMP vlastní sdílená geom (UV remap na 1/5-tici / 1/4-tici / 1/5-tici), per surface ∈ {`grass`, `stone`, `sand`} samostatný atlas material (canvas N×16 × 16 px). Generický `getRampAtlasMaterial(type, surface)` DRY factory napříč 3 typy, klíč `${type}_${surface}` v `_rampsAtlasMatCache`. **TDRAMP zvláštnost:** 7 geom faces sdílejí 5 atlas slotů (WALL_FULL E+S sdílí slot 3, WALL_TRI N+W sdílí slot 4). Důsledek 30×30: ~5050 → 4290 calls (−14 %), FPS 92 → 123. **TTUNELS** zůstává na slow path `faceMaterialFor` (0 instancí v scéně, refactor odložen).
+
+**Slow path** (`_faceMaterialCache` Map v `faceMaterialFor`): non-terrain TCUBES (emoji demo boxy bez instancí ve scéně) + TTUNELS. Tři paralelní cache (`_faceMaterialCache` + `_tcubesAtlasMatCache` + `_rampsAtlasMatCache`) měřeny souhrnně v perf HUD `mat` (F9 fix sez. 30). Hover sez. 16 pattern (`Array.isArray(orig) ? orig.map(...) : orig.clone()`) přepíná pole↔single dispatch automaticky.
+
+**Draw-call ceiling (sez. 30 stress test 100×100):** atlas exhauste — 47k calls @ FPS 7. Atlas merger materials, ne instances; pro další skok je potřeba `InstancedMesh` (per atlas material → 1 batch celkem ~13). DD-37 kandidát.
 
 ### Procedurální canvas textury (`:named-texture`)
 
