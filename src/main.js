@@ -8,8 +8,9 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
-import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TTUNELS, SPRITES, COMPOSITES, TREE, GRASS_TUFT, ROCK_PIXEL, LOG, VOXEL_MODEL, PATH, TIMER, COUNTER, WORLD, FACILITY, GENERATOR, TRANSFORMER, STORAGE, RESOURCES_DEF, RECIPES_DEF, FACILITY_DEF } from "./model.js";
+import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, TTUNELS, SPRITES, COMPOSITES, VOXEL_MODEL, PATH, TIMER, COUNTER, WORLD } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
+import { generateTerrain } from "./terrain.js";
 
 // === Renderer ===
 // WebGLRenderer = Three.js komponenta, která překládá scénu na GPU volání.
@@ -288,6 +289,8 @@ const GRASS_BASE = "#5d9446";
 const GRASS_ACCENTS = ["#4e823c", "#3e6a32", "#6ea054"];
 const STONE_BASE = "#8a8278";
 const STONE_ACCENTS = ["#6f6860", "#a09890", "#5a5450"];
+const SAND_BASE = "#d4b97c";
+const SAND_ACCENTS = ["#c5a86b", "#e3c98a", "#b89858", "#dec595"];
 
 function makeDirtTexture() {
   return makePatchTexture(DIRT_BASE, DIRT_ACCENTS);
@@ -299,6 +302,10 @@ function makeGrassTopTexture() {
 
 function makeStoneTexture() {
   return makePatchTexture(STONE_BASE, STONE_ACCENTS);
+}
+
+function makeSandTexture() {
+  return makePatchTexture(SAND_BASE, SAND_ACCENTS);
 }
 
 // Štěrková cesta — šedé kameny různých odstínů, kropenatý šum (žádné stopy).
@@ -348,6 +355,7 @@ const NAMED_TEXTURE_FACTORIES = {
   ":dirt":       () => makeDirtTexture(),
   ":grass-top":  () => makeGrassTopTexture(),
   ":stone":      () => makeStoneTexture(),
+  ":sand":       () => makeSandTexture(),
   ":rail-top":   () => makeRailTopTexture(),
   ":path-dirt":  () => makePathDirtTexture(),
 };
@@ -405,29 +413,11 @@ function faceMaterialFor(val) {
 const animators = [];
 
 // WORLD singleton (DD-29, sez. 20) — globální stav scény. `WIND_STRENGTH`
-// čte `animateTreeSway`. Nevizuální entita, nemá registraci (žádný
-// tickHandler ani DOM) — žije čistě jako data.
-// Dev exposure přes `window.world` — bez `registerBehavior` infrastruktury
-// (která je pro tickHandlers / HUD řádky) je to nejjednodušší cesta, jak
-// otestovat efekt v konzoli: `world.WIND_STRENGTH = 2` → bouře, `0` →
-// bezvětří. Pokud přibude víc dev singletonů, dá se sjednotit pod `window.tc.*`.
+// + `TIME_SCALE` jako konzumenty. Bez aktivních klientů ve scéně po DD-32
+// pivotu (tree_sway smazán); zůstává jako infrastruktura pro budoucí
+// terrain-driven animátory (např. swaying grass v generovaném terénu).
 const world = new WORLD();
 window.world = world;
-
-// TIME_SCALE slider (DD-31, sez. 22 fáze B) — HUD ovladač rychlosti simulace.
-// `input` event mutuje `world.TIME_SCALE` a aktualizuje text. Render loop si
-// `world.TIME_SCALE` čte každý frame, takže změna se projeví okamžitě bez reloadu.
-{
-  const slider = document.getElementById("time-scale-slider");
-  const valEl  = document.getElementById("time-scale-val");
-  if (slider && valEl) {
-    slider.addEventListener("input", () => {
-      const v = parseFloat(slider.value);
-      world.TIME_SCALE = v;
-      valEl.textContent = `${v.toFixed(1)}×`;
-    });
-  }
-}
 
 // Plný kruh v radiánech — pojmenovaná konstanta, aby `(TAU * t) / period` šel
 // číst jako „kolik period uplynulo v radiánech". Math.PI * 2 = 2π.
@@ -448,34 +438,6 @@ const _b = new THREE.Vector3();
 // `offset` = fázový posun v radiánech (π/2 posune sinus na kosinus).
 function oscPhase(t, period, offset = 0) {
   return (TAU * t) / period + offset;
-}
-
-// Strom se kývá ve větru. Per-voxel snapshot pozice (lazy init), pak
-// per-frame offset škálovaný **výškou voxelu** — kmen u země má heightFactor
-// ≈ 0 → statický; špička koruny ≈ 0.9 → maximální výchylka. Random fáze
-// (anim.phaseX/Z) → desync mezi stromy stejného druhu. Dvě nesoudělné periody
-// (X/Z) → elipsovitý pohyb, ne 1D kyvadlo.
-function animateTreeSway(group, anim, t) {
-  const phaseX = oscPhase(t, anim.periodX, anim.phaseX ?? 0);
-  const phaseZ = oscPhase(t, anim.periodZ, (anim.phaseZ ?? 0) + Math.PI / 3);
-  // Globální vítr (DD-29) škáluje amplitudu všech stromů jednotně.
-  // `world.WIND_STRENGTH = 1.0` (default) = beze změny vůči pre-DD-29 stavu.
-  const amp = anim.amplitude * world.WIND_STRENGTH;
-  const sx = amp * Math.sin(phaseX);
-  const sz = amp * Math.sin(phaseZ);
-  for (const child of group.children) {
-    if (!child.userData.swayBase) {
-      child.userData.swayBase = {
-        x: child.position.x,
-        y: child.position.y,
-        z: child.position.z,
-      };
-    }
-    const base = child.userData.swayBase;
-    const heightFactor = Math.max(0, base.y + 0.5);
-    child.position.x = base.x + sx * heightFactor;
-    child.position.z = base.z + sz * heightFactor;
-  }
 }
 
 // Rovnoměrná rotace kolem jedné z os. Na rozdíl od `balloon_bob` / `tree_sway`
@@ -647,7 +609,6 @@ function animateDrift(object3d, anim, t) {
 // Umožňuje i validaci při registraci — překlep v `ANIMATE.kind` odhalíme
 // boot-time warnem, ne tichým no-op v render loopu.
 const ANIMATORS = {
-  tree_sway:      animateTreeSway,
   rotate:         animateRotate,
   orbit_stadium:  animateOrbitStadium,
   pulse:          animatePulse,
@@ -920,257 +881,13 @@ function registerBehavior(instance) {
 }
 
 // Sez. 15 cleanup: LIT fade system + BALLOON třída smazány (DD-23 „all-voxel" pivot).
+// Sez. 24 cleanup: FACTORY TOY ENGINE smazán (DD-32 pivot).
 
-// =============================================================================
-// FACTORY TOY ENGINE (DD-30 / DD-31, sez. 21)
-//
-// Tick-based ekonomický loop. `productionTick(dt)` se volá z render loopu
-// (continuous, ne 1 wall-s tick), s `dt = wall second elapsed * TIME_SCALE`.
-// Generátory produkují do `BUFFER`, transformery čerpají z `BUFFER` dle
-// `RECIPES_DEF[KIND]`. Material gate pauzuje na chybějícím inputu / plném outputu.
-// Sklady (zatím) pasivní — drží zásoby, transport přijde v Phase B (PATH).
-//
-// HUD: 6 čítačů top bar (Σ napříč fasilitami), event log bottom bar (5 řádků).
-// Eventy se loguji jen na **state change** (PAUS/RSUM) a každý whole-unit krok
-// produkce (`PROD` na floor cross), aby se log neutopil v per-frame spamu.
-// =============================================================================
-
-// Registry všech aktivních fasilit — naplňuje `createMeshFor` při FACILITY
-// větvi. Iterujeme každý frame v `productionTick`.
-const facilities = [];
-
-// Registry všech aktivních PATH instancí — naplňuje `createPathFor`. Iterujeme
-// každý frame v `pathTick` (DD-31, sez. 22 fáze B). Dekorativní cesty
-// (`KIND="dirt"`, bez SOURCE/SINK) jsou v registry také, pathTick je tolerantně
-// přeskočí — větvení by bylo zbytečné, missing-fields check je levný.
-const paths = [];
-
-// Event log = ring buffer (max 100). Render zobrazuje posledních 5.
-const EVENT_LOG_CAPACITY = 100;
-const EVENT_LOG_VISIBLE = 5;
-const events = [];
-
-// Verb → CSS třída pro barvení v #eventlog. Voidspan-derived (DD-30) zúžené
-// na MVP set verb: PROD = green (produkce), DRN = neutral (čerpání inputu),
-// PAUS = amber (gate spadla), RSUM = cyan (gate uvolněna).
-const EVENT_VERB_CLASS = {
-  PROD: "evt-prod",
-  DRN:  "evt-drn",
-  PAUS: "evt-paus",
-  RSUM: "evt-rsum",
-};
-
-function logEvent(verb, target, detail) {
-  events.push({ tick: TIME.tick, verb, target, detail });
-  if (events.length > EVENT_LOG_CAPACITY) events.shift();
-  renderEventLog();
-}
-
-// Vykresli posledních N eventů do #eventlog elementu. Volá se po každém
-// `logEvent` (jednorázový DOM patch). KISS: vyrobíme řádky odznova; 5 řádků
-// = zanedbatelná cena.
-function renderEventLog() {
-  const el = document.getElementById("eventlog");
-  if (!el) return;
-  el.innerHTML = "";
-  const start = Math.max(0, events.length - EVENT_LOG_VISIBLE);
-  for (let i = start; i < events.length; i++) {
-    const e = events[i];
-    const line = document.createElement("div");
-    line.className = `evt-line ${EVENT_VERB_CLASS[e.verb] || ""}`;
-    line.textContent = `[T${e.tick}] ${e.verb}  ${e.target}  ${e.detail}`;
-    el.appendChild(line);
-  }
-}
-
-// Logger produkce s thresholdem: emit PROD jen když `BUFFER[r]` překročí novou
-// celou jednotku (floor crossing). Bez toho by 60 FPS produkce zahltila log.
-// Sleduje předchozí floor v `prevFloor` mapě per (facility, resource).
-const _prodFloorCache = new Map(); // klíč `${id}::${r}` → poslední floor
-
-function maybeLogProduction(facility, resource_id, prevAmount, newAmount) {
-  const key = `${facility.ID}::${resource_id}`;
-  const prevFloor = Math.floor(prevAmount);
-  const newFloor = Math.floor(newAmount);
-  if (newFloor > prevFloor) {
-    _prodFloorCache.set(key, newFloor);
-    logEvent("PROD", facility.NAME, `+1 ${resource_id} (${newFloor} celkem)`);
-  }
-}
-
-function maybeLogConsumption(facility, resource_id, prevAmount, newAmount) {
-  const prevFloor = Math.floor(prevAmount);
-  const newFloor = Math.floor(newAmount);
-  if (newFloor < prevFloor) {
-    logEvent("DRN", facility.NAME, `−1 ${resource_id} (${newFloor} zbývá)`);
-  }
-}
-
-// Pauza / resume tracking — emit jen na state change.
-function setPaused(facility, paused, reason) {
-  const wasPaused = facility.PAUSED;
-  facility.PAUSED = paused;
-  facility.PAUSE_REASON = paused ? reason : null;
-  if (paused && !wasPaused) {
-    logEvent("PAUS", facility.NAME, reason);
-  } else if (!paused && wasPaused) {
-    logEvent("RSUM", facility.NAME, "běží");
-  }
-}
-
-// Generator tick: produkuje `outputs[r]` * dt ks/s. Backpressure pauza na
-// plný buffer. Žádný input check (generator = unlimited source — les nikdy
-// nedojde, KISS pro MVP).
-function generatorTick(facility, def, dt) {
-  // Předpoklad: def.outputs existuje a je objekt {resource_id: rate_per_s}.
-  // Pro každý výstup nezávisle: spočítej kolik bys přidal, ořež na kapacitu.
-  let anyProduced = false;
-  let anyBlocked = false;
-  for (const [r, rate] of Object.entries(def.outputs)) {
-    const prev = facility.BUFFER[r] ?? 0;
-    const capacity_left = def.buffer_capacity - prev;
-    if (capacity_left <= 0) {
-      anyBlocked = true;
-      continue;
-    }
-    const wanted = rate * dt;
-    const actual = Math.min(wanted, capacity_left);
-    const next = prev + actual;
-    facility.BUFFER[r] = next;
-    maybeLogProduction(facility, r, prev, next);
-    anyProduced = true;
-  }
-  // Pauza pokud je VŠECHNO blokované a NIC se nevyprodukovalo. Smíšený stav
-  // (1 ze 2 output plný) generator nehlásí — zbylé výstupy stále tečou.
-  if (anyBlocked && !anyProduced) {
-    setPaused(facility, true, "buffer plný");
-  } else {
-    setPaused(facility, false);
-  }
-}
-
-// Transformer tick: dle recipe spotřebuje `inputs`, vyrobí `outputs`.
-// Material gate: pauza s důvodem, pokud chybí input nebo je plný output.
-function transformerTick(facility, def, dt) {
-  const recipe = RECIPES_DEF[def.recipe];
-  if (!recipe) {
-    console.warn(`TRANSFORMER ${facility.ID} má neznámý recept "${def.recipe}"`);
-    return;
-  }
-  const cycles = recipe.rate_per_tick * dt;
-  // 1) Check input availability.
-  for (const [r, need_per_cycle] of Object.entries(recipe.inputs)) {
-    const have = facility.BUFFER[r] ?? 0;
-    const need = need_per_cycle * cycles;
-    if (have < need) {
-      setPaused(facility, true, `chybí ${r}`);
-      return;
-    }
-  }
-  // 2) Check output capacity.
-  for (const [r, out_per_cycle] of Object.entries(recipe.outputs)) {
-    const prev = facility.BUFFER[r] ?? 0;
-    const would_add = out_per_cycle * cycles;
-    if (prev + would_add > def.buffer_capacity) {
-      setPaused(facility, true, `buffer ${r} plný`);
-      return;
-    }
-  }
-  // 3) Apply: drén inputs, plnění outputs.
-  for (const [r, need_per_cycle] of Object.entries(recipe.inputs)) {
-    const prev = facility.BUFFER[r];
-    const next = prev - need_per_cycle * cycles;
-    facility.BUFFER[r] = next;
-    maybeLogConsumption(facility, r, prev, next);
-  }
-  for (const [r, out_per_cycle] of Object.entries(recipe.outputs)) {
-    const prev = facility.BUFFER[r] ?? 0;
-    const next = prev + out_per_cycle * cycles;
-    facility.BUFFER[r] = next;
-    maybeLogProduction(facility, r, prev, next);
-  }
-  setPaused(facility, false);
-}
-
-// Hlavní produkční tick — volá se z render loopu s `dt` v sekundách
-// (už škálovaný `TIME_SCALE`). Storage je pasivní (transport řeší pathTick).
-function productionTick(dt) {
-  for (const f of facilities) {
-    const def = FACILITY_DEF[f.KIND];
-    if (!def) continue;
-    if (def.type === "generator")        generatorTick(f, def, dt);
-    else if (def.type === "transformer") transformerTick(f, def, dt);
-    // storage: no-op v MVP
-  }
-}
-
-// PATH transport tick (DD-31, sez. 22 fáze B). Iteruje `paths[]`, per cesta
-// s validním transportem (SOURCE+SINK+RESOURCE+THROUGHPUT) přesune
-// `min(THROUGHPUT*dt, source_have, sink_free_capacity)` daného resource
-// ze source BUFFER do sink BUFFER. Dekorativní `"dirt"` cesty engine přeskočí.
-//
-// Volá se z render loopu **po** productionTick — jinak by transport mohl
-// odvézt items, které generator/transformer právě v tomto tick vyrobil
-// (= mikro-zpoždění o jeden frame, ale ekonomicky korektní: tick = produkce,
-// pak distribuce).
-function pathTick(dt) {
-  for (const p of paths) {
-    if (!p.SOURCE || !p.SINK || !p.RESOURCE || !p.THROUGHPUT) continue;
-    transferOnPath(p, dt);
-  }
-}
-
-// Jednotka transportu. Source-dry → 0, sink-full → 0; jinak min(want, have, free).
-// Loguje DRN/PROD přes existující floor-crossing helpery — stejná granularita
-// jako u generator/transformer eventů (1 řádek per whole-unit krok).
-function transferOnPath(path, dt) {
-  const src = path.SOURCE;
-  const dst = path.SINK;
-  const r   = path.RESOURCE;
-  const sinkDef = FACILITY_DEF[dst.KIND];
-  if (!sinkDef) return;
-
-  const have = src.BUFFER[r] ?? 0;
-  if (have <= 0) return;
-  const dstHave = dst.BUFFER[r] ?? 0;
-  const free = sinkDef.buffer_capacity - dstHave;
-  if (free <= 0) return;
-
-  const wanted = path.THROUGHPUT * dt;
-  const amount = Math.min(wanted, have, free);
-  if (amount <= 0) return;
-
-  const newSrc = have - amount;
-  const newDst = dstHave + amount;
-  src.BUFFER[r] = newSrc;
-  dst.BUFFER[r] = newDst;
-  maybeLogConsumption(src, r, have, newSrc);
-  maybeLogProduction(dst, r, dstHave, newDst);
-}
-
-// Přepočítá `world.RESOURCES` jako Σ `BUFFER` napříč všemi fasilitami a
-// aktualizuje HUD čítače (#res-<id> spany).
-function aggregateResources() {
-  // Reset všech klíčů na 0.
-  for (const r of Object.keys(world.RESOURCES)) world.RESOURCES[r] = 0;
-  // Sečti přes facilities.
-  for (const f of facilities) {
-    for (const [r, amount] of Object.entries(f.BUFFER)) {
-      if (r in world.RESOURCES) world.RESOURCES[r] += amount;
-    }
-  }
-  // HUD update — jen jednou za frame, formátované jako celé číslo (zlomky
-  // v buffer interně, UI nepotřebuje precizi).
-  for (const r of Object.keys(world.RESOURCES)) {
-    const el = document.getElementById(`res-${r}`);
-    if (el) el.textContent = Math.floor(world.RESOURCES[r]);
-  }
-}
 
 // === Vizualizační dispatch: instance → Three.js Object3D ===
 // Podle konkrétní třídy instance rozhodujeme, jaký vizuál sestrojit.
 // `instanceof` testuje řetěz dědičnosti. Pořadí větví je důležité:
-// specifické třídy před obecnými (TREE je potomek COMPOSITES, proto dřív).
+// specifické třídy před obecnými.
 //
 // Model/engine separation: tady je jediné místo, kde je vazba
 // "třída → vizuál" — model.js nezná Three.js vůbec. Viz DD-11.
@@ -1184,11 +901,6 @@ function createMeshFor(instance) {
   if (instance instanceof COMPOSITES) {
     // 3D mesh složený z primitivů. Konkrétní tvar řešíme podle podtřídy.
     object3d = createCompositeFor(instance);
-  } else if (instance instanceof FACILITY) {
-    // Factory toy fasilita (DD-31, sez. 21) — 1×1×1 placeholder box s plochou
-    // barvou z `FACILITY_DEF[KIND].color`. Pixel-art asset (VOXEL_MODEL per
-    // KIND) přijde v Phase 2. Snap-to-grid jako BLOCKS (DD-28 grid-center).
-    object3d = createFacilityFor(instance);
   } else if (instance instanceof PATH) {
     // 1D křivka (DD-25 vrstva 3 Linie) — strip mesh sledující POINTS.
     object3d = createPathFor(instance);
@@ -1205,6 +917,9 @@ function createMeshFor(instance) {
   } else if (instance instanceof TTRAMPS) {
     // Trojboký jehlan (trirectangular tetrahedron) se 4 per-face texturami.
     object3d = createTTRampFor(instance);
+  } else if (instance instanceof TDRAMP) {
+    // Diagonální rampa (1C blok bez 1 horního rohu) — 7 vrcholů, 5 materials.
+    object3d = createTDRampFor(instance);
   } else if (instance instanceof TTUNELS) {
     // Tunel skrz 1C blok (4 vnitřní stěny, 2 osy průchozí).
     object3d = createTTunnelFor(instance);
@@ -1540,6 +1255,163 @@ function createTTRampFor(instance) {
   return mesh;
 }
 
+// === TDRAMP — Diagonální rampa (1C blok bez jednoho horního rohu) ===========
+//
+// DD-35 kandidát (sez. 26). Krychle 1×1×1 minus tetrahedron na 1 horním rohu
+// = 7-vrcholový polyhedron. Vyhladí **3-cell convex peak** stepu (A má 2
+// sousední direct vyšší + diagonální peak vyšší) jediným meshem.
+//
+// Vertices v lokálních souřadnicích (default ORIENTATION=0, low corner NW):
+//   v0 (-0.5, -0.5, -0.5)  bottom NW   (low corner)
+//   v1 ( 0.5, -0.5, -0.5)  bottom NE
+//   v2 ( 0.5, -0.5,  0.5)  bottom SE
+//   v3 (-0.5, -0.5,  0.5)  bottom SW
+//   v4 ( 0.5,  0.5, -0.5)  top NE
+//   v5 ( 0.5,  0.5,  0.5)  top SE        (peak corner)
+//   v6 (-0.5,  0.5,  0.5)  top SW
+//   (NW_top chybí — odříznutý roh)
+//
+// 7 faces se 5 material groups:
+//   0 SLOPE      — triangle (v0, v6, v4)         diagonální slope NW→NE-SW hrana
+//   1 TOP        — triangle (v6, v5, v4)         plochá horní podstava
+//   2 BOTTOM     — quad     (v0, v1, v2, v3)     čtvercová podstava
+//   3 WALL_FULL  — 2 quads  (E: v1,v4,v5,v2)     plné svislé stěny (peak side)
+//                           (S: v2,v5,v6,v3)
+//   4 WALL_TRI   — 2 trojúhelníky                šikmé svislé stěny (low side)
+//                  (N: v0, v4, v1)
+//                  (W: v0, v3, v6)
+//
+// SLOPE + TOP sdílí lomenou hranu v4-v6 → vizuálně 1 lomený povrch („dvěma
+// trojúhelníky" — uživatel sez. 26).
+//
+// Per-face vertices (non-shared) — flat shading bez computeVertexNormals.
+
+const TDRAMP_GEOM_CACHE = (() => {
+  const v0 = [-0.5, -0.5, -0.5];
+  const v1 = [ 0.5, -0.5, -0.5];
+  const v2 = [ 0.5, -0.5,  0.5];
+  const v3 = [-0.5, -0.5,  0.5];
+  const v4 = [ 0.5,  0.5, -0.5];
+  const v5 = [ 0.5,  0.5,  0.5];
+  const v6 = [-0.5,  0.5,  0.5];
+
+  const SQRT3 = Math.sqrt(3);
+
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const indices = [];
+  const groups = [];
+
+  function addQuad(p0, p1, p2, p3, n, uv0, uv1, uv2, uv3, materialIndex) {
+    const startVert = positions.length / 3;
+    positions.push(...p0, ...p1, ...p2, ...p3);
+    normals.push(...n, ...n, ...n, ...n);
+    uvs.push(...uv0, ...uv1, ...uv2, ...uv3);
+    const startIdx = indices.length;
+    indices.push(startVert, startVert + 1, startVert + 2);
+    indices.push(startVert, startVert + 2, startVert + 3);
+    groups.push({ start: startIdx, count: 6, materialIndex });
+  }
+  function addTri(p0, p1, p2, n, uv0, uv1, uv2, materialIndex) {
+    const startVert = positions.length / 3;
+    positions.push(...p0, ...p1, ...p2);
+    normals.push(...n, ...n, ...n);
+    uvs.push(...uv0, ...uv1, ...uv2);
+    const startIdx = indices.length;
+    indices.push(startVert, startVert + 1, startVert + 2);
+    groups.push({ start: startIdx, count: 3, materialIndex });
+  }
+
+  // SLOPE — diagonální šikmá plocha. Normála (−1, +1, −1)/√3 → ven k NW-up.
+  // UV: low corner v0 = (0.5, 0), high edge v6 = (0, 1), v4 = (1, 1).
+  addTri(
+    v0, v6, v4,
+    [-1 / SQRT3, 1 / SQRT3, -1 / SQRT3],
+    [0.5, 0], [0, 1], [1, 1],
+    0,
+  );
+
+  // TOP — plochý trojúhelník na Y=+0.5. CCW (v6, v5, v4) dává +Y normálu.
+  // UV: v6 (NW-most of triangle) = (0, 0), v5 (peak SE) = (1, 1), v4 = (1, 0).
+  addTri(
+    v6, v5, v4,
+    [0, 1, 0],
+    [0, 0], [1, 1], [1, 0],
+    1,
+  );
+
+  // BOTTOM — quad (v0, v1, v2, v3) na Y=−0.5. Stejné jako TRRAMPS.
+  addQuad(
+    v0, v1, v2, v3,
+    [0, -1, 0],
+    [0, 0], [1, 0], [1, 1], [0, 1],
+    2,
+  );
+
+  // WALL_FULL E — quad (v4, v5, v2, v1) na X=+0.5. CCW pro +X normálu.
+  // UV: top→bottom, N→S. v4 (top-N) = (0, 1), v5 (top-S) = (1, 1), v2 (bot-S) = (1, 0), v1 (bot-N) = (0, 0).
+  addQuad(
+    v4, v5, v2, v1,
+    [1, 0, 0],
+    [0, 1], [1, 1], [1, 0], [0, 0],
+    3,
+  );
+
+  // WALL_FULL S — quad (v5, v6, v3, v2) na Z=+0.5. CCW pro +Z normálu.
+  // UV: v5 (top-E) = (1, 1), v6 (top-W) = (0, 1), v3 (bot-W) = (0, 0), v2 (bot-E) = (1, 0).
+  addQuad(
+    v5, v6, v3, v2,
+    [0, 0, 1],
+    [1, 1], [0, 1], [0, 0], [1, 0],
+    3,
+  );
+
+  // WALL_TRI N — triangle (v0, v4, v1) na Z=−0.5. Pravoúhlý, normála (0,0,−1).
+  // UV: v0 (bot-W) = (0, 0), v4 (top-E, apex) = (1, 1), v1 (bot-E) = (1, 0).
+  addTri(
+    v0, v4, v1,
+    [0, 0, -1],
+    [0, 0], [1, 1], [1, 0],
+    4,
+  );
+
+  // WALL_TRI W — triangle (v0, v3, v6) na X=−0.5. Pravoúhlý, normála (−1,0,0).
+  // UV: v0 (bot-N) = (0, 0), v3 (bot-S) = (1, 0), v6 (top-S, apex) = (1, 1).
+  addTri(
+    v0, v3, v6,
+    [-1, 0, 0],
+    [0, 0], [1, 0], [1, 1],
+    4,
+  );
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geom.setAttribute("normal",   new THREE.Float32BufferAttribute(normals,   3));
+  geom.setAttribute("uv",       new THREE.Float32BufferAttribute(uvs,       2));
+  geom.setIndex(indices);
+  for (const g of groups) {
+    geom.addGroup(g.start, g.count, g.materialIndex);
+  }
+  return geom;
+})();
+
+// Sestaví TDRAMP instanci. 5 materials (SLOPE/TOP/BOTTOM/WALL_FULL/WALL_TRI).
+// Geometrie sdílená přes cache. ORIENTATION rotuje kolem Y.
+function createTDRampFor(instance) {
+  const materials = [
+    faceMaterialFor(instance.TEXTURE_SLOPE),      // 0
+    faceMaterialFor(instance.TEXTURE_TOP),        // 1
+    faceMaterialFor(instance.TEXTURE_BOTTOM),     // 2
+    faceMaterialFor(instance.TEXTURE_WALL_FULL),  // 3
+    faceMaterialFor(instance.TEXTURE_WALL_TRI),   // 4
+  ];
+  const mesh = new THREE.Mesh(TDRAMP_GEOM_CACHE, materials);
+  snapToGrid(mesh, instance);
+  mesh.rotation.y = instance.ORIENTATION * (Math.PI / 180);
+  return mesh;
+}
+
 // === TTUNELS — 1C blok s klenutým tunelem ===================================
 //
 // Geometrie: kvádr 1×1×1 mínus „obdélník + půlkruh extrudovaný v ose X" (=
@@ -1788,38 +1660,6 @@ function createTTunnelFor(instance) {
   return mesh;
 }
 
-// Sdílená box geometrie pro FACILITY placeholdery — 1×1×1 jednotka. Per-KIND
-// barva se řeší materiálem, ne geometrií, tak že geometrie může být sdílená.
-const _facilityGeom = new THREE.BoxGeometry(1, 1, 1);
-// Materiály cache per KIND (sdílené napříč instancemi stejného druhu).
-const _facilityMatCache = new Map();
-function facilityMat(kind) {
-  let mat = _facilityMatCache.get(kind);
-  if (!mat) {
-    const def = FACILITY_DEF[kind];
-    if (!def) {
-      console.warn(`Neznámý FACILITY KIND "${kind}", použiji fallback`);
-      mat = new THREE.MeshStandardMaterial({ color: 0x888888 });
-    } else {
-      mat = new THREE.MeshStandardMaterial({ color: def.color });
-    }
-    _facilityMatCache.set(kind, mat);
-  }
-  return mat;
-}
-
-// Sestaví placeholder mesh pro FACILITY: 1×1×1 box s plochou barvou dle KIND.
-// Snap-to-grid (DD-28 grid-center jako BLOCKS). Registruje instanci do
-// `facilities[]` pro per-frame produkční tick.
-function createFacilityFor(instance) {
-  const mesh = new THREE.Mesh(_facilityGeom, facilityMat(instance.KIND));
-  snapToGrid(mesh, instance);
-  // Registrace do produkčního registru. Idempotence: po reloadu scény (kdyby
-  // se kdy dělal hot-reload) by se duplikovala — pro MVP jednorázový build.
-  facilities.push(instance);
-  return mesh;
-}
-
 // Sestaví 2D billboard pro SPRITES instanci. Vrací `THREE.Sprite` — speciální
 // Three.js objekt, který se sám stará o to, aby byl vždy otočený ke kameře
 // (tzv. billboard). Nepotřebuje per-frame `lookAt(camera)`, projekce se řeší
@@ -1878,8 +1718,8 @@ function createSpriteFor(instance) {
 // (kontejner pro více mesh-children — Three.js s nimi pracuje jako s celkem).
 // Pozice je spojitá (float) — bez snap-to-grid.
 //
-// Dispatch podle konkrétní podtřídy COMPOSITES. Po DD-23 (sez. 15) zůstávají
-// jen voxel-based: TREE (pixel KIND-y) a VOXEL_MODEL (externí MV).
+// Dispatch podle konkrétní podtřídy COMPOSITES. Po DD-32 (sez. 24) zůstává
+// jen VOXEL_MODEL (externí MagicaVoxel pipeline, DD-21).
 function createCompositeFor(instance) {
   const group = new THREE.Group();
   group.position.set(instance.X, instance.Y, instance.Z);
@@ -1888,15 +1728,7 @@ function createCompositeFor(instance) {
   // proběhne v lokálním (rotovaném) prostoru group → bbox stále sedí.
   group.rotation.y = instance.ORIENTATION * (Math.PI / 180);
 
-  if (instance instanceof TREE) {
-    buildTree(group, instance);
-  } else if (instance instanceof GRASS_TUFT) {
-    buildGrassTuft(group, instance);
-  } else if (instance instanceof ROCK_PIXEL) {
-    buildRockPixel(group, instance);
-  } else if (instance instanceof LOG) {
-    buildLog(group, instance);
-  } else if (instance instanceof VOXEL_MODEL) {
+  if (instance instanceof VOXEL_MODEL) {
     buildVoxelModel(group, instance);
   }
 
@@ -2022,942 +1854,184 @@ function createPathFor(instance) {
   // s podkladem). Stromy nad cestou vrhají stín na ni → receive je užitečný.
   group.add(mesh);
 
-  // Registrace do paths registry — pathTick iteruje v render loopu. Dekorativní
-  // PATH (KIND="dirt", bez SOURCE/SINK) je zde také; pathTick je přeskočí
-  // missing-fields checkem. Boot-time validace category × KIND pro factory PATH.
-  paths.push(instance);
-  if (instance.RESOURCE && instance.KIND !== "dirt") {
-    const cat = RESOURCES_DEF[instance.RESOURCE]?.category;
-    const expected = cat === "fluid" ? "pipeline" : "conveyor";
-    if (instance.KIND !== expected) {
-      console.warn(
-        `[PATH] ${instance.ID}: RESOURCE "${instance.RESOURCE}" je ${cat}, ` +
-        `očekáván KIND="${expected}", máš "${instance.KIND}".`,
-      );
-    }
-  }
-
   return group;
 }
 
-// Strom — dispatch podle `instance.KIND` na konkrétní sub-builder.
-// Pattern izomorfní s ANIMATORS lookup tabulkou (DD-15) — model drží recept
-// (string), engine staví mesh. Default `"spruce"` (jehličnatý smrk).
-function buildTree(group, instance) {
-  const kind = instance.KIND ?? "spruce";
-  const builder = TREE_BUILDERS[kind];
-  if (!builder) {
-    console.warn(`[TREE] Unknown KIND "${kind}", fallback na "spruce".`);
-    TREE_BUILDERS.spruce(group);
-    return;
-  }
-  builder(group);
-}
+// === Terrain builder (DD-32, sez. 24) ===
+// `generateTerrain` (src/terrain.js) vrátí { blocks, water }; `buildScene`
+// spawne TCUBES (per-face textury dle kind) + water planes do scény.
 
-// === Pixel-voxel helpery pro varianty TREE.KIND ===
-// Velikost 1 pixelu = 0.125 j (= 1/8 TC voxelu = 12.5 cm). Strom 12-16 vrstev
-// → 1.5-2 m vysoký. Sdílená BoxGeometry + cache materiálů per barva (DRY).
-const TREE_PX = 0.125;
-const _treeBoxGeom = new THREE.BoxGeometry(TREE_PX, TREE_PX, TREE_PX);
-const _treeMatCache = new Map();
-function treeMat(color) {
-  let m = _treeMatCache.get(color);
-  if (!m) {
-    m = new THREE.MeshStandardMaterial({ color });
-    _treeMatCache.set(color, m);
-  }
-  return m;
-}
+// Per-surface texture sety pro TCUBES. „Boky/spodek = vždy `:dirt`" je
+// pravidlo z severské diorámy (sez. 17) — drží rodinu BLOCKS jednotnou.
+// Stone/sand top jdou bez gradientu (terén je tvořen většinou plochou paletou).
+const BLOCK_TEXTURES = {
+  grass: { TOP: ":grass-top", BOTTOM: ":dirt", NORTH: ":dirt",  SOUTH: ":dirt",  EAST: ":dirt",  WEST: ":dirt"  },
+  dirt:  { TOP: ":dirt",      BOTTOM: ":dirt", NORTH: ":dirt",  SOUTH: ":dirt",  EAST: ":dirt",  WEST: ":dirt"  },
+  stone: { TOP: ":stone",     BOTTOM: ":stone",NORTH: ":stone", SOUTH: ":stone", EAST: ":stone", WEST: ":stone" },
+  sand:  { TOP: ":sand",      BOTTOM: ":sand", NORTH: ":sand",  SOUTH: ":sand",  EAST: ":sand",  WEST: ":sand"  },
+};
 
-// Pixel-voxel na grid pozici (gx, gy, gz). gy=0 = první vrstva nad zemí.
-// Lokální Y center = (gy + 0.5) * TREE_PX → bottom face prvního voxelu (gy=0)
-// sedí přesně na lokální Y=0 (= group origin = world surface, viz DD-28).
-// Stíny dostane mesh později v `createMeshFor` traverzi (jednotné nastavení
-// pro všechny meshe scény, ne duplicitně tady).
-function treeVoxel(group, gx, gy, gz, color) {
-  const m = new THREE.Mesh(_treeBoxGeom, treeMat(color));
-  m.position.set(
-    (gx + 0.5) * TREE_PX,
-    (gy + 0.5) * TREE_PX,
-    (gz + 0.5) * TREE_PX,
+function createBlock(kind, x, y, z) {
+  const tex = BLOCK_TEXTURES[kind] ?? BLOCK_TEXTURES.dirt;
+  return new TCUBES(
+    `terrain_${kind}_${x}_${y}_${z}`,
+    kind,
+    x, y, z, tex,
+    `TCUBES — terrain ${kind} blok (generateTerrain).`,
   );
-  group.add(m);
 }
 
-// Vyplnění obdélníkového bloku v gridu — wraps `treeVoxel` přes 3D smyčku.
-function treeBlock(group, gx0, gy0, gz0, w, h, d, color) {
-  for (let dx = 0; dx < w; dx++) {
-    for (let dy = 0; dy < h; dy++) {
-      for (let dz = 0; dz < d; dz++) {
-        treeVoxel(group, gx0 + dx, gy0 + dy, gz0 + dz, color);
-      }
-    }
-  }
+// Vodní plane(y) — sdílený materiál + geometrie (DRY: water cells sdílí jeden
+// MeshStandardMaterial, šetří GPU pamět). Transparent + nízká opacity =
+// částečně vidět dno (dirt) pod vodou. Plane v rovině XZ (rotace −π/2 kolem X).
+const _waterMat = new THREE.MeshStandardMaterial({
+  color:        0x3a7090,
+  transparent:  true,
+  opacity:      0.7,
+  metalness:    0.15,
+  roughness:    0.35,
+  side:         THREE.DoubleSide,
+});
+const _waterGeom = new THREE.PlaneGeometry(1, 1);
+
+function createWaterPlane(w) {
+  const mesh = new THREE.Mesh(_waterGeom, _waterMat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(w.x, w.y, w.z);
+  mesh.scale.set(w.w, 1, w.d);  // X šířka, Z hloubka; plane je teď v XZ rovině po rotaci
+  mesh.receiveShadow = true;
+  return mesh;
 }
 
-// Diamond-cutoff vrstva v rovině XZ (|dx|+|dz| ≤ radius) na výšce gy.
-// Pro spruce/oak/maple koruny — měkčí, kulatější siluetu než plný 5×5.
-function treeDiamond(group, cx, gy, cz, radius, color) {
-  for (let dx = -radius; dx <= radius; dx++) {
-    for (let dz = -radius; dz <= radius; dz++) {
-      if (Math.abs(dx) + Math.abs(dz) > radius) continue;
-      treeVoxel(group, cx + dx, gy, cz + dz, color);
-    }
-  }
-}
-
-// === TREE_KIND barvy ===
-const TREE_C = {
-  trunkOak:    0x6b4423,
-  trunkDark:   0x4a3520,
-  trunkBirch:  0xeae5d8,
-  trunkBirchSpot: 0x222222,
-  trunkPalm:   0x8a6a3a,
-  trunkDead:   0x8c8278,
-  leafSpruce:  0x2a5a2a,
-  leafOak:     0x4a8a3a,
-  leafBirch:   0x9aae3a,    // žluto-zelená
-  leafCypress: 0x254520,    // tmavě zelená
-  leafBush:    0x5a8a3a,
-  leafPalm:    0x3a8430,
-  leafCoco:    0x8a6a3a,
-  leafWillow:  0x6a8a3a,    // olive
-  leafBonsai:  0xa84030,    // červená
-  leafBonsaiAlt: 0xc06b3a,  // oranžová akcent
-  leafMaple1:  0xd06028,
-  leafMaple2:  0xc04020,
-  leafMaple3:  0xe0a020,
+// === Ramp builders (DD-34 kandidát, sez. 26) ================================
+// `generateTerrain` krok 5 vrací `ramps[]` se 2 kindy:
+//   - "edge"   → TRRAMPS (klín) — primární přístupový ramp; volba směru
+//                greedy s criticality, compatibility check proti sousedním
+//                rampám (drop pokud dest má perpendikulární ramp = bok).
+//   - "corner" → TTRAMPS (jehlan) — sekundární estetický ramp pro isolated
+//                diag peak (A má 0 direct vyšších, ale diag corner vyšší
+//                + oba direct sousedi rohu jsou na úrovni A). Vyhladí ostrý
+//                rohový voxel; **není accessibility**, jen vyhlazení hrany.
+// SLOPE textura matchuje povrch vyššího cellu; boční stěny `:dirt` pro grass
+// (severská konvence „vrch grass, jinak dirt" sez. 17), jednotná pro stone/sand.
+const RAMP_EDGE_TEXTURES = {
+  grass: { SLOPE: ":grass-top", BOTTOM: ":dirt",  BACK: ":dirt",  LEFT: ":dirt",  RIGHT: ":dirt"  },
+  stone: { SLOPE: ":stone",     BOTTOM: ":stone", BACK: ":stone", LEFT: ":stone", RIGHT: ":stone" },
+  sand:  { SLOPE: ":sand",      BOTTOM: ":sand",  BACK: ":sand",  LEFT: ":sand",  RIGHT: ":sand"  },
+};
+const RAMP_CORNER_TEXTURES = {
+  grass: { SLOPE: ":grass-top", BOTTOM: ":dirt",  BACK: ":dirt",  LEFT: ":dirt"  },
+  stone: { SLOPE: ":stone",     BOTTOM: ":stone", BACK: ":stone", LEFT: ":stone" },
+  sand:  { SLOPE: ":sand",      BOTTOM: ":sand",  BACK: ":sand",  LEFT: ":sand"  },
+};
+// TDRAMP texture sety — severská konvence (vrch grass-top, ostatní dirt).
+// SLOPE + TOP sdílí texturu (vizuálně 1 lomený povrch).
+const RAMP_DIAGONAL_TEXTURES = {
+  grass: { SLOPE: ":grass-top", TOP: ":grass-top", BOTTOM: ":dirt",  WALL_FULL: ":dirt",  WALL_TRI: ":dirt"  },
+  stone: { SLOPE: ":stone",     TOP: ":stone",     BOTTOM: ":stone", WALL_FULL: ":stone", WALL_TRI: ":stone" },
+  sand:  { SLOPE: ":sand",      TOP: ":sand",      BOTTOM: ":sand",  WALL_FULL: ":sand",  WALL_TRI: ":sand"  },
 };
 
-// === Sub-buildery — všechny pixel-voxel (DD-23, sez. 15) ===
-
-// Smrk — úzký jehlan, tmavě zelená koruna ve 3 vrstvách diamond.
-function buildTreeSpruce(group) {
-  // Kmen 1×4 tmavě hnědá
-  treeBlock(group, 0, 0, 0, 1, 4, 1, TREE_C.trunkDark);
-  // Koruna 3 patra zužující se
-  treeDiamond(group, 0, 4, 0, 2, TREE_C.leafSpruce);   // 5×5 diamond (13)
-  treeDiamond(group, 0, 5, 0, 2, TREE_C.leafSpruce);
-  treeDiamond(group, 0, 6, 0, 1, TREE_C.leafSpruce);   // 3×3 diamond (5)
-  treeDiamond(group, 0, 7, 0, 1, TREE_C.leafSpruce);
-  treeVoxel(group, 0, 8, 0, TREE_C.leafSpruce);        // špička
-  treeVoxel(group, 0, 9, 0, TREE_C.leafSpruce);
+function createRampEdge(r) {
+  const tex = RAMP_EDGE_TEXTURES[r.surface] ?? RAMP_EDGE_TEXTURES.grass;
+  return new TRRAMPS(
+    `ramp_edge_${r.surface}_${r.x}_${r.y}_${r.z}`,
+    `ramp_${r.surface}`,
+    r.x, r.y, r.z, tex, r.orientation,
+    `TRRAMPS — edge ramp (${r.surface}) na step generovaného terénu.`,
+  );
 }
 
-// Dub — kulatá listnatá koruna, kratší kmen.
-function buildTreeOak(group) {
-  treeBlock(group, 0, 0, 0, 1, 3, 1, TREE_C.trunkOak);
-  // Koruna ~5×4×5 zaoblená
-  treeDiamond(group, 0, 3, 0, 2, TREE_C.leafOak);
-  treeBlock(group, -2, 4, -2, 5, 1, 5, TREE_C.leafOak);
-  treeBlock(group, -2, 5, -2, 5, 1, 5, TREE_C.leafOak);
-  treeDiamond(group, 0, 6, 0, 2, TREE_C.leafOak);
-  treeBlock(group, -1, 7, -1, 3, 1, 3, TREE_C.leafOak);
-  treeVoxel(group, 0, 8, 0, TREE_C.leafOak);
+function createRampCorner(r) {
+  const tex = RAMP_CORNER_TEXTURES[r.surface] ?? RAMP_CORNER_TEXTURES.grass;
+  return new TTRAMPS(
+    `ramp_corner_${r.surface}_${r.x}_${r.y}_${r.z}`,
+    `ramp_${r.surface}`,
+    r.x, r.y, r.z, tex, r.orientation,
+    `TTRAMPS — corner ramp (${r.surface}) pro isolated diag peak.`,
+  );
 }
 
-// Bříza — bílo-černý kmen vyšší, žluto-zelená oválná koruna.
-function buildTreeBirch(group) {
-  treeBlock(group, 0, 0, 0, 1, 6, 1, TREE_C.trunkBirch);
-  // Černé skvrny na kmeni
-  treeVoxel(group, 0, 1, 0, TREE_C.trunkBirchSpot);
-  treeVoxel(group, 0, 3, 0, TREE_C.trunkBirchSpot);
-  // Koruna oválná
-  treeDiamond(group, 0, 5, 0, 1, TREE_C.leafBirch);
-  treeBlock(group, -1, 6, -1, 3, 1, 3, TREE_C.leafBirch);
-  treeBlock(group, -1, 7, -1, 3, 1, 3, TREE_C.leafBirch);
-  treeVoxel(group, 0, 8, 0, TREE_C.leafBirch);
+function createRampDiagonal(r) {
+  const tex = RAMP_DIAGONAL_TEXTURES[r.surface] ?? RAMP_DIAGONAL_TEXTURES.grass;
+  return new TDRAMP(
+    `ramp_diagonal_${r.surface}_${r.x}_${r.y}_${r.z}`,
+    `ramp_${r.surface}`,
+    r.x, r.y, r.z, tex, r.orientation,
+    `TDRAMP — diagonální rampa (${r.surface}) pro 3-cell convex peak.`,
+  );
 }
 
-// Palma — vysoký tenký kmen + 4 listové paprsky + 2 kokos.
-function buildTreePalm(group) {
-  treeBlock(group, 0, 0, 0, 1, 8, 1, TREE_C.trunkPalm);
-  // Listy — 4 paprsky ven, na výšce 8
-  treeBlock(group, 1, 8, 0, 3, 1, 1, TREE_C.leafPalm);   // východ
-  treeBlock(group, -3, 8, 0, 3, 1, 1, TREE_C.leafPalm);  // západ
-  treeBlock(group, 0, 8, 1, 1, 1, 3, TREE_C.leafPalm);   // jih
-  treeBlock(group, 0, 8, -3, 1, 1, 3, TREE_C.leafPalm);  // sever
-  // Špička listů ohnutá o 1 dolů
-  treeVoxel(group, 3, 7, 0, TREE_C.leafPalm);
-  treeVoxel(group, -3, 7, 0, TREE_C.leafPalm);
-  treeVoxel(group, 0, 7, 3, TREE_C.leafPalm);
-  treeVoxel(group, 0, 7, -3, TREE_C.leafPalm);
-  // Kokos pod listy
-  treeVoxel(group, 1, 7, 1, TREE_C.leafCoco);
-  treeVoxel(group, -1, 7, -1, TREE_C.leafCoco);
-}
-
-// Keř — bez kmene, jen kulatá koruna nízká.
-function buildTreeBush(group) {
-  treeDiamond(group, 0, 0, 0, 2, TREE_C.leafBush);
-  treeBlock(group, -2, 1, -2, 5, 1, 5, TREE_C.leafBush);
-  treeDiamond(group, 0, 2, 0, 2, TREE_C.leafBush);
-  treeBlock(group, -1, 3, -1, 3, 1, 3, TREE_C.leafBush);
-  treeVoxel(group, 0, 4, 0, TREE_C.leafBush);
-}
-
-// Cypřiš — úzký vysoký jehličnan, sloupec + boční rozšíření, tmavě zelený.
-function buildTreeCypress(group) {
-  // Centrální sloupec
-  treeBlock(group, 0, 0, 0, 1, 10, 1, TREE_C.leafCypress);
-  // Boční rozšíření + (1 voxel ven N/S/E/W) ve výškách 1..8
-  for (let gy = 1; gy <= 8; gy++) {
-    treeVoxel(group, 1, gy, 0, TREE_C.leafCypress);
-    treeVoxel(group, -1, gy, 0, TREE_C.leafCypress);
-    treeVoxel(group, 0, gy, 1, TREE_C.leafCypress);
-    treeVoxel(group, 0, gy, -1, TREE_C.leafCypress);
-  }
-}
-
-// Vrba — kmen + kulatá koruna + visící větve (sloupce dolů z okrajů koruny).
-function buildTreeWillow(group) {
-  treeBlock(group, 0, 0, 0, 1, 4, 1, TREE_C.trunkOak);
-  // Koruna hlavní
-  treeDiamond(group, 0, 4, 0, 2, TREE_C.leafWillow);
-  treeBlock(group, -2, 5, -2, 5, 1, 5, TREE_C.leafWillow);
-  treeDiamond(group, 0, 6, 0, 2, TREE_C.leafWillow);
-  treeVoxel(group, 0, 7, 0, TREE_C.leafWillow);
-  // Visící větve — 4× sloupec dolů z okrajů (gy=2..3 pod úrovní hlavní koruny)
-  for (let gy = 2; gy <= 3; gy++) {
-    treeVoxel(group, 2, gy, 0, TREE_C.leafWillow);
-    treeVoxel(group, -2, gy, 0, TREE_C.leafWillow);
-    treeVoxel(group, 0, gy, 2, TREE_C.leafWillow);
-    treeVoxel(group, 0, gy, -2, TREE_C.leafWillow);
-  }
-}
-
-// Bonsai — malý zkroucený S-kmen + drobná červená koruna.
-function buildTreeBonsai(group) {
-  // S-kmen: spodní 2 vlevo, horní 2 vpravo
-  treeVoxel(group, 0, 0, 0, TREE_C.trunkDark);
-  treeVoxel(group, 0, 1, 0, TREE_C.trunkDark);
-  treeVoxel(group, 1, 2, 0, TREE_C.trunkDark);
-  treeVoxel(group, 1, 3, 0, TREE_C.trunkDark);
-  // Drobná koruna nad horním koncem kmene
-  treeDiamond(group, 1, 4, 0, 1, TREE_C.leafBonsai);
-  treeVoxel(group, 1, 5, 0, TREE_C.leafBonsaiAlt);
-  treeVoxel(group, 2, 4, 0, TREE_C.leafBonsaiAlt);
-}
-
-// Suchý strom — vysoký šedý kmen, 2-3 holé větve, žádná koruna.
-function buildTreeDead(group) {
-  treeBlock(group, 0, 0, 0, 1, 9, 1, TREE_C.trunkDead);
-  // Větev vpravo (gy=5)
-  treeVoxel(group, 1, 5, 0, TREE_C.trunkDead);
-  treeVoxel(group, 2, 5, 0, TREE_C.trunkDead);
-  treeVoxel(group, 2, 6, 0, TREE_C.trunkDead);
-  // Větev vlevo nahoře (gy=7)
-  treeVoxel(group, -1, 7, 0, TREE_C.trunkDead);
-  treeVoxel(group, -2, 7, 0, TREE_C.trunkDead);
-  // Větvička dopředu (gy=6)
-  treeVoxel(group, 0, 6, 1, TREE_C.trunkDead);
-  treeVoxel(group, 0, 6, 2, TREE_C.trunkDead);
-}
-
-// Javor — kmen + podzimní oranžovo-červená koruna s mix barev.
-function buildTreeMaple(group) {
-  treeBlock(group, 0, 0, 0, 1, 4, 1, TREE_C.trunkOak);
-  // Koruna 5×3×5 s namixovanými podzimními barvami (deterministic via gx+gz parita)
-  const mapleColors = [TREE_C.leafMaple1, TREE_C.leafMaple2, TREE_C.leafMaple3];
-  function mapleColorAt(gx, gz) {
-    return mapleColors[((gx + gz + 100) % 3 + 3) % 3];
-  }
-  // gy=4 — diamond r=2
-  for (let dx = -2; dx <= 2; dx++) {
-    for (let dz = -2; dz <= 2; dz++) {
-      if (Math.abs(dx) + Math.abs(dz) > 2) continue;
-      treeVoxel(group, dx, 4, dz, mapleColorAt(dx, dz));
-    }
-  }
-  // gy=5 — full 5×5
-  for (let dx = -2; dx <= 2; dx++) {
-    for (let dz = -2; dz <= 2; dz++) {
-      treeVoxel(group, dx, 5, dz, mapleColorAt(dx, dz + 1));
-    }
-  }
-  // gy=6 — 3×3
-  for (let dx = -1; dx <= 1; dx++) {
-    for (let dz = -1; dz <= 1; dz++) {
-      treeVoxel(group, dx, 6, dz, mapleColorAt(dx + 1, dz));
-    }
-  }
-  treeVoxel(group, 0, 7, 0, TREE_C.leafMaple3);
-}
-
-// === Dispatch tabulka KIND → builder ===
-const TREE_BUILDERS = {
-  spruce:  buildTreeSpruce,
-  oak:     buildTreeOak,
-  birch:   buildTreeBirch,
-  palm:    buildTreePalm,
-  bush:    buildTreeBush,
-  cypress: buildTreeCypress,
-  willow:  buildTreeWillow,
-  bonsai:  buildTreeBonsai,
-  dead:    buildTreeDead,
-  maple:   buildTreeMaple,
+// Default parametry generátoru — UI panel `#terrainctrl` je přepíše (fáze 3).
+const TERRAIN_DEFAULTS = {
+  size:     [10, 10],
+  relief:   3,                                                     // Rolling hills (anglický venkov)
+  surfaces: { grass: 0.80, stone: 0.10, sand: 0.05, water: 0.05 }, // čtyři biomy
+  seed:     42,
 };
 
-// === Doplňková flora a kameny — vrstva 2 DD-25 (GRASS_TUFT, ROCK_PIXEL, LOG) ===
-// Sdílí pixel helpery `treeMat` / `treeVoxel` / `treeBlock` (DRY) — naming
-// je tree-prefixed historicky, ale helper sám je obecný pixel-voxel idiom.
-
-const DECO_C = {
-  grassDark:   0x3a6a2a,
-  grassMid:    0x5a8a3a,
-  grassYellow: 0x9aae3a,
-  fernDark:    0x254520,
-  rockGray:    0x6a6a6a,
-  rockDark:    0x4a4a4a,
-  rockLight:   0x8a8a8a,
-  moss:        0x4a7a3a,
-  logBirch:    0xeae5d8,
-  logBirchSpot: 0x222222,
-  logPine:     0x6b4423,
-  logPineCore: 0x8a6435,
-};
-
-// --- GRASS_TUFT buildery ---
-
-// Mikro voxel zeleně — jediný 1×1×1 voxel (= 0.125 j ≈ 12.5 cm).
-function buildGrassMicro(group) {
-  treeVoxel(group, 0, 0, 0, DECO_C.grassMid);
-}
-
-// Krátký trsík — 3 voxely vrcholu, široký 2×2.
-function buildGrassShort(group) {
-  treeVoxel(group, 0, 0, 0, DECO_C.grassMid);
-  treeVoxel(group, 1, 0, 0, DECO_C.grassDark);
-  treeVoxel(group, 0, 0, 1, DECO_C.grassDark);
-  treeVoxel(group, 1, 0, 1, DECO_C.grassMid);
-  treeVoxel(group, 0, 1, 0, DECO_C.grassYellow);
-  treeVoxel(group, 1, 1, 1, DECO_C.grassYellow);
-}
-
-// Kapradina — 5-listá rozšířená do stran (severské lesní podloží).
-function buildGrassFern(group) {
-  // Středový stonek
-  treeBlock(group, 0, 0, 0, 1, 2, 1, DECO_C.fernDark);
-  // 4 listy vně
-  treeVoxel(group, 1, 1, 0, DECO_C.fernDark);
-  treeVoxel(group, -1, 1, 0, DECO_C.fernDark);
-  treeVoxel(group, 0, 1, 1, DECO_C.fernDark);
-  treeVoxel(group, 0, 1, -1, DECO_C.fernDark);
-  treeVoxel(group, 0, 2, 0, DECO_C.fernDark);
-}
-
-const GRASS_TUFT_BUILDERS = {
-  micro: buildGrassMicro,
-  short: buildGrassShort,
-  fern:  buildGrassFern,
-};
-
-function buildGrassTuft(group, instance) {
-  const kind = instance.KIND ?? "short";
-  const builder = GRASS_TUFT_BUILDERS[kind];
-  if (!builder) {
-    console.warn(`[GRASS_TUFT] Unknown KIND "${kind}", fallback "short".`);
-    GRASS_TUFT_BUILDERS.short(group);
-    return;
+// Spawne terrain z parametrů do scény. Každý mesh dostane `userData.terrain
+// = true` jako marker pro `regenerateScene` (filter při wipe). Volaný z
+// `buildScene` (init) i z `regenerateScene` (UI panel `change` events).
+function spawnTerrain(params) {
+  const terrain = generateTerrain(params);
+  for (const [kind, x, y, z] of terrain.blocks) {
+    const mesh = createMeshFor(createBlock(kind, x, y, z));
+    mesh.userData.terrain = true;
+    scene.add(mesh);
   }
-  builder(group);
-}
-
-// --- ROCK_PIXEL buildery ---
-
-// Mikro kámen — jediný 1×1×1 voxel (oblázek).
-function buildRockMicro(group) {
-  treeVoxel(group, 0, 0, 0, DECO_C.rockGray);
-}
-
-// Malý kámen — 2×1×2 shluk se světlou špičkou.
-function buildRockSmall(group) {
-  treeBlock(group, 0, 0, 0, 2, 1, 2, DECO_C.rockGray);
-  treeVoxel(group, 0, 1, 1, DECO_C.rockLight);
-}
-
-// Střední kámen — 3×2×3 cluster s temnými nárohy a světlým vrcholem.
-function buildRockMedium(group) {
-  // Spodek 3×3 šedý
-  treeBlock(group, 0, 0, 0, 3, 1, 3, DECO_C.rockGray);
-  // Tmavé rohy spodku
-  treeVoxel(group, 0, 0, 0, DECO_C.rockDark);
-  treeVoxel(group, 2, 0, 2, DECO_C.rockDark);
-  // Druhé patro 2×2 posunuté
-  treeBlock(group, 1, 1, 0, 2, 1, 2, DECO_C.rockGray);
-  // Vrcholový voxel světlý
-  treeVoxel(group, 1, 2, 1, DECO_C.rockLight);
-}
-
-// Mechový kámen — medium s mechovým povlakem nahoře (severská vlhkost).
-function buildRockMossy(group) {
-  treeBlock(group, 0, 0, 0, 3, 1, 3, DECO_C.rockGray);
-  treeVoxel(group, 0, 0, 0, DECO_C.rockDark);
-  treeVoxel(group, 2, 0, 0, DECO_C.rockDark);
-  treeBlock(group, 1, 1, 1, 2, 1, 2, DECO_C.rockGray);
-  // Mech nahoře — místo světlého voxelu
-  treeVoxel(group, 1, 2, 1, DECO_C.moss);
-  treeVoxel(group, 0, 1, 0, DECO_C.moss);
-  treeVoxel(group, 2, 1, 2, DECO_C.moss);
-}
-
-const ROCK_PIXEL_BUILDERS = {
-  micro:  buildRockMicro,
-  small:  buildRockSmall,
-  medium: buildRockMedium,
-  mossy:  buildRockMossy,
-};
-
-function buildRockPixel(group, instance) {
-  const kind = instance.KIND ?? "small";
-  const builder = ROCK_PIXEL_BUILDERS[kind];
-  if (!builder) {
-    console.warn(`[ROCK_PIXEL] Unknown KIND "${kind}", fallback "small".`);
-    ROCK_PIXEL_BUILDERS.small(group);
-    return;
+  for (const w of terrain.water) {
+    const mesh = createWaterPlane(w);
+    mesh.userData.terrain = true;
+    scene.add(mesh);
   }
-  builder(group);
-}
-
-// --- LOG buildery (padlý kmen, leží podél lokální osy X) ---
-
-// Pařez — jediný voxel dřeva (kousek nebo úplně malý pařízek).
-function buildLogStump(group) {
-  treeVoxel(group, 0, 0, 0, DECO_C.logPine);
-}
-
-// Bříza — bílý kmen s 3 černými skvrnami. 6 voxelů dlouhý, 1×1 průřez.
-function buildLogBirch(group) {
-  treeBlock(group, 0, 0, 0, 6, 1, 1, DECO_C.logBirch);
-  treeVoxel(group, 1, 0, 0, DECO_C.logBirchSpot);
-  treeVoxel(group, 3, 0, 0, DECO_C.logBirchSpot);
-  treeVoxel(group, 5, 0, 0, DECO_C.logBirchSpot);
-}
-
-// Borovice — hnědý kmen s tmavšími prstenci a světlým středem na konci.
-function buildLogPine(group) {
-  treeBlock(group, 0, 0, 0, 5, 1, 1, DECO_C.logPine);
-  // Konec s viditelným letokruhem
-  treeVoxel(group, 5, 0, 0, DECO_C.logPineCore);
-  // Tmavší prstence
-  treeVoxel(group, 1, 0, 0, DECO_C.logBirchSpot);
-  treeVoxel(group, 3, 0, 0, DECO_C.logBirchSpot);
-}
-
-const LOG_BUILDERS = {
-  stump: buildLogStump,
-  birch: buildLogBirch,
-  pine:  buildLogPine,
-};
-
-function buildLog(group, instance) {
-  const kind = instance.KIND ?? "birch";
-  const builder = LOG_BUILDERS[kind];
-  if (!builder) {
-    console.warn(`[LOG] Unknown KIND "${kind}", fallback "birch".`);
-    LOG_BUILDERS.birch(group);
-    return;
+  // Rampy vyhladí 1-voxel stepy (DD-34 kandidát) — kindy: edge (TRRAMPS),
+  // corner (TTRAMPS), diagonal (TDRAMP). Generátor v `terrain.js` kroku 5.
+  for (const r of terrain.ramps ?? []) {
+    let inst;
+    if      (r.kind === "edge")     inst = createRampEdge(r);
+    else if (r.kind === "corner")   inst = createRampCorner(r);
+    else if (r.kind === "diagonal") inst = createRampDiagonal(r);
+    else continue;
+    const mesh = createMeshFor(inst);
+    mesh.userData.terrain = true;
+    scene.add(mesh);
   }
-  builder(group);
 }
 
-
-// === Scéna: 10×10 voxelová dioráma ===
-// Po DD-23 (sez. 15) je toto jediná scéna v TheCubes — vše voxelové.
-
-// Helpery pro 3 typy voxelových bloků — sdílený pattern (izomorfismus DD-14).
-function makeStoneBlock(id, x, y, z) {
-  return new TCUBES(id, `Skála (${x}, ${y}, ${z})`, x, y, z, {
-    TOP:    ":stone", BOTTOM: ":stone",
-    NORTH:  ":stone", SOUTH:  ":stone",
-    EAST:   ":stone", WEST:   ":stone",
-  }, "TCUBES — skála (šedý kamenný blok).");
+// Vymaže staré terrain meshes ze scény (filter dle `userData.terrain`) a
+// spawne nové dle `params`. Volaný z UI panelu `#terrainctrl` na `change`
+// event slideru (rozhodnutí sez. 26: ne `input`, ne debounce, ne button —
+// jeden regen per dotažení slideru).
+//
+// Cleanup `meshByInstance`: každý terrain block je TCUBES instance s unikátním
+// ID `terrain_<kind>_<x>_<y>_<z>` (viz `createBlock`); po odstranění mesh-e
+// pustíme i mapu, jinak by tooltip držel zmrtvělé reference.
+//
+// Geometrie + materiály: per-face textury TCUBES jsou sdílené singletony
+// (BLOCK_TEXTURES + texture cache), water plane sdílí `_waterGeom`/`_waterMat`
+// — tedy žádné `dispose()` (zničili bychom shared resource). GC posbírá jen
+// Mesh wrappery.
+function regenerateScene(params) {
+  const stale = scene.children.filter((c) => c.userData.terrain === true);
+  for (const mesh of stale) {
+    scene.remove(mesh);
+    const inst = mesh.userData.instance;
+    if (inst) meshByInstance.delete(inst.ID);
+  }
+  spawnTerrain(params);
 }
-
-function makeDirtBlock(id, x, y, z) {
-  return new TCUBES(id, `Hlína (${x}, ${y}, ${z})`, x, y, z, {
-    TOP:    ":dirt", BOTTOM: ":dirt",
-    NORTH:  ":dirt", SOUTH:  ":dirt",
-    EAST:   ":dirt", WEST:   ":dirt",
-  }, "TCUBES — hlíněný blok.");
-}
-
-function makeGrassBlock(id, x, y, z) {
-  return new TCUBES(id, `Tráva (${x}, ${y}, ${z})`, x, y, z, {
-    TOP:    ":grass-top", BOTTOM: ":dirt",
-    NORTH:  ":dirt", SOUTH:  ":dirt",
-    EAST:   ":dirt", WEST:   ":dirt",
-  }, "TCUBES — travnatý blok (vrch grass, boky/spodek hlína).");
-}
-
-
-// Layout Scény 2 — exportovaný z builderu (sez. 14). Pravidlo „překryté =
-// hlína / skála" je už aplikované při exportu (grass s Y+1 obsazené → dirt;
-// + Y+2 obsazené → stone). Aktualizace: postavit v builderu, kliknout
-// „Export do clipboardu", nahradit obsah pole.
-const SCENE_LAYOUT = [
-  ["dirt", -5, -1, -5],
-  ["dirt", -5, 0, -5],
-  ["dirt", -5, 1, -5],
-  ["grass", -5, 2, -5],
-  ["dirt", -4, -1, -5],
-  ["dirt", -4, 0, -5],
-  ["dirt", -4, 1, -5],
-  ["grass", -4, 2, -5],
-  ["dirt", -3, -1, -5],
-  ["dirt", -3, 0, -5],
-  ["grass", -3, 1, -5],
-  ["dirt", -2, -1, -5],
-  ["dirt", -2, 0, -5],
-  ["grass", -2, 1, -5],
-  ["dirt", -1, -1, -5],
-  ["dirt", -1, 0, -5],
-  ["dirt", 0, -1, -5],
-  ["dirt", 0, 0, -5],
-  ["grass", 0, 1, -5],
-  ["dirt", 1, -1, -5],
-  ["dirt", 1, 0, -5],
-  ["grass", 1, 1, -5],
-  ["dirt", 2, -1, -5],
-  ["dirt", 2, 0, -5],
-  ["stone", 2, 1, -5],
-  ["stone", 2, 2, -5],
-  ["dirt", 3, -1, -5],
-  ["dirt", 3, 0, -5],
-  ["dirt", 3, 1, -5],
-  ["grass", 3, 2, -5],
-  ["dirt", 4, -1, -5],
-  ["dirt", 4, 0, -5],
-  ["dirt", 4, 1, -5],
-  ["grass", 4, 2, -5],
-  ["dirt", -5, -1, -4],
-  ["dirt", -5, 0, -4],
-  ["grass", -5, 1, -4],
-  ["dirt", -4, -1, -4],
-  ["dirt", -4, 0, -4],
-  ["grass", -4, 1, -4],
-  ["dirt", -3, -1, -4],
-  ["grass", -3, 0, -4],
-  ["dirt", -2, -1, -4],
-  ["grass", -2, 0, -4],
-  ["grass", -1, -1, -4],
-  ["grass", 0, -1, -4],
-  ["dirt", 1, -1, -4],
-  ["stone", 1, 0, -4],
-  ["dirt", 2, -1, -4],
-  ["stone", 2, 0, -4],
-  ["stone", 3, -1, -4],
-  ["dirt", 3, 0, -4],
-  ["stone", 3, 1, -4],
-  ["dirt", 4, -1, -4],
-  ["grass", 4, 0, -4],
-  ["dirt", -5, -1, -3],
-  ["dirt", -5, 0, -3],
-  ["grass", -5, 1, -3],
-  ["dirt", -4, -1, -3],
-  // (Y=0 vynecháno — místo pro tunelový oblouk arch_left)
-  ["grass", -3, -1, -3],
-  ["grass", -2, -1, -3],
-  ["grass", -1, -1, -3],
-  ["grass", 0, -1, -3],
-  ["grass", 1, -1, -3],
-  ["grass", 2, -1, -3],
-  ["dirt", 3, -1, -3],
-  // (Y=0 vynecháno — místo pro tunelový oblouk arch_right)
-  ["dirt", 4, -1, -3],
-  ["grass", 4, 0, -3],
-  ["dirt", -5, -1, -2],
-  ["dirt", -5, 0, -2],
-  ["grass", -5, 1, -2],
-  ["grass", -4, -1, -2],
-  ["grass", -3, -1, -2],
-  ["grass", -2, -1, -2],
-  ["grass", -1, -1, -2],
-  ["grass", 0, -1, -2],
-  ["grass", 1, -1, -2],
-  ["grass", 2, -1, -2],
-  ["grass", 3, -1, -2],
-  ["dirt", 4, -1, -2],
-  ["grass", 4, 0, -2],
-  ["grass", -5, -1, -1],
-  ["grass", -4, -1, -1],
-  ["grass", -3, -1, -1],
-  ["grass", -2, -1, -1],
-  ["grass", -1, -1, -1],
-  ["grass", 0, -1, -1],
-  ["grass", 1, -1, -1],
-  ["grass", 2, -1, -1],
-  ["grass", 3, -1, -1],
-  ["dirt", 4, -1, -1],
-  ["grass", 4, 0, -1],
-  ["dirt", -5, -1, 0],
-  ["grass", -5, 0, 0],
-  ["grass", -4, -1, 0],
-  ["grass", -3, -1, 0],
-  ["grass", -2, -1, 0],
-  ["grass", -1, -1, 0],
-  ["grass", 0, -1, 0],
-  ["grass", 1, -1, 0],
-  ["grass", 2, -1, 0],
-  ["grass", 3, -1, 0],
-  ["grass", 4, -1, 0],
-  ["dirt", -5, -1, 1],
-  ["grass", -5, 0, 1],
-  ["grass", -4, -1, 1],
-  ["grass", -3, -1, 1],
-  ["grass", -2, -1, 1],
-  ["grass", -1, -1, 1],
-  ["grass", 0, -1, 1],
-  ["grass", 1, -1, 1],
-  ["grass", 2, -1, 1],
-  ["grass", 3, -1, 1],
-  ["grass", 4, -1, 1],
-  ["grass", -5, -1, 2],
-  ["grass", -4, -1, 2],
-  ["grass", -3, -1, 2],
-  ["grass", -2, -1, 2],
-  ["grass", -1, -1, 2],
-  ["grass", 0, -1, 2],
-  ["grass", 1, -1, 2],
-  ["stone", 2, -1, 2],
-  ["dirt", 3, -1, 2],
-  ["stone", 3, 0, 2],
-  ["grass", 4, -1, 2],
-  ["grass", -5, -1, 3],
-  ["grass", -4, -1, 3],
-  ["grass", -3, -1, 3],
-  ["grass", -2, -1, 3],
-  ["grass", -1, -1, 3],
-  ["grass", 0, -1, 3],
-  ["grass", 1, -1, 3],
-  ["dirt", 2, -1, 3],
-  ["grass", 2, 0, 3],
-  ["stone", 3, -1, 3],
-  ["stone", 3, 0, 3],
-  ["grass", 4, -1, 3],
-  ["grass", -5, -1, 4],
-  ["grass", -4, -1, 4],
-  ["grass", -3, -1, 4],
-  ["grass", -2, -1, 4],
-  ["grass", -1, -1, 4],
-  ["grass", 0, -1, 4],
-  ["grass", 1, -1, 4],
-  ["grass", 2, -1, 4],
-  ["grass", 3, -1, 4],
-  ["grass", 4, -1, 4],
-];
+// Globální expose pro HTML panel `#terrainctrl` (inline script v index.html).
+window.regenerateScene = regenerateScene;
 
 function buildScene(scene) {
-  const FACTORIES = {
-    grass: makeGrassBlock,
-    dirt:  makeDirtBlock,
-    stone: makeStoneBlock,
-  };
-  for (const [kind, x, y, z] of SCENE_LAYOUT) {
-    const id = `s2_${kind}_${x + 5}_${y + 1}_${z + 5}`;
-    scene.add(createMeshFor(FACTORIES[kind](id, x, y, z)));
-  }
+  // Vizuální orientace — GridHelper (20×20) + AxesHelper (2 j červená/zelená/modrá).
+  scene.add(new THREE.GridHelper(20, 20, 0x444444, 0x222222));
+  scene.add(new THREE.AxesHelper(2));
 
-  // Tunelové vstupy — TTUNELS bloky (DD-25 procedurální geometrie). Nahrazují
-  // dřívější 3×3×3 TC VOXEL_MODEL `tunel-grass` (sez. 14, DD-21). 1C velikost
-  // místo 3C — užší tunel, ale konzistentní s rodinou Bloků. Y=0 = grid Y voxelu
-  // (BLOCKS = mesh center semantics, snap-to-int v rendereru; viz DD-28).
-  // Vlak jezdí podél X osy na Z = −3. Default ORIENTATION=0 = vstupy ±X.
-  // SIDES = `:dirt` (eliminuje druhý grass-strip pásek).
-  const TUNEL_TEX = {
-    TOP:     ":grass-top",
-    SIDES:   ":dirt",
-    WALLS:   ":stone",
-    CEILING: ":stone",
-  };
-  scene.add(createMeshFor(new TTUNELS(
-    "tunnel_0", "Tunel vlevo", -4, 0, -3, TUNEL_TEX, 0,
-    "TTUNELS — tunelový vstup vlevo (osa X).",
-  )));
-  scene.add(createMeshFor(new TTUNELS(
-    "tunnel_1", "Tunel vpravo", 3, 0, -3, TUNEL_TEX, 0,
-    "TTUNELS — tunelový vstup vpravo (osa X).",
-  )));
-
-  // Travnaté rampy — Bloky (DD-25 kandidát: 1C grid-aligned, procedurální).
-  // Per-face textury sdílí paletu s grass cube voxely (`:grass-top` svah,
-  // `:grass-top` na vrchu/svahu, `:dirt` na všech bočních faces (= konzistence
-  // s grass blokem; sez. 17 zjednodušení BLOCKS rodiny).
-  const TRRAMP_TEX = {
-    SLOPE:  ":grass-top",
-    BOTTOM: ":dirt",
-    BACK:   ":dirt",
-    LEFT:   ":dirt",
-    RIGHT:  ":dirt",
-  };
-  const TTRAMP_TEX = {
-    SLOPE:  ":grass-top",
-    BOTTOM: ":dirt",
-    BACK:   ":dirt",
-    LEFT:   ":dirt",
-  };
-  // TRRAMPS (trojboký hranol) — ORIENTATION=90° (CCW od defaultu) otočí apex
-  // na −X → svah stoupá v −X (= vede z grass(-4,-1,0) k peaku (-5,0,0)).
-  // Pozice (-4, 0, 0) = jeden voxel nahoru od grass podlahy (BLOCKS Y konvence).
-  scene.add(createMeshFor(new TRRAMPS(
-    "ramp_0", "Travnatá rampa Z=0", -4, 0, 0, TRRAMP_TEX, 90,
-    "TRRAMPS — trojboký hranol, svah stoupá v −X. Spojuje grass(-4,-1,0) → peak(-5,0,0).",
-  )));
-  // TTRAMPS (trojboký jehlan) — ORIENTATION=0° (default). Apex Y vrchol směřuje
-  // do NW-top rohu bloku.
-  scene.add(createMeshFor(new TTRAMPS(
-    "ramp_1", "Trojúhelníková rampa Z=1", -4, 0, 1, TTRAMP_TEX, 0,
-    "TTRAMPS — trojboký jehlan (corner ramp), rovnostranný svah + 3 pravoúhlé stěny.",
-  )));
-
-  // Cesta z tunnel_0 ven scénou (DD-25 vrstva 3 LINES). Pro **rovný vstup
-  // i výstup** podél X osy stačí mít první dva body na stejném Z a poslední
-  // dva také — Catmull-Rom v krajních bodech používá reflexi sousedního, tj.
-  // tangenta = (P[1] − P[0]); pokud P[1].Z = P[0].Z, je čistě +X. Anchory
-  // mimo scénu nepotřebujeme. Uprostřed jeden inflexní bod (esíčko).
-  const PATH_FROM  = [-3.5, -0.5, -3];   // východní vstup tunnel_0
-  const PATH_LEFT  = [-1.5, -0.5, -3];   // 2 j rovně podél X (Z=−3)
-  const PATH_VIA   = [ 0.5, -0.5, -1];   // inflexní bod (na spojnici start-end)
-  const PATH_RIGHT = [ 2.5, -0.5,  1];   // 2 j rovně podél X (Z=+1)
-  const PATH_TO    = [ 4.5, -0.5,  1];   // odchod přes východní hranu scény
-  const pathPoints = [PATH_FROM, PATH_LEFT, PATH_VIA, PATH_RIGHT, PATH_TO];
-  scene.add(createMeshFor(new PATH(
-    "path_0", "Cesta z tunelu", pathPoints,
-    "PATH — štěrková cesta z tunnel_0 ven přes východní hranu scény.",
-    "dirt",
-  )));
-
-  populateNorthernScene(scene, pathOccupiedCells(pathPoints));
-
-  // === Factory toy test scéna (DD-31, sez. 21–22, fáze A→B) ===
-  // 3 fasility na grass podlaze (Y=0 = jeden blok nad podlahou gy=−1, BLOCKS
-  // grid-center konvence DD-28) propojené 2 conveyor PATH (sez. 22 fáze B).
-  // Tok: forest → conveyor → sawmill → conveyor → storage. Bez pre-stocku —
-  // sawmill čeká na první klády z transportu (PAUS „chybí logs" na startu,
-  // RSUM jakmile forest stihne vyprodukovat & conveyor přesune).
-  const forest = new GENERATOR(
-    "fac_forest_0", "Les (test)", -2, 0, 2, "forest",
-    "GENERATOR — produkuje klády (0.5/s) do lokálního BUFFER.",
-  );
-  scene.add(createMeshFor(forest));
-
-  const sawmill = new TRANSFORMER(
-    "fac_sawmill_0", "Pila (test)", 0, 0, 2, "sawmill",
-    "TRANSFORMER — recept sawmill (1 kláda → 0.8 prkna / cyklus, 1 cyklus/s).",
-  );
-  scene.add(createMeshFor(sawmill));
-
-  const storage = new STORAGE(
-    "fac_storage_0", "Sklad (test)", 2, 0, 2,
-    "STORAGE — pasivní pufr pro prkna z pily (cap 200).",
-  );
-  scene.add(createMeshFor(storage));
-
-  // Conveyor PATH 1: forest → sawmill (resource: logs). POINTS na Y=−0.5
-  // (grass surface, stejná konvence jako dekorativní path_0). Throughput 2 ks/s
-  // (DD-31 default conveyor) — větší než forest production 0.5/s, takže transport
-  // není bottleneck a forest BUFFER zůstává ~0 (source-limited).
-  const pathForestSawmill = new PATH(
-    "path_forest_sawmill", "Dopravník Les → Pila",
-    [[-2, -0.5, 2], [0, -0.5, 2]],
-    "Conveyor — přemisťuje klády z lesa do pily.",
-    "conveyor",
-  );
-  pathForestSawmill.SOURCE     = forest;
-  pathForestSawmill.SINK       = sawmill;
-  pathForestSawmill.RESOURCE   = "logs";
-  pathForestSawmill.THROUGHPUT = 2;
-  scene.add(createMeshFor(pathForestSawmill));
-
-  // Conveyor PATH 2: sawmill → storage (resource: planks). Pila výstup 0.8/s,
-  // throughput 2/s — také source-limited. Storage cap 200 = ~250 s plnění
-  // dokud sklad nebude full a sawmill nehlásí PAUS „buffer planks plný"
-  // (≈ až pila vyprodukuje 200 prken, což při 0.4-0.8/s effective trvá ~5 min).
-  const pathSawmillStorage = new PATH(
-    "path_sawmill_storage", "Dopravník Pila → Sklad",
-    [[0, -0.5, 2], [2, -0.5, 2]],
-    "Conveyor — přemisťuje prkna z pily do skladu.",
-    "conveyor",
-  );
-  pathSawmillStorage.SOURCE     = sawmill;
-  pathSawmillStorage.SINK       = storage;
-  pathSawmillStorage.RESOURCE   = "planks";
-  pathSawmillStorage.THROUGHPUT = 2;
-  scene.add(createMeshFor(pathSawmillStorage));
+  spawnTerrain(TERRAIN_DEFAULTS);
 }
 
-// Spočítá grid buňky (X, Z), kterými PATH prochází — populate je pak skipne,
-// aby dekorace nepřekrývaly cestu. Vzorkujeme 128× Catmull-Rom curve a každý
-// vzorek zaokrouhlíme na grid; sousední voxely (±1 v X i Z) skip taky kvůli
-// jitteru +/−0.2 j v populate (drobné dekorace by jinak vyčuhovaly nad cestu).
-function pathOccupiedCells(points) {
-  const set = new Set();
-  if (points.length < 2) return set;
-  const v3pts = points.map((p) => new THREE.Vector3(p[0], p[1], p[2]));
-  const curve = new THREE.CatmullRomCurve3(v3pts, false, "catmullrom", 0.5);
-  for (const p of curve.getPoints(128)) {
-    const gx = Math.round(p.x);
-    const gz = Math.round(p.z);
-    set.add(`${gx},${gz}`);
-  }
-  return set;
-}
-
-// === Procedurální dekorace severského podnebí ===
-// Vyplní 10×10 dioráma stromy, keři, trávou, kameny a padlými kmeny. Severský
-// mix: smrk dominuje (70%), bříza akcent (20%), suchý strom občas (10%);
-// keře, kapradiny, mechové kameny. Deterministická RNG (mulberry32, seed 42)
-// pro reprodukovatelnost.
-
-// Mulberry32 — deterministický pseudo-random generátor (4 řádky, 32-bit state).
-function mulberry32(seed) {
-  return function () {
-    let t = (seed += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-// Najde nejvyšší voxel v každé (X, Z) buňce 10×10 gridu z LAYOUT-u.
-// Vrací Map s klíčem `${x},${z}` → { y, kind }.
-function topVoxelMap(layout) {
-  const map = new Map();
-  for (const [kind, x, y, z] of layout) {
-    const key = `${x},${z}`;
-    const prev = map.get(key);
-    if (!prev || y > prev.y) map.set(key, { y, kind });
-  }
-  return map;
-}
-
-function populateNorthernScene(scene, pathBlocked = new Set()) {
-  const top = topVoxelMap(SCENE_LAYOUT);
-  // Voxely obsazené tunely a rampami — žádná dekorace nahoře.
-  const blocked = new Set(["-4,-3", "3,-3", "-4,0", "-4,1"]);
-  for (const key of pathBlocked) blocked.add(key);
-  const rng = mulberry32(42);
-  const pick = (arr) => arr[Math.floor(rng() * arr.length)];
-
-  // Severský mix — váhy přes opakování v poli (KISS místo cumulative table).
-  const TREE_KINDS  = ["spruce", "spruce", "spruce", "spruce", "spruce",
-                       "birch",  "birch",
-                       "dead",
-                       "bonsai"];
-  const GRASS_KINDS = ["short", "short", "fern"];
-  const ROCK_KINDS  = ["small", "small", "medium", "mossy"];
-  const LOG_KINDS   = ["birch", "pine"];
-
-  let counter = 0;
-  for (let x = -5; x <= 4; x++) {
-    for (let z = -5; z <= 4; z++) {
-      const key = `${x},${z}`;
-      if (blocked.has(key)) continue;
-      const t = top.get(key);
-      if (!t) continue;
-
-      // DD-28 surface konvence: pixel-voxel COMPOSITES + VOXEL_MODEL používají
-      // `instance.Y = world Y surface = gy + 0.5` (= top voxelu, na kterém model
-      // stojí). Pro grass podlahu na grid Y=−1 → t.y=−1 → instance.Y=−0.5.
-      // BLOCKS (TCUBES, TRRAMPS, ...) mají naopak grid-Y semantics (= mesh center).
-      const instY = t.y + 0.5;
-      // Drobný jitter (±0.2 j) — eliminuje vizuální mřížkovost rozmístění.
-      const jx = x + (rng() - 0.5) * 0.4;
-      const jz = z + (rng() - 0.5) * 0.4;
-
-      const r = rng();
-
-      // Skála (stone top): drobné kameny rozházené po povrchu — small a micro.
-      if (t.kind === "stone") {
-        const yawStone = rng() * 360;
-        if (r < 0.30) spawnRock(scene, counter++, jx, instY, jz, "small", yawStone);
-        else if (r < 0.70) spawnRock(scene, counter++, jx, instY, jz, "micro", yawStone);
-        continue;
-      }
-
-      // Náhodná Y rotace pro každou dekoraci (DD-26) — eliminuje
-      // mřížkový vzhled (všechny stromy stejně otočené).
-      const yaw = rng() * 360;
-
-      // Hlína (dirt top, peak zadní stěny bez grass): suchý strom občas, kameny.
-      if (t.kind !== "grass") {
-        if (r < 0.15) spawnRock(scene, counter++, jx, instY, jz, "small", yaw);
-        else if (r < 0.225) spawnTree(scene, counter++, jx, instY, jz, "dead", yaw);
-        else if (r < 0.40) spawnRock(scene, counter++, jx, instY, jz, "micro", yaw);
-        continue;
-      }
-
-      // Grass top — hlavní severský mix. Vícevoxelové dekorace (strom/keř/rock/
-      // log/short+fern grass) zhruba × 0.75 oproti sez. 17 prvotnímu nastavení;
-      // mikro vrstva (1-voxel rock/grass/stump) doplňuje hustotu drobnostmi.
-      if (r < 0.075) {
-        spawnTree(scene, counter++, jx, instY, jz, pick(TREE_KINDS), yaw);
-      } else if (r < 0.120) {
-        spawnTree(scene, counter++, jx, instY, jz, "bush", yaw);
-      } else if (r < 0.180) {
-        spawnRock(scene, counter++, jx, instY, jz, pick(ROCK_KINDS), yaw);
-      } else if (r < 0.200) {
-        spawnLog(scene, counter++, jx, instY, jz, pick(LOG_KINDS), yaw);
-      } else if (r < 0.410) {
-        spawnGrass(scene, counter++, jx, instY, jz, pick(GRASS_KINDS), yaw);
-      } else if (r < 0.470) {
-        spawnRock(scene, counter++, jx, instY, jz, "micro", yaw);
-      } else if (r < 0.580) {
-        spawnGrass(scene, counter++, jx, instY, jz, "micro", yaw);
-      } else if (r < 0.610) {
-        spawnLog(scene, counter++, jx, instY, jz, "stump", yaw);
-      }
-    }
-  }
-}
-
-function spawnTree(scene, id, x, y, z, kind, yaw) {
-  const tree = new TREE(
-    `deco_tree_${id}`, `Strom (${x.toFixed(1)}, ${z.toFixed(1)})`, x, y, z,
-    `TREE — pixelová varianta „${kind}".`, kind,
-  );
-  tree.ORIENTATION = yaw;
-  tree.ANIMATE = {
-    kind:      "tree_sway",
-    periodX:   3.5 + Math.random() * 1.5,
-    periodZ:   2.7 + Math.random() * 1.0,
-    amplitude: 0.04,
-    phaseX:    Math.random() * Math.PI * 2,
-    phaseZ:    Math.random() * Math.PI * 2,
-  };
-  scene.add(createMeshFor(tree));
-}
-
-function spawnGrass(scene, id, x, y, z, kind, yaw) {
-  const tuft = new GRASS_TUFT(
-    `deco_grass_${id}`, `Tráva (${x.toFixed(1)}, ${z.toFixed(1)})`, x, y, z,
-    `GRASS_TUFT — chomáč „${kind}".`, kind,
-  );
-  tuft.ORIENTATION = yaw;
-  scene.add(createMeshFor(tuft));
-}
-
-function spawnRock(scene, id, x, y, z, kind, yaw) {
-  const rock = new ROCK_PIXEL(
-    `deco_rock_${id}`, `Kámen (${x.toFixed(1)}, ${z.toFixed(1)})`, x, y, z,
-    `ROCK_PIXEL — varianta „${kind}".`, kind,
-  );
-  rock.ORIENTATION = yaw;
-  scene.add(createMeshFor(rock));
-}
-
-function spawnLog(scene, id, x, y, z, kind, yaw) {
-  const log = new LOG(
-    `deco_log_${id}`, `Padlý kmen (${x.toFixed(1)}, ${z.toFixed(1)})`, x, y, z,
-    `LOG — padlý kmen „${kind}".`, kind,
-  );
-  log.ORIENTATION = yaw;
-  scene.add(createMeshFor(log));
-}
-
-
-// Po DD-23 (sez. 15) zůstává jediná scéna — voxelová dioráma. Bývalá Scéna 1
-// + scene switcher byly odstraněny při „all-voxel" pivotu.
 buildScene(scene);
 
 // === Hover highlight (editor-like feedback) ===
@@ -3233,15 +2307,6 @@ function animate() {
   const dt  = now - _lastFrameTime;
   _lastFrameTime = now;
   updateAnimations(now);
-  // Factory toy produkční tick (DD-31). `dt` v sekundách × `world.TIME_SCALE`
-  // (DD-29 nový konzument). TIME_SCALE=0 → pauza simulace, =2 → 2× zrychleně.
-  // Cap na 0.1 s (kdyby tab uspal a `dt` byl velký) — žádné spikes v ekonomice.
-  const simDt = Math.min(dt, 0.1) * world.TIME_SCALE;
-  if (simDt > 0) {
-    productionTick(simDt);
-    pathTick(simDt);
-  }
-  aggregateResources();
   // Ocásky dialogových bublin: přepočítáme až **po** animátorech, aby jsme
   // četli aktuální `object3d.position` případných pohybujících se mluvčí
   // (tbox_0002 orbituje, …).

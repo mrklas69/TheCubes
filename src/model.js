@@ -201,6 +201,48 @@ export class TTRAMPS extends BLOCKS {
 }
 
 /**
+ * TDRAMP = Diagonal Ramp = 1C blok bez jednoho horního rohu (DD-35 kandidát).
+ * Geometricky: krychle 1×1×1 minus tetrahedron odříznutý v jednom horním rohu
+ * (= "low corner"). Vznikne 7-vrcholový polyhedron — 4 dolní rohy (čtvercová
+ * podstava) + 3 horní rohy (trojúhelníková „horní podstava"). Vyhladí
+ * **3-cell convex peak** stepu, kde A má 2 sousední direct vyšší + diagonální
+ * peak (corner roh) vyšší. Jeden TDRAMP zakryje obě hrany stepu + roh peaku.
+ *
+ * 7 faces se 5 material groups:
+ *  - **TEXTURE_SLOPE** — diagonální šikmá plocha (trojúhelník) z low_bot k
+ *    hraně opačného rohu (NE_top–SW_top); walkable povrch.
+ *  - **TEXTURE_TOP** — plochý horní trojúhelník na Y=+0.5 (= „horní podstava").
+ *    Sdílí lomenou hranu s SLOPE plochou („lomená rampa tvořená dvěma
+ *    trojúhelníky" — uživatel sez. 26).
+ *  - **TEXTURE_BOTTOM** — čtvercová podstava na Y=−0.5.
+ *  - **TEXTURE_WALL_FULL** — 2 plné vertikální stěny (oba quad-y) na stěnách
+ *    obsahujících peak corner (= opačně k low corner).
+ *  - **TEXTURE_WALL_TRI** — 2 vertikální stěny tvaru pravoúhlého trojúhelníku
+ *    na stěnách obsahujících low corner (chybí horní hrana k NW_top).
+ *
+ * Default orientace (`ORIENTATION = 0`): low corner v lokálním (-0.5, ?, -0.5)
+ * (= NW-bot v project konvenci kde -Z=N). Peak corner k opačnému rohu
+ * (+X, +Z) = SE.
+ *
+ * `ORIENTATION` (DD-26, stupně, rotace okolo Y CCW shora):
+ *  - 0   → low corner NW (default), peak SE
+ *  - 90  → low corner SW, peak NE
+ *  - 180 → low corner SE, peak NW
+ *  - 270 → low corner NE, peak SW
+ */
+export class TDRAMP extends BLOCKS {
+  constructor(id, name, x, y, z, textures = {}, orientation = 0, description = "") {
+    super(id, name, x, y, z, description);
+    this.TEXTURE_SLOPE     = textures.SLOPE     ?? null;
+    this.TEXTURE_TOP       = textures.TOP       ?? null;
+    this.TEXTURE_BOTTOM    = textures.BOTTOM    ?? null;
+    this.TEXTURE_WALL_FULL = textures.WALL_FULL ?? null;
+    this.TEXTURE_WALL_TRI  = textures.WALL_TRI  ?? null;
+    this.ORIENTATION = orientation;
+  }
+}
+
+/**
  * TTUNELS = Tunnel Block = 1C blok s klenutým průchozím tunelem v jedné ose.
  * Geometricky: kvádr 1×1×1 minus obdélníkový spodek + půlkruhový oblouk
  * extrudovaný podél osy průchodu (= „od krychle odečtený válec a kvádr").
@@ -304,118 +346,24 @@ export class COMPOSITES extends CUBES {
 }
 
 /**
- * TREE = konkrétní COMPOSITES reprezentující strom.
- *
- * Atribut `KIND` (string) řídí dispatch v enginu na konkrétní sub-builder.
- * Pixelové varianty (BoxGeometry voxely 0.125 j): `"spruce"` (default),
- * `"oak"`, `"birch"`, `"palm"`, `"bush"`, `"cypress"`, `"willow"`,
- * `"bonsai"`, `"dead"`, `"maple"`. Podporují `ANIMATE.kind: "tree_sway"`
- * (kymácení ve větru, height-weighted per-voxel mutace).
- *
- * Pattern dispatchu KIND je izomorfní s `ANIMATE.kind` (DD-15) —
- * model drží recept (string klíč), engine staví mesh.
- */
-export class TREE extends COMPOSITES {
-  constructor(id, name, x, y, z, description = "", kind = "spruce") {
-    super(id, name, x, y, z, description);
-    this.KIND = kind;
-  }
-}
-
-/**
- * GRASS_TUFT = pixel-voxel chomáč trávy / kapradiny na zemi (vrstva 2 DD-25).
- * KIND-y: `"micro"` (jediný 1×1×1 voxel pro mikro posyp), `"short"` (3-4 voxely
- * trsu, 2×2 půdorys), `"fern"` (pět-listá kapradina rozšířená do stran).
- *
- * Sez. 17 — varianta `"tall"` byla odstraněna (vypadala divně, dlouhá stébla
- * neseděla do severského mixu).
- */
-export class GRASS_TUFT extends COMPOSITES {
-  constructor(id, name, x, y, z, description = "", kind = "short") {
-    super(id, name, x, y, z, description);
-    this.KIND = kind;
-  }
-}
-
-/**
- * ROCK_PIXEL = pixel-voxel kámen / balvan (vrstva 2 DD-25). Náhrada za sez. 15
- * smazanou ROCK třídu (icosahedron, DD-23 pivot). KIND-y: `"micro"` (jediný
- * 1×1×1 voxel oblázek), `"small"` (2×1×2 shluk se světlou špičkou), `"medium"`
- * (3×2×3 cluster s temnými rohy), `"mossy"` (medium s mechovou záplatou nahoře).
- */
-export class ROCK_PIXEL extends COMPOSITES {
-  constructor(id, name, x, y, z, description = "", kind = "small") {
-    super(id, name, x, y, z, description);
-    this.KIND = kind;
-  }
-}
-
-/**
- * LOG = pixel-voxel padlý kmen (vrstva 2 DD-25). Ležící váleček 4-6 voxelů
- * podél osy. KIND-y: `"stump"` (1×1×1 pařízek), `"birch"` (bílá kůra s černými
- * skvrnami), `"pine"` (hnědá borovice). Natočení v ploše XZ řídí ORIENTATION
- * (DD-26, zděděno z COMPOSITES; default 0 = kmen leží podél osy X).
- */
-export class LOG extends COMPOSITES {
-  constructor(id, name, x, y, z, description = "", kind = "birch") {
-    super(id, name, x, y, z, description);
-    this.KIND = kind;
-  }
-}
-
-/**
- * PATH = 1D křivka (DD-25 vrstva 3 — Linie). První potomek LINES vrstvy.
- *
- * **Dvojí role** (DD-31, sez. 21):
- *  - `KIND = "dirt"` (default) — **dekorativní cesta** (sez. 17, severská
- *    dioráma). Bez transportu, jen vizuál. `SOURCE`/`SINK`/`RESOURCE`/`THROUGHPUT`
- *    zůstávají null.
- *  - `KIND = "conveyor"` — **factory dopravník pro solidy** (logs, planks,
- *    stone, gravel, coal). Engine `pathTick` přesouvá items mezi `SOURCE.BUFFER`
- *    a `SINK.BUFFER` rychlostí `THROUGHPUT` ks/s.
- *  - `KIND = "pipeline"` — **factory potrubí pro fluidy** (water). Stejný
- *    transport engine, odlišný KIND pro vizuální/sémantické rozlišení a validaci
- *    `RESOURCES_DEF[r].category`.
+ * PATH = 1D křivka (DD-25 vrstva 3 — Linie). Catmull-Rom spline rendrovaný
+ * jako plochý strip mesh šířky ~0.5 j s drobným Y offsetem nad terrain
+ * (proti z-fighting).
  *
  * Atributy:
- *  - `KIND` — viz výše. Default `"dirt"`.
+ *  - `KIND` — string, určuje surface texturu (default `"dirt"` = štěrk).
  *  - `POINTS` — pole `[x, y, z]` kontrolních bodů ve **world** souřadnicích
  *    (instance.X/Y/Z se nepoužívá; engine staví strip mesh přímo z POINTS).
- *    Engine spline-interpoluje (Catmull-Rom) a vykreslí jako plochý strip
- *    šířky ~0.5 j s drobným Y offsetem nad terrain (proti z-fighting).
- *  - `SOURCE` — instance `FACILITY` (`GENERATOR`/`TRANSFORMER`/`STORAGE`) odkud
- *    se čerpá. Pro `"dirt"` zůstává null. Set post-hoc: `path.SOURCE = forest;`.
- *  - `SINK` — instance `FACILITY` kam přitéká. Symetrický se SOURCE.
- *  - `RESOURCE` — string klíč do `RESOURCES_DEF` (`"logs"`, `"planks"`, …).
- *    Explicit, ne derived — storage drží libovolné suroviny, derive by byl
- *    nejednoznačný. Engine validuje `category` ↔ `KIND` (solid → conveyor,
- *    fluid → pipeline) boot-time warnem.
- *  - `THROUGHPUT` — float ks/s. Default `null` (= dekorativní, žádný transport).
- *    Doporučené hodnoty: conveyor 2 ks/s, pipeline 5 L/s (DD-31 sez. 21).
  *
  * Pozice: instance.X/Y/Z = (0, 0, 0) — cesta žije v world coords (POINTS).
  */
 export class PATH extends CUBES {
   constructor(id, name, points, description = "", kind = "dirt") {
     super(id, name, 0, 0, 0, description);
-    this.KIND       = kind;
-    this.POINTS     = points;
-    this.SOURCE     = null;
-    this.SINK       = null;
-    this.RESOURCE   = null;
-    this.THROUGHPUT = null;
+    this.KIND   = kind;
+    this.POINTS = points;
   }
 }
-
-// Non-voxel třídy odstraněny v sez. 15 (DD-23 — „all voxel" pivot):
-// HOUSE, ROCK, CLOUD, BALLOON, TUNNEL_ARCH, WAREHOUSE, TRAIN. Jejich buildery
-// používaly Cylinder/Cone/Sphere/Torus/Icosahedron primitivy, což je v rozporu
-// s identitou projektu „Kostičky". Až bude potřeba pixel-voxel ekvivalent,
-// vznikne nová třída se subloaderem v TREE_BUILDERS-style dispatchu.
-//
-// Humanoidní třídy (CHARACTER, NOODLE, STICKMAN) byly přesunuty do
-// samostatného projektu ./source/Stickman (sez. 14). DD-17/18/19/20 zůstávají
-// v immutable logu jako historický kontext.
 
 /**
  * VOXEL_MODEL = obecný COMPOSITES, který načte mesh ze souboru `.obj` (s
@@ -540,166 +488,5 @@ export class WORLD extends OBJECTS {
     super(id, name, description);
     this.WIND_STRENGTH = 1.0;
     this.TIME_SCALE = 1.0;
-    // Inicializace agregátu — všechny resource ID z RESOURCES_DEF na 0.
-    // Object.fromEntries vyrobí `{ logs: 0, planks: 0, ... }` z polí klíčů.
-    this.RESOURCES = Object.fromEntries(
-      Object.keys(RESOURCES_DEF).map((id) => [id, 0])
-    );
-  }
-}
-
-// =============================================================================
-// FACTORY TOY (DD-30, DD-31, sez. 21+)
-//
-// Vrstva nad CUBES hierarchií pro tick-based ekonomický loop. Tři třídy
-// (GENERATOR, TRANSFORMER, STORAGE) sdílí `FACILITY` base. Engine je dispatchuje
-// stejně jako BLOCKS (snap-to-int, hover infotip), produkční logika žije
-// v `productionTick()` v `src/main.js`.
-// =============================================================================
-
-/**
- * RESOURCES_DEF — registry surovin (data, ne třídy). Klíč = `resource_id`
- * používaný v `FACILITY.BUFFER`, `RECIPES_DEF.inputs/outputs`, `world.RESOURCES`.
- *
- * MVP set (DD-31 sez. 21): 6 surovin pokrývajících solid + fluid kategorii.
- * Phase 2 vlna doplní `bricks`, `cement`, `steel` a multi-input recepty.
- *
- * Pole per surovinu:
- *  - `name_cs` / `name_en` — UI labely (HUD, infotip).
- *  - `category` — `"solid"` | `"fluid"`. Voidspan-derived (Logistics matrix,
- *    DD-30): solidy potřebují `PATH.KIND="conveyor"`, fluidy `"pipeline"`.
- *  - `unit` — zobrazená jednotka. MVP = `"ks"` napříč (KISS, formatScalar
- *    z Voidspan v0.1 přijde v Phase 2).
- */
-export const RESOURCES_DEF = {
-  logs:   { name_cs: "Klády",  name_en: "Logs",   category: "solid", unit: "ks" },
-  planks: { name_cs: "Prkna",  name_en: "Planks", category: "solid", unit: "ks" },
-  stone:  { name_cs: "Kámen",  name_en: "Stone",  category: "solid", unit: "ks" },
-  gravel: { name_cs: "Štěrk",  name_en: "Gravel", category: "solid", unit: "ks" },
-  water:  { name_cs: "Voda",   name_en: "Water",  category: "fluid", unit: "ks" },
-  coal:   { name_cs: "Uhlí",   name_en: "Coal",   category: "solid", unit: "ks" },
-};
-
-/**
- * RECIPES_DEF — registry transformerových receptů (data). Klíč = `recipe_id`
- * = `FACILITY.KIND` u transformer typu (izomorfie s TREE.KIND, DD-31 sez. 21).
- *
- * Pole per recept:
- *  - `inputs` — `{ resource_id: ks_per_unit_recipe }`. Pila spotřebuje 1 kládu
- *    za 1 cyklus receptu. Phase 2: multi-input (cement = 2 gravel + 1 water).
- *  - `outputs` — `{ resource_id: ks_per_unit_recipe }`. Pila vyrobí 0.8 prkna
- *    za 1 cyklus = 80% efektivita (zbylých 0.2 = piliny, ztráta).
- *  - `rate_per_tick` — kolik cyklů receptu se odehraje za 1 wall sekundu při
- *    `TIME_SCALE=1`. `1.0` = 1 cyklus/s. Drtič 0.8 = pomalejší zpracování kamene.
- */
-export const RECIPES_DEF = {
-  sawmill: { inputs: { logs: 1 },  outputs: { planks: 0.8 }, rate_per_tick: 1.0 },
-  crusher: { inputs: { stone: 1 }, outputs: { gravel: 1.2 }, rate_per_tick: 0.8 },
-};
-
-/**
- * FACILITY_DEF — registry fasility kindů (data, mesh hinty + ekonomické
- * parametry). Klíč = `FACILITY.KIND`. Editor v Phase C bude tento registry
- * číst pro paletu („dostupné fasility").
- *
- * Pole per kind:
- *  - `type` — `"generator"` | `"transformer"` | `"storage"`. Dispatch v
- *    `productionTick` a v `createMeshFor` (i když mesh je sjednocený box).
- *  - `outputs` (jen pro generator) — `{ resource_id: ks_per_s }`. Les dává
- *    1.0 klády/s = 60 klád za minutu (matchne sawmill 1 log/cyklus × 1.0/s,
- *    žádný source-starve, žádná PAUS/RSUM oscilace; sez. 23 polish bod #3).
- *  - `recipe` (jen pro transformer) — klíč do `RECIPES_DEF`.
- *  - `buffer_capacity` — max ks v `BUFFER` per slot. Generator output buffer
- *    50 (~100 s plný), transformer slot 20, sklad 200 (= „pufr sítě").
- *  - `holds` (volitelné, pro storage) — whitelist resource_id, který sklad
- *    akceptuje. `null` / chybějící = drží cokoli. MVP storage je generic.
- *  - `color` — 0xRRGGBB barva placeholder mesh boxu. Pixel-art asset (DD-30:
- *    VOXEL_MODEL per fasilita) přijde v Phase 2.
- *  - `name_cs` — label v UI/infotip.
- */
-export const FACILITY_DEF = {
-  // --- GENERATORs (produkují bez vstupu) ---
-  forest:    { type: "generator",   outputs: { logs:  1.0 }, buffer_capacity: 50,  color: 0x3e6a32, name_cs: "Les" },
-  quarry:    { type: "generator",   outputs: { stone: 0.4 }, buffer_capacity: 50,  color: 0x7a7a78, name_cs: "Lom" },
-  well:      { type: "generator",   outputs: { water: 0.6 }, buffer_capacity: 50,  color: 0x4a7090, name_cs: "Studna" },
-  coal_mine: { type: "generator",   outputs: { coal:  0.3 }, buffer_capacity: 50,  color: 0x2a2a2a, name_cs: "Důl uhlí" },
-  // --- TRANSFORMERs (vstup → výstup dle RECIPES_DEF) ---
-  sawmill:   { type: "transformer", recipe: "sawmill",       buffer_capacity: 20,  color: 0xaa6633, name_cs: "Pila" },
-  crusher:   { type: "transformer", recipe: "crusher",       buffer_capacity: 20,  color: 0x99887a, name_cs: "Drtič" },
-  // --- STORAGE (drží libovolné suroviny) ---
-  storage:   { type: "storage",                              buffer_capacity: 200, color: 0xb8a06a, name_cs: "Sklad" },
-};
-
-/**
- * FACILITY = base třída factory-toy entity (DD-31). Voxel 1×1×1 v gridu
- * s lokálním `BUFFER` per surovinu. Sourozenec BLOCKS (oba 1C grid-aligned,
- * snap-to-int v rendereru, DD-28 grid-center konvence).
- *
- * Atributy:
- *  - `KIND` (string) — klíč do `FACILITY_DEF`. Determinuje type (generator/
- *    transformer/storage), parametry, mesh barvu. Izomorfie s TREE.KIND.
- *  - `BUFFER` (objekt `{ resource_id: amount }`) — lokální zásoby. Generator
- *    plní `outputs`, transformer čerpá `inputs` a plní `outputs`, storage
- *    drží whatever přijde. Engine inicializuje prázdný — bez agregace
- *    `world.RESOURCES` ze starých instancí. Inicializační stock se nastavuje
- *    post-hoc (`facility.BUFFER.logs = 50`) pro testovací scény.
- *  - `PAUSED` (bool, default false) — true když produkce stojí. Engine mutuje
- *    z `productionTick`. Důvod v `PAUSE_REASON`.
- *  - `PAUSE_REASON` (string | null) — lidsky čitelný důvod (`"chybí klády"`,
- *    `"buffer plný"`). HUD/infotip čte. Voidspan-derived material gate (DD-30).
- *
- * Konstruktor přijímá jen `id` + `kind` + pozici. Ostatní default. Model
- * zůstává datový (DD-11) — žádný engine import.
- */
-export class FACILITY extends CUBES {
-  constructor(id, name, x, y, z, kind, description = "") {
-    super(id, name, x, y, z, description);
-    this.KIND = kind;
-    this.BUFFER = {};        // `{ resource_id: amount }`, dynamicky doplňováno
-    this.PAUSED = false;
-    this.PAUSE_REASON = null;
-  }
-}
-
-/**
- * GENERATOR = FACILITY produkující 1+ surovinu bez vstupu (les → klády, lom →
- * kámen, studna → voda, důl → uhlí). `KIND` musí mít `FACILITY_DEF[kind].type
- * === "generator"` s `outputs` mapou.
- *
- * Engine v `productionTick`: za každou wall sekundu (× TIME_SCALE) přidá
- * `outputs[r] * dt` do `BUFFER[r]`. Pauzuje na backpressure (buffer plný).
- */
-export class GENERATOR extends FACILITY {
-  constructor(id, name, x, y, z, kind, description = "") {
-    super(id, name, x, y, z, kind, description);
-  }
-}
-
-/**
- * TRANSFORMER = FACILITY zpracovávající `inputs` na `outputs` dle receptu
- * (pila: logs → planks, drtič: stone → gravel). `KIND` musí mít
- * `FACILITY_DEF[kind].type === "transformer"` s `recipe` klíčem do `RECIPES_DEF`.
- *
- * Material gate: pauzuje s reasonem `chybí <input>`, pokud input buffer
- * nestačí na cyklus tiku. Nebo `buffer <output> plný` na backpressure výstupu.
- */
-export class TRANSFORMER extends FACILITY {
-  constructor(id, name, x, y, z, kind, description = "") {
-    super(id, name, x, y, z, kind, description);
-  }
-}
-
-/**
- * STORAGE = FACILITY držící zásoby bez produkce/transformace. „Pufr sítě"
- * mezi generátory a transformery. `KIND = "storage"` má `buffer_capacity = 200`.
- *
- * Atribut `HOLDS` (volitelný; null = drží cokoli) = whitelist resource_id.
- * Engine v Phase B (PATH transport) zkontroluje při příjmu, jestli zdroj patří
- * do whitelistu. MVP: vždy null, sklad generic.
- */
-export class STORAGE extends FACILITY {
-  constructor(id, name, x, y, z, description = "", holds = null) {
-    super(id, name, x, y, z, "storage", description);
-    this.HOLDS = holds;
   }
 }

@@ -12,55 +12,44 @@
 - [ ] **Náhradní obyvatel scény** — bez humanoidů je scéna vizuálně chudší. Možnosti: rozšířit COMPOSITES (BIRD na obloze, BUSH/FLOWER na louce), nebo nechat dokud není integrace Stickmana.
 - [ ] **CCUBES typizace** (ICE/GRASS/SAND) *(možná, ale překryto DD-24 shape × surface — surface je obecnější)*.
 
-## Sez. 21 — Factory toy MVP (boční větev `feat/factory`)
+## Terrain generator (`generateTerrain`) — `feat/terrain` větev
 
-**Pivot k DD-30 + DD-31.** Stará scéna (severská dioráma, pixel-voxel apartmá) zůstává jako pozadí beze změny. Nový kód žije na `feat/factory` větvi, merge do `main` po stabilizaci fáze B.
+**Cíl**: procedurální terrain sandbox jako náhrada hardcoded `SCENE_LAYOUT` (DD-32 sez. 25). `generateTerrain` v `src/terrain.js` produkuje 3D scénu z parametrického popisu (size + relief + surfaces + seed); UI panel v `index.html` umožní user-driven tuning live.
 
-### Fáze A — Model + tick (sez. 21–22)
+### Hotovo (sez. 25 + sez. 26)
 
-- [!] **DD-30 + DD-31 zápis** *(sez. 21, jako kotva před kódem)*.
-- [ ] **`RESOURCES_DEF` registry** v `model.js` — 6 surovin (logs/planks/stone/gravel/water/coal) s `{ name_cs, name_en, category, unit }`.
-- [ ] **`RECIPES_DEF` registry** — `sawmill`, `crusher`.
-- [ ] **`FACILITY_DEF` registry** — `forest`, `quarry`, `well`, `coal_mine`, `sawmill`, `crusher`, `storage` (defaultní buffer kapacity, mesh hints).
-- [ ] **Třída `FACILITY` + `GENERATOR` / `TRANSFORMER` / `STORAGE`** v `model.js` (atributy `KIND`, `BUFFER`).
-- [ ] **`productionTick()`** v `main.js` render loopu (1 wall s = 1 tick, žádné per-frame poll).
-- [ ] **`world.RESOURCES`** agregát + `world.TIME_SCALE` (default 1.0) — DD-29 noví konzumenti.
-- [ ] **Hardcoded test scéna**: 1× les → 1× pila → 1× sklad (žádný editor, žádné PATH propojení zatím — transformer čerpá z arbitrárně přiděleného source bufferu).
-- [ ] **HUD**: top bar 6 čítačů (Σ napříč fasilitami) + bottom bar event log ticker (5 posledních řádků). Verbs `PROD`, `DRN`, `PAUS`.
+- [x] **DD-32 kotva** + README/CLAUDE.md identitní update.
+- [x] **Wipe** factory toy + severská dioráma + tree_sway + HUD prvků (−1602 ř.).
+- [x] **Value-noise engine** (mulberry32 + grid sampling + bilineární smoothstep + wrap-around).
+- [x] **`generateTerrain({ size, relief, surfaces, seed })`** v `src/terrain.js` (heightmap + biome map + sloupcové vyplnění + water planes).
+- [x] **Fáze 3 — UI panel `#terrainctrl`** (sez. 26): HTML/CSS pravý dolní roh, slidery size sx/sz (3..30), relief (0..10) s názvem stupně, 4 surface slidery (auto-normalize), seed input. Trigger `change` event (rozhodnutí sez. 26 — ne `input`/debounce/button).
+- [x] **`regenerateScene(params)`** v `main.js` — filter `userData.terrain` flag, remove + spawn, sdílené geometrie/materials nedispose.
+- [x] **Ramp smoothing layer (DD-34 + DD-35 sez. 26)** — 3 ramp typy:
+  - TRRAMPS edge greedy criticality (1 direct vyšší → klín).
+  - TTRAMPS isolated diag peak (0 direct + 1 diag vyšší → jehlan).
+  - TDRAMP 2-stage (3-cell convex peak + L-shape, dvouosa criterion 2 přístupů + zakrytí 2 stěn) — **DD-35** + nová třída `TDRAMP extends BLOCKS`.
+- [x] **Compatibility filter** — TRRAMPS A drop pokud B má TRRAMPS s jinou orient (= narazí do boku).
 
-### Fáze B — PATH transport (sez. 22–23)
+### Otevřené body / kandidáti DD
 
-- [x] **`PATH` rozšíření**: `KIND ∈ "conveyor"|"pipeline"`, `SOURCE` / `SINK` instance ref, `RESOURCE` (explicit), `THROUGHPUT`. *(Sez. 22.)*
-- [x] **PATH skutečně přemisťuje** items mezi `SOURCE.BUFFER` a `SINK.BUFFER` per tick (`pathTick(dt)`). *(Sez. 22.)*
-- [x] **Material gate** — transformer pauzuje při chybějícím inputu (`PAUS chybí <r>`), RSUM při doplnění. *(Už ve fázi A; sez. 22 ověřeno přes real transport.)*
-- [x] **`WORLD.TIME_SCALE` slider** v HUD — range 0..3, step 0.1, live update. *(Sez. 22.)*
-- [x] **Migrace test scény** na PATH propojení: forest → conveyor → sawmill → conveyor → storage (smazán pre-stocked `BUFFER.logs = 50`). *(Sez. 22.)*
-- [ ] **Material gate vizualizace** — emissive boost (červená/amber) na PAUSED fasilitách, lazy material clone à la hover. *(Sez. 22 odloženo do scope, dál sez. 23.)*
-- [ ] **Druhý zdrojový řetězec** (parallel verification) — quarry → crusher → storage. Voda + uhlí zatím bez transformeru (jen těží a teče do skladu pipelinem). *(Sez. 23.)*
-- [x] **Steady-state polish** — sawmill osciloval PAUS↔RSUM kvůli source-limited supply (forest 0.5/s vs. recipe 1/s spotřeba). **Sez. 23:** forest output 0.5 → 1.0 logs/s, 1:1 matchne sawmill recipe, žádný source-starve. Conveyor THROUGHPUT=2 ks/s zůstává nad rate, není bottleneck.
+- [!] **Performance při 30×30** — pomalé vykreslování po regeneraci. Sez. 26 user feedback. Možné cesty: instancing per TCUBES kind, mesh merge per cell, BatchedMesh (Three.js r172+), web worker pro generateTerrain. *(sez. 27 priorita)*
+- [ ] **`LIQUID` třída** (DD-25 vrstva 4) pro vodní plane(y) — momentálně mimo OOP model (DD-33 kandidát).
+- [ ] **Klastrování spojitých water cells** do bounding boxů (flood-fill, jeden plane na celé jezero) místo 1×1 per cell.
+- [ ] **Roadmap relief 9..10**: valley carving / ridge noise algoritmus (heavily dissected / alpine plně).
+- [ ] **Procedural paths + tunely** v generovaném terénu (pathfinding přes heightmap).
+- [ ] **2-voxel stepy + 4-cell jámy** — současný ramp algoritmus pokrývá jen 1-voxel step + 3-cell/L-shape/diag peak. Schodišťové vzory + 4-stěnné jámy zůstávají hranaté. Mimo MVP.
+- [ ] **TDRAMP doplňující compatibility check** — aktuálně bez kontroly proti rampám u 2 horních sousedů (může narazit do boku). Empirický feedback ukáže, zda potřeba.
 
-### Fáze C — Editor MVP (sez. 24+)
+## M8+ otevřené (parkováno)
 
-- [ ] **Klik na voxel** → paleta KIND fasilit (modal/dropdown), place na pozici.
-- [ ] **R-klik** → delete fasility.
-- [ ] **PATH draw mode** — klik na fasilitu A, klik na fasilitu B → vytvoří PATH (auto KIND podle kompatibility resource category).
-- [ ] **Hover infotip rozšíření** o `BUFFER` state a `PAUSED` reason.
-- [ ] **Save/load** scény do localStorage *(volitelné, pokud se hodí pro testing)*.
+- [ ] **Biome populate** *(IDEAS — částečně překryto biome map v `generateTerrain`, terra-specific dekorace zůstává)*.
+- [ ] **BUILDING třída** *(IDEAS — budoucí dekorativní/factory entity nad generovaným terénem)*.
+- [ ] **TRACK třída** *(IDEAS — sourozenec PATH, vlaky odloženy)*.
+- [ ] **`mtllib` reference fix** *(drobnost)*.
 
-### Fáze D — Cleanup pixel-voxel apartmá (sez. ~25, po stabilizaci)
+## Audit cadence (po sez. 26)
 
-- [ ] **Merge `feat/factory` → `main`** (squash nebo merge commit, dle čistoty historie).
-- [ ] **Smazat** TREE všechny KIND, GRASS_TUFT, ROCK_PIXEL, LOG, `populateNorthernScene`, mulberry32 RNG.
-- [ ] **Smazat** `tree_sway` animátor + `WIND_STRENGTH` z `WORLD` (migrace do IDEAS, DD-29 záznam aktualizovat).
-- [ ] **Smazat** procedurální `:grass-top` texturu, použít plochou barvu nebo jednoduchý jednobarevný stripe.
-- [ ] **Rozhodnout**: TRRAMPS / TTRAMPS / TTUNELS — smazat (factory toy je flat grid), nebo nechat (sentimentální argument vs. KISS). Diskuse v sez. 24+.
-- [ ] **VOXEL_MODEL** — ponechat jako kapability pro budoucí pixel-art fasility (DD-30).
-- [ ] **Update `CLAUDE.md` + `README.md`** o novou identitu projektu.
-
-## M8+ otevřené (parkováno během factory pivotu)
-
-- [ ] **Biome populate** *(IDEAS — vyžaduje `WORLD.CLIMATE`, gated by DD-29; nesouvisí s factory toy)*.
-- [ ] **BUILDING třída** *(IDEAS — pixel-voxel domy v cleanupu fáze D ztrácí kontext, parkováno)*.
-- [ ] **TRACK třída** *(IDEAS — sourozenec PATH, ale factory toy `PATH KIND=conveyor` jí překryl; vlaky odloženy)*.
-- [ ] **`mtllib` reference fix** *(drobnost, nesouvisí s factory pivotem)*.
-- [ ] **`ACTION.kind: increment`** *(TIMER+COUNTER — překryto `productionTick`)*.
+- **`%AUDIT:CODE`** — 8/8 sezení od sez. 18 (**práh dosažen**, doporučit pro sez. 27).
+- **`%AUDIT:DOCS`** — 10/10 sezení od sez. 16 (**práh dosažen**, doporučit pro sez. 27).
+- **IDEAS/TODO pruning** — 7/12.
+- **`%CALIBRATE`** — sub-prah „CLAUDE.md +50 %" resetnut sez. 23 slimem.

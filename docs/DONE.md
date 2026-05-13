@@ -218,3 +218,49 @@ Archiv splněných úkolů z `docs/TODO.md`. DROP položky (zrušené nápady) j
 ### Sez. 22 → sez. 23 Příště — Hotové
 
 - [x] **Steady-state polish** — viz výše.
+
+## Sezení 24 (2026-05-12, paralelní instance — meta)
+
+Žádný kód. Meta-sezení o multi-instance discipline + diary záznam o paralelní (sez. 25) implementaci. Detail v `docs/diary/2026-05-12.md`. Commit `d2f7c1e docs(session): 2026-05-12 [2] — sez. 24 meta: multi-instance discipline`.
+
+## Sezení 25 (2026-05-12) — DD-32 implementace end-to-end
+
+### DD-32 kotvení (Fáze 0)
+
+- [x] **DD-32 zápis** v `docs/DESIGN_DECISIONS.md` — terrain generator pivot, DD-30/31 immutable jako historie.
+- [x] **README.md identitní update** — z „factory-observer toy" na „procedurální terrain sandbox", hierarchie modelu bez FACILITY, plán fází 0–3.
+- [x] **CLAUDE.md (projektový) update** — Key Files mapa (terrain.js přibude, factory engine pryč), `%THINK` bod 5 reformulován z factory mechaniky na procedural generování.
+- [x] **`feat/factory` merge → `main` (`--no-ff`)** — sez. 21–23 historie zachována.
+- [x] **`feat/terrain` větev** vytvořena z main.
+
+### Wipe (Fáze 1)
+
+- [x] **`model.js` 705 → 450 ř.** — smazány TREE/GRASS_TUFT/ROCK_PIXEL/LOG (COMPOSITES potomci), FACILITY/GENERATOR/TRANSFORMER/STORAGE třídy, RESOURCES_DEF/RECIPES_DEF/FACILITY_DEF registry, PATH atributy SOURCE/SINK/RESOURCE/THROUGHPUT, `world.RESOURCES` agregát.
+- [x] **`main.js` 3252 → 1981 ř. (−1271 ř.)** — smazán FACTORY TOY ENGINE (productionTick/pathTick/transferOnPath/generatorTick/transformerTick/setPaused/logEvent/renderEventLog/aggregateResources/maybeLog*/_prodFloorCache/facilities/paths/events/EVENT_VERB_CLASS), createFacilityFor/facilityMat/_facilityGeom/_facilityMatCache, TREE_BUILDERS (10 builderů spruce/oak/birch/palm/bush/cypress/willow/bonsai/dead/maple) + treeMat/treeVoxel/treeBlock/treeDiamond + TREE_C + TREE_PX, DECO_C + GRASS_TUFT_BUILDERS + ROCK_PIXEL_BUILDERS + LOG_BUILDERS + buildTree/buildGrassTuft/buildRockPixel/buildLog dispatchery, SCENE_LAYOUT (~145 voxelů), makeStoneBlock/makeDirtBlock/makeGrassBlock factories, buildScene dioráma (tunely + rampy + path_0 + 3 fasility + 2 conveyor PATH), populateNorthernScene + topVoxelMap + mulberry32 + pathOccupiedCells + spawnTree/Grass/Rock/Log, animateTreeSway + ANIMATORS.tree_sway, TIME_SCALE slider listener, render loop volání productionTick/pathTick/aggregateResources.
+- [x] **`index.html` 161 → 85 ř.** — smazány #resources panel, #simctrl (TIME_SCALE slider), #eventlog (severity-colored ticker). Zachováno #hud (TIME label), #tooltip, #scene canvas.
+- [x] **Celkem −1602 ř. (−39 %)** z 4118 na 2516.
+
+### generateTerrain MVP (Fáze 2)
+
+- [x] **`src/terrain.js` (nový, 173 ř.)** — mulberry32 + makeValueNoise + generateTerrain.
+- [x] **Value-noise engine** — grid sampling (Float32Array gx × gz) + bilineární smoothstep (3x²−2x³) + wrap-around modulo pro záporné x/z.
+- [x] **Heightmap** — `RELIEF_AMPLITUDE` (0..6) + `RELIEF_FREQUENCY` (0..0.65) lookup pro 11 stupňů relief 0..10.
+- [x] **Biome map** — secondary low-freq noise (freq × 0.5 + 0.1, seed +1) → sort cells dle biome_value → exact-match thresholds = souvislé klastry.
+- [x] **Y modifier per biome** — grass=0, stone=0, sand=−1, water=−2.
+- [x] **Sloupcové vyplnění** — top voxel dle biome (water → dirt), dirt middle, stone yBottom (= min(−1, minYTop−1)).
+- [x] **Vodní plane(y)** MVP — 1×1 plane per water cell na `y_top + 0.55` (anti z-fight).
+- [x] **Validace fail-fast** — size kladné, relief 0..10, surfaces součet ≈ 1.0, neznámé surface throw.
+- [x] **Graceful degradation** relief 9..10 → clamp 8 + console.warn (valley carving roadmap).
+- [x] **`:sand` textura** v `main.js` — paletový patch (SAND_BASE `#d4b97c` + 4 akcenty).
+- [x] **`BLOCK_TEXTURES` lookup** — per kind set (grass: top `:grass-top` + sides `:dirt`; dirt/stone/sand homogenní).
+- [x] **`createBlock(kind, x, y, z)` helper** — TCUBES instance s lookup texturou.
+- [x] **`createWaterPlane(w)` helper** — `THREE.Mesh` (PlaneGeometry 1×1, MeshStandardMaterial transparent opacity 0.7, DoubleSide), rotace −π/2 X.
+- [x] **`TERRAIN_DEFAULTS`** — `{ size:[10,10], relief:3, surfaces:{grass:0.80,stone:0.10,sand:0.05,water:0.05}, seed:42 }`.
+- [x] **`buildScene` integrace** — volá `generateTerrain(TERRAIN_DEFAULTS)` + spawne bloky (createMeshFor → createBlock) + water planes (createWaterPlane).
+- [x] **Smoke test (Node ESM)** — 321 bloků (80 grass + 110 stone + 126 dirt + 5 sand) + 5 water planes. `node --check` OK pro main.js i terrain.js.
+- [x] **Server `localhost:8000`** vrací 200 pro `/`, `/src/main.js`, `/src/terrain.js`, `/src/model.js`.
+- [x] **Browser test (user)** — vykresluje, „rovinatá krajina s jedním kaňonem s vodou na dně" = biome klastrování + water Y−2 depression. Funkce, ne bug.
+
+### Sez. 23 → sez. 24 Příště — Přepsáno DD-32 pivotem
+
+Tři neudělané body („Material gate vizualizace", „Druhý zdrojový řetězec", „Merge fáze B → main", „Fáze C plánování") byly **přepsány DD-32 revokem factory toy identity** — `feat/factory` byl mergován do `main` jako uzavřená kapitola (sez. 21–23 v git historii), pak `feat/terrain` start. Tyto úkoly nejsou ani hotové, ani aktivní — jsou v immutable history. Body C plánování (editor MVP) může v budoucnu vrátit jako editor terrainu, ne fasilit.
