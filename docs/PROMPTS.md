@@ -77,9 +77,22 @@ Uzavíráme toto sezení na TheCubes.
 **(3.) Git:**
 
 Pokud git repo **existuje**:
+
+**(3a.) Commit + push** na aktuální větev:
 - Navrhni commit message (stručná, výstižná, česky).
-- Commit na větev `main`.
-- `git push` (pokud existuje remote).
+- Commit + `git push` (od DD-30 sez. 21+ je default topic branch `feat/<topic>`, ne main).
+- Při prvním push topic branch: `git push -u origin feat/<topic>` (Git napoví flag).
+
+**(3b.) Merge rozhodnutí** *(jen pokud jsme na topic branch):*
+
+Zeptej se: **Je úkol topic-branche dokončen?**
+- **ANO** → merge do `main`:
+  ```bash
+  git checkout main && git merge --no-ff feat/<topic> -m "Merge feat/<topic>: <stručný popis>" && git push
+  ```
+- **NE** → zůstaň na topic branch, merge v dalším sezení.
+
+`--no-ff` drží hranici topic branch viditelnou v `git log` (DD-30, sez. 21+). Bez něj se historie zploští na fast-forward a ztratí se kontext „toto byl topic blok".
 
 Pokud git repo **neexistuje** (začátek projektu): doporuč `git init` + první commit.
 

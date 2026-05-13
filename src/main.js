@@ -1051,7 +1051,7 @@ function createTCubeFor(instance) {
 //   v4 (-0.5,  0.5, -0.5)  apex top NW
 //   v5 ( 0.5,  0.5, -0.5)  apex top NE
 //
-// 5 faces, každý má vlastní material (per-face dispatch přes faceMaterialFor):
+// 5 faces se single-material atlas mapováním (DD-36):
 //   BOTTOM  quad (v0,v3,v2,v1) na Y=−0.5,  normála (0,−1, 0)
 //   BACK    quad (v0,v1,v5,v4) na Z=−0.5,  normála (0, 0,−1)  vertikální stěna
 //   SLOPE   quad (v3,v2,v5,v4) šikmá,      normála (0, 1, 1)/√2  svah
@@ -1060,10 +1060,14 @@ function createTCubeFor(instance) {
 //
 // Per-face vertices (non-shared) → flat shading bez `computeVertexNormals`
 // (každá face má vlastní normály = ostré hrany mezi facey, pixel-art look).
-// Celkem 18 vertices, 8 trojúhelníků, 5 material groups.
+// Celkem 18 vertices, 8 trojúhelníků, **1 atlas material** (DD-36 pattern):
+// per-face UV remapped na 1/5-tici v U-axis → 1 texture lookup místo 5 draw
+// calls per instance. Texturu dodává `getRampAtlasMaterial("trramps", surface)`.
 
+const TRRAMP_FACE_COUNT = 5;
 const TRRAMP_GEOM_CACHE = (() => {
   const SQRT2 = Math.SQRT2;
+  const N = TRRAMP_FACE_COUNT;
   // Pomocné lokální vertex pozice (zkráceně).
   const v0 = [-0.5, -0.5, -0.5];
   const v1 = [ 0.5, -0.5, -0.5];
@@ -1076,32 +1080,35 @@ const TRRAMP_GEOM_CACHE = (() => {
   const normals = [];
   const uvs = [];
   const indices = [];
-  const groups = []; // { start, count, materialIndex }
+
+  // Atlas UV remap: face k → U ∈ [k/N, (k+1)/N]. Vstupní `uv*` je v lokálním
+  // [0..1] frame face, výsledek je posunut + zmenšen do atlas slotu k.
+  function remapU(uv, faceIdx) {
+    return [faceIdx / N + uv[0] / N, uv[1]];
+  }
 
   // Helper: přidá quad (4 vertices, 2 trojúhelníky) s jednou normálou per face.
   // CCW pořadí pro správnou face culling (Three.js front-face = CCW).
-  function addQuad(p0, p1, p2, p3, n, uv0, uv1, uv2, uv3, materialIndex) {
+  // `faceIdx` slouží jen k remap UV — geometrie je single-material (no groups).
+  function addQuad(p0, p1, p2, p3, n, uv0, uv1, uv2, uv3, faceIdx) {
     const startVert = positions.length / 3;
     positions.push(...p0, ...p1, ...p2, ...p3);
     normals.push(...n, ...n, ...n, ...n);
-    uvs.push(...uv0, ...uv1, ...uv2, ...uv3);
-    const startIdx = indices.length;
+    uvs.push(...remapU(uv0, faceIdx), ...remapU(uv1, faceIdx),
+            ...remapU(uv2, faceIdx), ...remapU(uv3, faceIdx));
     indices.push(startVert, startVert + 1, startVert + 2);
     indices.push(startVert, startVert + 2, startVert + 3);
-    groups.push({ start: startIdx, count: 6, materialIndex });
   }
 
-  function addTri(p0, p1, p2, n, uv0, uv1, uv2, materialIndex) {
+  function addTri(p0, p1, p2, n, uv0, uv1, uv2, faceIdx) {
     const startVert = positions.length / 3;
     positions.push(...p0, ...p1, ...p2);
     normals.push(...n, ...n, ...n);
-    uvs.push(...uv0, ...uv1, ...uv2);
-    const startIdx = indices.length;
+    uvs.push(...remapU(uv0, faceIdx), ...remapU(uv1, faceIdx), ...remapU(uv2, faceIdx));
     indices.push(startVert, startVert + 1, startVert + 2);
-    groups.push({ start: startIdx, count: 3, materialIndex });
   }
 
-  // Pořadí materialIndex (musí ladit s `createTRRampFor` materials array):
+  // Pořadí faceIdx (musí ladit s `RAMP_ATLAS_SPECS.trramps.keys`):
   // 0 = SLOPE, 1 = BOTTOM, 2 = BACK, 3 = LEFT, 4 = RIGHT.
 
   // CCW order pro každý face = vertices v takovém pořadí, aby cross product
@@ -1163,22 +1170,18 @@ const TRRAMP_GEOM_CACHE = (() => {
   geom.setAttribute("normal",   new THREE.Float32BufferAttribute(normals, 3));
   geom.setAttribute("uv",       new THREE.Float32BufferAttribute(uvs, 2));
   geom.setIndex(indices);
-  for (const g of groups) geom.addGroup(g.start, g.count, g.materialIndex);
   return geom;
 })();
 
-// Sestaví trojboký hranol pro TRRAMPS instanci. 5 materials (SLOPE/BOTTOM/BACK/
-// LEFT/RIGHT) přes sdílený dispatch `faceMaterialFor` (DD-14, izomorfně s TCUBES).
-// Geometrie sdílená přes cache — instance se liší pozicí a rotací.
+// Sestaví trojboký hranol pro TRRAMPS instanci. Single-material atlas (DD-36
+// izomorfně s TCUBES) — `getRampAtlasMaterial("trramps", surface)` zkomponuje
+// 5 facelet textur do 80×16 atlasu, UV v geometrii jsou remapnuté na 1/5-tici.
+// Geometrie sdílená přes cache; instance se liší pozicí, rotací a (přes
+// surface lookup) volbou atlas materiálu.
 function createTRRampFor(instance) {
-  const materials = [
-    faceMaterialFor(instance.TEXTURE_SLOPE),   // 0
-    faceMaterialFor(instance.TEXTURE_BOTTOM),  // 1
-    faceMaterialFor(instance.TEXTURE_BACK),    // 2
-    faceMaterialFor(instance.TEXTURE_LEFT),    // 3
-    faceMaterialFor(instance.TEXTURE_RIGHT),   // 4
-  ];
-  const mesh = new THREE.Mesh(TRRAMP_GEOM_CACHE, materials);
+  const surface = RAMP_SURFACE_FROM_KIND[instance.KIND] ?? "grass";
+  const mat = getRampAtlasMaterial("trramps", surface);
+  const mesh = new THREE.Mesh(TRRAMP_GEOM_CACHE, mat);
   snapToGrid(mesh, instance);
   mesh.rotation.y = instance.ORIENTATION * (Math.PI / 180);
   return mesh;
@@ -1193,9 +1196,12 @@ function createTRRampFor(instance) {
 // se sdíleným pravým úhlem v rohu C.
 //
 // 4 faces × 3 vertices (per-face non-shared) = 12 vertices, 4 trojúhelníky.
+// Single-material atlas (DD-36, viz `getRampAtlasMaterial("ttramps", surface)`).
 
+const TTRAMP_FACE_COUNT = 4;
 const TTRAMP_GEOM_CACHE = (() => {
   const SQRT3 = Math.sqrt(3);
+  const N = TTRAMP_FACE_COUNT;
   // 4 unique vertex pozice (lokálně, 1C blok centered v origin).
   const C = [-0.5, -0.5, -0.5];  // sdílený roh 3 perpendicular faces
   const X = [ 0.5, -0.5, -0.5];  // konec +X hrany
@@ -1206,19 +1212,20 @@ const TTRAMP_GEOM_CACHE = (() => {
   const normals = [];
   const uvs = [];
   const indices = [];
-  const groups = [];
 
-  function addTri(p0, p1, p2, n, uv0, uv1, uv2, materialIndex) {
+  function remapU(uv, faceIdx) {
+    return [faceIdx / N + uv[0] / N, uv[1]];
+  }
+
+  function addTri(p0, p1, p2, n, uv0, uv1, uv2, faceIdx) {
     const startVert = positions.length / 3;
     positions.push(...p0, ...p1, ...p2);
     normals.push(...n, ...n, ...n);
-    uvs.push(...uv0, ...uv1, ...uv2);
-    const startIdx = indices.length;
+    uvs.push(...remapU(uv0, faceIdx), ...remapU(uv1, faceIdx), ...remapU(uv2, faceIdx));
     indices.push(startVert, startVert + 1, startVert + 2);
-    groups.push({ start: startIdx, count: 3, materialIndex });
   }
 
-  // Pořadí materialIndex (musí ladit s `createTTRampFor` materials):
+  // Pořadí faceIdx (musí ladit s `RAMP_ATLAS_SPECS.ttramps.keys`):
   // 0 = SLOPE, 1 = BOTTOM, 2 = BACK, 3 = LEFT.
 
   // SLOPE — triangle (X, Y, Z), rovnostranný, normála (1, 1, 1)/√3.
@@ -1266,20 +1273,16 @@ const TTRAMP_GEOM_CACHE = (() => {
   geom.setAttribute("normal",   new THREE.Float32BufferAttribute(normals, 3));
   geom.setAttribute("uv",       new THREE.Float32BufferAttribute(uvs, 2));
   geom.setIndex(indices);
-  for (const g of groups) geom.addGroup(g.start, g.count, g.materialIndex);
   return geom;
 })();
 
-// Sestaví trojboký jehlan pro TTRAMPS instanci. 4 materials (SLOPE/BOTTOM/BACK/
-// LEFT). Geometrie sdílená přes cache.
+// Sestaví trojboký jehlan pro TTRAMPS instanci. Single-material atlas (DD-36)
+// — `getRampAtlasMaterial("ttramps", surface)` zkomponuje 4 facelety do 64×16
+// atlasu, UV v geometrii jsou remapnuté na 1/4-tici.
 function createTTRampFor(instance) {
-  const materials = [
-    faceMaterialFor(instance.TEXTURE_SLOPE),   // 0
-    faceMaterialFor(instance.TEXTURE_BOTTOM),  // 1
-    faceMaterialFor(instance.TEXTURE_BACK),    // 2
-    faceMaterialFor(instance.TEXTURE_LEFT),    // 3
-  ];
-  const mesh = new THREE.Mesh(TTRAMP_GEOM_CACHE, materials);
+  const surface = RAMP_SURFACE_FROM_KIND[instance.KIND] ?? "grass";
+  const mat = getRampAtlasMaterial("ttramps", surface);
+  const mesh = new THREE.Mesh(TTRAMP_GEOM_CACHE, mat);
   snapToGrid(mesh, instance);
   mesh.rotation.y = instance.ORIENTATION * (Math.PI / 180);
   return mesh;
@@ -1316,7 +1319,12 @@ function createTTRampFor(instance) {
 //
 // Per-face vertices (non-shared) — flat shading bez computeVertexNormals.
 
+// Single-material atlas (DD-36) — 7 face × 5 unique texture keys (WALL_FULL je
+// na 2 sousedních quadech E+S, WALL_TRI na 2 sousedních triích N+W → sdílí
+// stejný atlas slot). Atlas má 5 slotů, UV remap na 1/5-tici v U-axis.
+const TDRAMP_FACE_COUNT = 5;
 const TDRAMP_GEOM_CACHE = (() => {
+  const N = TDRAMP_FACE_COUNT;
   const v0 = [-0.5, -0.5, -0.5];
   const v1 = [ 0.5, -0.5, -0.5];
   const v2 = [ 0.5, -0.5,  0.5];
@@ -1331,26 +1339,26 @@ const TDRAMP_GEOM_CACHE = (() => {
   const normals = [];
   const uvs = [];
   const indices = [];
-  const groups = [];
 
-  function addQuad(p0, p1, p2, p3, n, uv0, uv1, uv2, uv3, materialIndex) {
+  function remapU(uv, faceIdx) {
+    return [faceIdx / N + uv[0] / N, uv[1]];
+  }
+
+  function addQuad(p0, p1, p2, p3, n, uv0, uv1, uv2, uv3, faceIdx) {
     const startVert = positions.length / 3;
     positions.push(...p0, ...p1, ...p2, ...p3);
     normals.push(...n, ...n, ...n, ...n);
-    uvs.push(...uv0, ...uv1, ...uv2, ...uv3);
-    const startIdx = indices.length;
+    uvs.push(...remapU(uv0, faceIdx), ...remapU(uv1, faceIdx),
+            ...remapU(uv2, faceIdx), ...remapU(uv3, faceIdx));
     indices.push(startVert, startVert + 1, startVert + 2);
     indices.push(startVert, startVert + 2, startVert + 3);
-    groups.push({ start: startIdx, count: 6, materialIndex });
   }
-  function addTri(p0, p1, p2, n, uv0, uv1, uv2, materialIndex) {
+  function addTri(p0, p1, p2, n, uv0, uv1, uv2, faceIdx) {
     const startVert = positions.length / 3;
     positions.push(...p0, ...p1, ...p2);
     normals.push(...n, ...n, ...n);
-    uvs.push(...uv0, ...uv1, ...uv2);
-    const startIdx = indices.length;
+    uvs.push(...remapU(uv0, faceIdx), ...remapU(uv1, faceIdx), ...remapU(uv2, faceIdx));
     indices.push(startVert, startVert + 1, startVert + 2);
-    groups.push({ start: startIdx, count: 3, materialIndex });
   }
 
   // SLOPE — diagonální šikmá plocha. Normála (−1, +1, −1)/√3 → ven k NW-up.
@@ -1420,23 +1428,16 @@ const TDRAMP_GEOM_CACHE = (() => {
   geom.setAttribute("normal",   new THREE.Float32BufferAttribute(normals,   3));
   geom.setAttribute("uv",       new THREE.Float32BufferAttribute(uvs,       2));
   geom.setIndex(indices);
-  for (const g of groups) {
-    geom.addGroup(g.start, g.count, g.materialIndex);
-  }
   return geom;
 })();
 
-// Sestaví TDRAMP instanci. 5 materials (SLOPE/TOP/BOTTOM/WALL_FULL/WALL_TRI).
-// Geometrie sdílená přes cache. ORIENTATION rotuje kolem Y.
+// Sestaví TDRAMP instanci. Single-material atlas (DD-36) — atlas má 5 slotů
+// (SLOPE/TOP/BOTTOM/WALL_FULL/WALL_TRI), WALL_FULL i WALL_TRI sdílejí svůj
+// slot mezi 2 facey. ORIENTATION rotuje kolem Y.
 function createTDRampFor(instance) {
-  const materials = [
-    faceMaterialFor(instance.TEXTURE_SLOPE),      // 0
-    faceMaterialFor(instance.TEXTURE_TOP),        // 1
-    faceMaterialFor(instance.TEXTURE_BOTTOM),     // 2
-    faceMaterialFor(instance.TEXTURE_WALL_FULL),  // 3
-    faceMaterialFor(instance.TEXTURE_WALL_TRI),   // 4
-  ];
-  const mesh = new THREE.Mesh(TDRAMP_GEOM_CACHE, materials);
+  const surface = RAMP_SURFACE_FROM_KIND[instance.KIND] ?? "grass";
+  const mat = getRampAtlasMaterial("tdramp", surface);
+  const mesh = new THREE.Mesh(TDRAMP_GEOM_CACHE, mat);
   snapToGrid(mesh, instance);
   mesh.rotation.y = instance.ORIENTATION * (Math.PI / 180);
   return mesh;
@@ -1976,6 +1977,65 @@ const RAMP_DIAGONAL_TEXTURES = {
   sand:  { SLOPE: ":sand",      TOP: ":sand",      BOTTOM: ":sand",  WALL_FULL: ":sand",  WALL_TRI: ":sand"  },
 };
 
+// === Ramp atlas pipeline (DD-36) ============================================
+// Izomorfně s TCUBES atlas pipeline (`getTcubesKindMaterial`): per (typ, surface)
+// jeden atlas material — N facelet textur slepených do canvasu N×16 × 16 px,
+// UV v geometrii každého ramp typu jsou remapnuté na 1/N-tici v U-axis.
+// Cíl: 5/4/5 draw calls per ramp instance → 1 draw call. Pro default seed 42
+// (30×30) = ~34 ramp instancí × průměr 4.7 calls = ~160 calls → ~34 calls.
+
+// `instance.KIND` má tvar `ramp_<surface>` (z `createRampEdge/Corner/Diagonal`).
+const RAMP_SURFACE_FROM_KIND = {
+  ramp_grass: "grass",
+  ramp_stone: "stone",
+  ramp_sand:  "sand",
+};
+
+// Per ramp typ: pořadí klíčů v texSet musí ladit s `faceIdx` v IIFE geometrie.
+const RAMP_ATLAS_SPECS = {
+  trramps: { keys: ["SLOPE", "BOTTOM", "BACK", "LEFT", "RIGHT"],            texTable: RAMP_EDGE_TEXTURES     },
+  ttramps: { keys: ["SLOPE", "BOTTOM", "BACK", "LEFT"],                     texTable: RAMP_CORNER_TEXTURES   },
+  tdramp:  { keys: ["SLOPE", "TOP", "BOTTOM", "WALL_FULL", "WALL_TRI"],     texTable: RAMP_DIAGONAL_TEXTURES },
+};
+
+// Lazy cache: klíč `${type}_${surface}` → MeshStandardMaterial. Build je
+// idempotentní (factory volaná opakovaně vrací stejný materiál z cache).
+const _rampsAtlasMatCache = new Map();
+function getRampAtlasMaterial(type, surface) {
+  const key = `${type}_${surface}`;
+  const cached = _rampsAtlasMatCache.get(key);
+  if (cached !== undefined) return cached;  // může být i `null` cached miss
+  const spec = RAMP_ATLAS_SPECS[type];
+  const texSet = spec?.texTable[surface];
+  if (!spec || !texSet) {
+    _rampsAtlasMatCache.set(key, null);
+    return null;
+  }
+  const N = spec.keys.length;
+  const canvas = document.createElement("canvas");
+  canvas.width  = ATLAS_TILE_PX * N;
+  canvas.height = ATLAS_TILE_PX;
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;  // pixel-art look (žádný blur při downscale)
+  for (let i = 0; i < N; i++) {
+    const texName = texSet[spec.keys[i]];
+    if (typeof texName !== "string" || !texName.startsWith(":")) continue;
+    const factory = NAMED_TEXTURE_FACTORIES[texName];
+    if (!factory) continue;
+    const subTex = factory();              // THREE.CanvasTexture (s `.image` = source canvas)
+    if (subTex?.image) {
+      ctx.drawImage(subTex.image, i * ATLAS_TILE_PX, 0, ATLAS_TILE_PX, ATLAS_TILE_PX);
+    }
+  }
+  const atlasTex = new THREE.CanvasTexture(canvas);
+  atlasTex.magFilter = THREE.NearestFilter;
+  atlasTex.minFilter = THREE.NearestFilter;
+  atlasTex.colorSpace = THREE.SRGBColorSpace;  // shoda s :named-texture barvami
+  const mat = new THREE.MeshStandardMaterial({ map: atlasTex });
+  _rampsAtlasMatCache.set(key, mat);
+  return mat;
+}
+
 function createRampEdge(r) {
   const tex = RAMP_EDGE_TEXTURES[r.surface] ?? RAMP_EDGE_TEXTURES.grass;
   return new TRRAMPS(
@@ -2374,8 +2434,9 @@ function animate() {
 
   // Perf HUD report 1×/s — `renderer.info.render.*` reflektuje *poslední*
   // render() (právě výš), takže čteme po něm. `info.memory.*` jsou kumulativní
-  // counts napříč scénou (geometries+textures alive). `mat` = velikost
-  // sdílené cache `_faceMaterialCache` (Three.js nemá native material count).
+  // counts napříč scénou (geometries+textures alive). `mat` = součet všech
+  // material cache (slow path `_faceMaterialCache` + atlas pipeline TCUBES
+  // + atlas pipeline rampy — Three.js nemá native material count).
   _perfHud.frameCount++;
   if (now - _perfHud.lastReport >= 1.0) {
     const fps = _perfHud.frameCount / (now - _perfHud.lastReport);
@@ -2383,7 +2444,9 @@ function animate() {
     _perfHud.el.calls.textContent = renderer.info.render.calls;
     _perfHud.el.tri.textContent   = renderer.info.render.triangles.toLocaleString("cs-CZ");
     _perfHud.el.geom.textContent  = renderer.info.memory.geometries;
-    _perfHud.el.mat.textContent   = _faceMaterialCache.size;
+    _perfHud.el.mat.textContent   = _faceMaterialCache.size
+                                  + _tcubesAtlasMatCache.size
+                                  + _rampsAtlasMatCache.size;
     _perfHud.frameCount = 0;
     _perfHud.lastReport = now;
   }
