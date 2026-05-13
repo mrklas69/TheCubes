@@ -592,3 +592,31 @@ Node ESM test `src/terrain.js` — sum check 12/12 buněk OK (sum=1.0 ±0.001), 
 ### Diff celkem
 
 `src/terrain.js` +60/−1 ř. (BIOME_SURFACES + surfacesForBiome + polar.wet rename), `src/main.js` ~+15/−5 ř. (import + expose + TERRAIN_DEFAULTS bez surfaces + buildScene driver wire), `index.html` ~+35/−95 ř. (DOM Surfaces sekce delete, IIFE refactor — SURFACE_KINDS/surfInputs/normalizeSurfaces pryč, Climate KEYS/NAMES/DOM nahoru, readParams přes surfacesForBiome, climate change → regen), `docs/DESIGN_DECISIONS.md` ~+50 ř. (DD-44), `docs/*` ~+80 ř. (TODO close G3 + close polar/wet sub-prah + add snow surface sub-prah; DONE sez. 36; DIARY index + sez. 36 sekce; GLOSSARY DD-44 termíny).
+
+### Sezení 36 pokračování — DD-45 fBm + ridge³ heightmap
+
+User feedback po G3 commit + merge: *„50×50 relief 7 = neprostupný šum, nešlo by hřebenovité hory s údolími?"* Diagnóza: 1-okt value-noise + freq 0.55 = ~1.8 cells per noise uzel × full amp 5 = vrchovinný šum, ne hory. Topic branch `feat/terrain-noise` checkout z main po G3 merge.
+
+- [x] **`fbmSample(noiseFn, x, z)` helper** v `terrain.js` — 3 oktávy s persistence 0.5, lacunarity 2.0, normalize děli `1 + 0.5 + 0.25 = 1.75`. Multi-scale: velké útvary (base freq) + střední (2× freq) + jemné detaily (4× freq).
+- [x] **`ridge(v)` helper s `r³`** — `1 - |2v - 1|`, pak cubed. 3 iterace pure → ² → ³ (plateau efekt snížen 58% → 33% → 23%). Cubed verze: E ≈ 0.25, peaks vzácné, údolí dominantní.
+- [x] **Blend formula `(1 - rw) * fbm + rw * ridge³`** + `ridgeWeight = max(0, (relief - 4) / 4)`. Relief 0-4: pure fBm (rolling hills); relief 5-8: ridge increasing weight (horské hřebeny).
+- [x] **`RELIEF_AMPLITUDE` retune**: idx 8: 6 → 8 (Alpine full ridge snese vyšší peaks na 100×100). Idx 0-7 beze změny — `maxReliefForSize` UX zachován (50×50 dál relief 7 dostupný).
+- [x] **`RELIEF_FREQUENCY` retune**: idx 6-8: 0.45/0.55/0.65 → 0.18/0.15/0.12 (dramaticky nižší pro velké hřebeny). Idx 1-5 mírně nižší (0.12-0.20) — fBm horní oktávy zmnoží automaticky přes lacunarity².
+- [x] **DD-45 zápis** (immutable log, algoritmická změna ovlivňuje všechny existující seed × relief × size kombinace).
+- [x] **Sub-prah TODO** G5 bimodální heightmap (threshold step / dual noise) + Math.floor experiment pro low relief plateau — wait pro user vizuální feedback.
+
+### DD-45 Diff
+
+`src/terrain.js` ~+45/−5 ř. (fbmSample + ridge helpers + RELIEF tabulek retune + heightmap loop refactor 1 → 3 noise lookups), `docs/DESIGN_DECISIONS.md` ~+60 ř. (DD-45 sekce), `docs/TODO.md` ~+5 ř. (G5 + Math.floor sub-prahy), `docs/GLOSSARY.md` 1 ř. (header DD-45), `docs/DIARY.md` index + diary sez. 36 pokr.
+
+### Sez. 36 Smoke testy
+
+**G3:** ESM Node — 12/12 buněk sum=1.0 ±0.001 OK, `polar.wet === polar.mid` alias OK, `surfacesForBiome(tropical, dry)` = sand 0.90 OK, fallback `(garbage, garbage)` = temperate.mid OK, `generateTerrain` projde všemi 12 climate combiny bez chyby.
+
+**DD-45:** ESM Node histogram check pro 50×50 r3/r5/r7:
+- 50×50 r3 (pure fBm): range -2..1, 47%/46% bimodální = stejné jako dnes (no regrese).
+- 50×50 r5 (25% ridge): range -2..2, 55% na Y=2 (clustering kvůli low amp + round, sub-prah TODO).
+- 50×50 r7 (75% ridge): range -1..4, distribuce Y=1(16%)/Y=2(27%)/Y=3(30%)/Y=4(23%) = single-peak kolem Y=3.
+- 100×100 r10 (Alpine 100% ridge): range -2..8 (11 úrovní), široká distribuce mean Y=3 peak 16 %, 5238 ramps.
+
+Browser test (user, sez. 37): visual confirm pro 50×50 r7 — pokud "lepší ale stále plateau" → G5 implementace.

@@ -67,13 +67,25 @@ function makeValueNoise(sizeX, sizeZ, freq, seed) {
   };
 }
 
-// Relief 0..8 → (amplitude max Y voxel, heightmap frequency).
+// Relief 0..8 → (amplitude max Y voxel, heightmap base frequency).
 // 0–2: nízká členitost (roviny, mírné vlny). 3–5: pahorkatiny (rolling/hilly/
 // broken). 6–8: vrchoviny (rugged/craggy/mountainous). 9–10 přijímáme na vstupu,
-// ale value-noise engine je nezvládne plně (chybí valley carving / ridge noise),
-// proto níže clamp na 8 + warn — pole tak drží jen *podporované* indexy (SSoT).
-const RELIEF_AMPLITUDE = [0, 0, 1, 1, 2, 3, 4, 5, 6];
-const RELIEF_FREQUENCY = [0.00, 0.15, 0.20, 0.25, 0.30, 0.35, 0.45, 0.55, 0.65];
+// ale generátor je nezvládne plně (chybí valley carving), níže clamp na 8 + warn.
+//
+// **DD-45 (sez. 36) — fBm + ridge blend retune:**
+// Po přechodu na fBm (3 oktávy, lacunarity 2, persistence 0.5) je *base freq*
+// nižší než 1-oktávové value-noise — fBm sám násobí freq lacunarity² pro horní
+// oktávy, takže base 0.15 dá efektivní detaily až ~0.6. Plus ridge transformace
+// `1 - |2v - 1|` zvyšuje efektivní peak height (peaks reálně dosahují plné amp,
+// na rozdíl od bublatého value-noise kde peak ~0.6-0.7×amp). Proto:
+//   - **amp** beze změny pro idx ≤ 7 (zachová `maxReliefForSize` UX — 50×50 dál
+//     dovolí relief 7). Idx 8 (Alpine) zvýšen 6→8: full-ridge peaks na 100×100
+//     mapě snesou vyšší vrcholy bez disproporce (8/100 = 8%).
+//   - **freq** dramaticky nižší pro high relief (idx 6-8: 0.45/0.55/0.65 →
+//     0.18/0.15/0.12). Velké hřebeny místo drobných štítů. Pro low relief
+//     mírně nižší (idx 1-5) protože fBm horní oktávy zmnoží freq automaticky.
+const RELIEF_AMPLITUDE = [0, 0, 1, 1, 2, 3, 4, 5, 8];
+const RELIEF_FREQUENCY = [0.00, 0.12, 0.14, 0.16, 0.18, 0.20, 0.18, 0.15, 0.12];
 
 // Surface biome → Y offset (oproti heightmap value h).
 // `grass` / `stone` — na povrchu (h beze změny).
@@ -126,6 +138,57 @@ export function generateTerrain({ size, relief, surfaces, seed = 42 }) {
   const amplitude = RELIEF_AMPLITUDE[reliefIdx];
   const frequency = RELIEF_FREQUENCY[reliefIdx];
 
+  // === DD-45 (sez. 36) — fBm + ridge blend pro high relief ===
+  // fBm (fractal Brownian motion) sečte 3 oktávy value-noise s decreasing
+  // amplitudou — velké útvary (base freq) + střední (2× freq) + jemné detaily
+  // (4× freq). Bez fBm by 1 oktáva pro high relief dávala "neprostupný šum"
+  // (peaks široké ~2 cely s plnou amp = vrchovinný drobný šum, ne hřebeny).
+  //
+  // Ridge transformace `1 - |2v - 1|` invertuje bublaté peaks na lineární
+  // hřebeny — typický horský look. Ale pro rolling hills (relief ≤ 4) by
+  // ridge dal ostré tenké hřbety místo kulatých kopečků (nefyzikální).
+  // Proto **ridgeWeight = max(0, (relief - 4) / 4)** — lineární růst ridge
+  // podílu mezi relief 4 (0%) a relief 8 (100%):
+  //   - relief 0-4 (Flat..Hilly):           pure fBm = organické kulaté kopce
+  //   - relief 5 (Uneven):                  25% ridge, 75% fBm = mírná hřebenovitost
+  //   - relief 6 (Rugged):                  50% blend = výrazné hřebeny
+  //   - relief 7-8 (Craggy/Mountainous):    75-100% ridge = ostré horské hřebeny
+  const FBM_OCTAVES = 3;
+  const FBM_LACUNARITY = 2.0;
+  const FBM_PERSISTENCE = 0.5;
+  const FBM_TOTAL_AMP = 1 + 0.5 + 0.25;  // = 1.75 = sum persistence^i pro i=0..2
+  const ridgeWeight = Math.max(0, (reliefClamped - 4) / 4);
+
+  // fBm sample. `noiseFn` = volání `makeValueNoise(...)` instance. Cena O(octaves)
+  // = 3 noise lookupy per cell. Pro 50×50 = 2500 cells × 3 = 7500 noise lookupů
+  // (cell + biome noise = 2500 navíc), zanedbatelné CPU. JS comment: arrow
+  // function s closure nad `noiseFn` — engine standard.
+  function fbmSample(noiseFn, x, z) {
+    let value = 0, amp = 1, freq = 1;
+    for (let i = 0; i < FBM_OCTAVES; i++) {
+      value += amp * noiseFn(x * freq, z * freq);
+      amp *= FBM_PERSISTENCE;
+      freq *= FBM_LACUNARITY;
+    }
+    return value / FBM_TOTAL_AMP;  // normalize na [0, 1]
+  }
+
+  // Ridge: 1 - |2v - 1|. v ∈ [0,1] → result ∈ [0,1] s peaks v středu range
+  // (v=0.5 → 1.0). Pure ridge má E ≈ 0.5 (triangulární distribuce), ale shifted
+  // toward high values → většina cells skončí v plateau na max amp = horská
+  // náhorní plošina, ne hřebeny.
+  //
+  // **Ridge³ (cubed)** zúží peaks ještě ostřeji než ridge² (E ≈ 0.25 vs. 0.33):
+  // ridge=1.0 → 1.0, ridge=0.8 → 0.512, ridge=0.5 → 0.125, ridge=0.2 → 0.008.
+  // Peaks zůstanou plné amp, ale jsou **vzácné** (jen pro v blízko 0.5) —
+  // vzniknou úzké hřebeny obklopené širokými údolími. Test sez. 36 prokázal,
+  // že ridge² ještě dominuje plateau (67 % cells na top 2 úrovních), ridge³
+  // dá right-skewed distribuci = většina mapy údolí, peaks vzácné.
+  function ridge(v) {
+    const r = 1 - Math.abs(2 * v - 1);
+    return r * r * r;
+  }
+
   // === Krok 1: heightmap + biome noise ===
   // Heightmap noise seed +0, biome noise seed +1 — nezávislé samply.
   // Biome má polovinu frequency = větší klastry biomů (regionální podání).
@@ -142,7 +205,12 @@ export function generateTerrain({ size, relief, surfaces, seed = 42 }) {
     for (let dx = 0; dx < sx; dx++) {
       const x = x0 + dx;
       const z = z0 + dz;
-      const h = Math.round(heightNoise(x, z) * amplitude);
+      // DD-45: fBm + ridge blend. fbmVal ∈ [0,1], ridgeVal ∈ [0,1], blend váží
+      // dle relief slideru.
+      const fbmVal   = fbmSample(heightNoise, x, z);
+      const ridgeVal = ridge(fbmVal);
+      const blended  = (1 - ridgeWeight) * fbmVal + ridgeWeight * ridgeVal;
+      const h = Math.round(blended * amplitude);
       cells.push({ x, z, h, biome_value: biomeNoise(x, z) });
     }
   }

@@ -325,8 +325,11 @@
       // HUMIDITY_KEYS pro `surfacesForBiome` lookup.
       const LATITUDE_KEYS  = ["tropical", "subtropical", "temperate", "polar"];
       const LATITUDE_NAMES = ["Tropický", "Subtropický", "Mírný", "Polární"];
-      const HUMIDITY_KEYS  = ["wet", "mid", "dry"];
-      const HUMIDITY_NAMES = ["Vlhko", "Středně", "Sucho"];
+      // HUMIDITY slider orient: vlevo Sucho, vpravo Vlhko (sez. 36 user UX
+       // preference — intuice "vpravo = víc"). BIOME_SURFACES/BIOME_NAMES
+       // klíče zůstávají "wet"/"mid"/"dry" (sémantika klimatu, ne pozice).
+      const HUMIDITY_KEYS  = ["dry", "mid", "wet"];
+      const HUMIDITY_NAMES = ["Sucho", "Středně", "Vlhko"];
 
       const $ = (id) => document.getElementById(id);
       const sizeX  = $("tc-size-x"),  sizeXVal  = $("tc-size-x-val");

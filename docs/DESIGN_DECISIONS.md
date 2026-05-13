@@ -1095,3 +1095,47 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 - Sez. 26 — surface sliders + `normalizeSurfaces()` zavedení v `#terrainctrl`. DD-44 je odstraňuje (immutable historie zachována v DIARY).
 - Sez. 36 user volby: Q1=A (hard override), Q2=A (Tundra alias), Q3=A (schválená tabulka), Q4=A (snow sub-prah TODO). Kontext v `docs/diary/2026-05-13.md` Sez. 36.
 
+## DD-45 — fBm + ridge³ blend heightmap (D varianta, sez. 36)
+
+**Stav:** Sez. 36 (topic branch `feat/terrain-noise`). User feedback po G3 dokončení: *„50×50 relief 7 → je to náhodný, neprostupný šum. Nešlo by vytvořit vysoké štíty / úseky horských hřebenů s údolími?"* Diagnóza: dnešní `generateTerrain` (DD-32) má **1 oktávu** value-noise s `RELIEF_FREQUENCY[7] = 0.55` → 28 noise uzlů přes 50 cells = ~1.8 cell per uzel × full amp 5 = "high-freq high-amp noise" = vrchovinný šum, ne hory.
+
+**Rozhodnutí:**
+
+1. **fBm (fractal Brownian motion) — 3 oktávy** v `heightNoise` sample path. `fbmSample(noiseFn, x, z)` sečte 3 oktávy s decreasing amp (persistence 0.5) a increasing freq (lacunarity 2.0), pak normalize děli `1 + 0.5 + 0.25 = 1.75`. Multi-scale: velké útvary (base freq) + střední (2× freq) + jemné detaily (4× freq).
+
+2. **Ridge transformace `1 - |2v - 1|` + cubed** (= ridge³). Invertuje bublaté peaks na ostré hřebeny. Cubed verze (`r³`) zúží peaks ještě ostřeji než `r²` (E ≈ 0.25 vs. 0.33) — peaks vzácné, údolí dominantní. Sez. 36 měření: ridge² mělo 58 % cells na top 2 úrovních (plateau), ridge³ snížilo na 53 % a roztáhlo range na 5 úrovní (vs. 4).
+
+3. **Blend dle reliefu — `ridgeWeight = max(0, (relief - 4) / 4)`:**
+   - relief 0-4 (Flat..Hilly): ridgeWeight = 0 → pure fBm, organické kulaté kopce.
+   - relief 5 (Uneven): 25 % ridge.
+   - relief 6 (Rugged): 50 % blend.
+   - relief 7-8 (Craggy/Mountainous): 75-100 % ridge = horské hřebeny.
+   Formula: `blended = (1 - rw) * fbmVal + rw * ridge³(fbmVal)`.
+
+4. **`RELIEF_AMPLITUDE` + `RELIEF_FREQUENCY` retune:**
+   - **Amp** beze změny pro idx 0-7 (zachová `maxReliefForSize` UX — 50×50 dál dovolí relief 7). Idx 8 (Alpine) zvýšen 6→8 (full-ridge peaks na 100×100 mapě snesou vyšší vrcholy bez disproporce, 8/100 = 8 %).
+   - **Freq** dramaticky nižší pro high relief (idx 6-8: 0.45/0.55/0.65 → 0.18/0.15/0.12) — velké hřebeny místo drobných štítů. Pro low relief mírně nižší (idx 1-5) protože fBm horní oktávy zmnoží freq automaticky (base 0.16 → efektivní detaily 0.64 přes lacunarity²).
+
+5. **`generateTerrain` API nezměněno** — `{ size, relief, surfaces, seed }` zůstává. Změna je čistě interní (algoritmus heightmap sample). Backward compatibility pro existující seed × relief × size kombinace **se mění** (různý výstup), ale tohle je očekávaný side effect kvality upgradu (žádný persistence layer ovlivněn).
+
+**Důvod (proč DD a ne jen feature):**
+
+- **Algoritmická změna heightmap generátoru** — mění chování všech existujících seedů + reliefů. Reprodukovatelnost přes seed je broken cross-version (sez. 35 seed 42 ≠ sez. 36 seed 42 vizuálně).
+- Immutable log důležitý — pokud někdy budeme srovnávat sez. 35 (1-okt value noise) vs. sez. 36 (fBm + ridge³) referenční scény, DD-45 dává sémantiku.
+- fBm je **standard pattern** v procedural terrain (Perlin, Ken Musgrave atd.) — DD-44 je benchmark, ne novelty.
+- Otevírá ridge-friendly RELIEF tuning prostor pro budoucí iterace (G5 candidate: threshold-based "hřebeny + údolí" generator pro skutečně bimodální dist).
+
+**Známá omezení:**
+
+- **Single-peak distribuce, ne bimodální.** Ridge³ snížil plateau dominanci, ale výstup je pořád roughly Gaussian kolem mean. Pro skutečně bimodální "hřebeny + údolí" (mass na extremes, málo uprostřed) by bylo nutné **threshold step** generátor (`fbm < 0.5 ? -1 : amp`) nebo **dual noise** (continent mask + ridge detail) — G5 kandidát po user feedback. Sub-prah TODO zapsán.
+- **50×50 + relief 7 vyžaduje vizuální test** — histogram (range -1..4, peak Y=3 30 %) je *lepší než dnes* (range 0..4, plateau Y=4 58 %), ale ne sloužící "ostré horské hřebeny" feel. Pokud user feedback bude "lepší ale ne ideální", G5 step approach je další iterace.
+- **Cena CPU:** 3 noise lookupy per cell (fBm) + 1 (biome) = 4× lookups. Pro 100×100 = 40k lookupů, zanedbatelné vůči ridge smoothing pass (Pass 1+2 = ~10k cell ops). Generace 50×50 zůstává <10 ms.
+- **`Math.round` clustering kolem mean** je inherentní pro low-amp relief (relief 5 amp 3 = jen 4 unique Y úrovně). Pro relief 0-4 to není problém (rolling hills nemají benefit od mnoha úrovní); pro relief 5+ je fBm distribuce rozšířena ale **round** ji binuje. Sub-prah: experiment s `Math.floor` (lower bias) pokud relief 5-6 vypadají jako plateau.
+
+**Reference:**
+
+- DD-32 (sez. 25) — `generateTerrain` MVP s 1-okt value-noise. DD-45 mění **interní algoritmus** (krok 1 heightmap), `generateTerrain` API beze změny.
+- DD-33 / DD-34 / DD-35 (sez. 26) — ramp smoothing layer reaguje na heightmap (`y_top` distribuci). Vyšší variabilita heightu = víc step-edges = víc ramp kandidátů. Test 100×100 r10 ukázal **5238 ramps** (vs. sez. 35 cca 3500 odhad) — ramp smoothing škáluje lineárně.
+- DD-44 (sez. 36) — G3 SURFACES driver. DD-45 ne-koliduje (driver pro `surfaces`, fBm pro `height`).
+- Sez. 36 user feedback po G3: konkrétní case 50×50 r7. Q1=D (fBm + ridge blend), Q2=A (G3 commit + nová branch), Q3=A (DD-45). Kontext v `docs/diary/2026-05-13.md` Sez. 36 pokračování.
+

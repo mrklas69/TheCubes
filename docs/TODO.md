@@ -46,14 +46,16 @@
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — 7/8 sezení od sez. 29. Další doporučený sez. 37 *(prah dosažen)*.
+- **`%AUDIT:CODE`** — 7/8 sezení od sez. 29. Další doporučený sez. 37 *(prah dosažen)*. Velký nový kód: DD-44 G3 driver + DD-45 fBm/ridge heightmap (terrain.js +60 ř., main.js wire) = připraven materiál.
 - **`%AUDIT:DOCS`** — 7/10 sezení od sez. 29. Další doporučený sez. 39+.
-- **IDEAS/TODO pruning** — 3/12 (sez. 36: close G3, close polar/wet sub-prah, add snow surface G4 sub-prah).
+- **IDEAS/TODO pruning** — 3/12 (sez. 36: close G3, close polar/wet sub-prah, add snow surface G4 + bimodální heightmap G5 + Math.floor experiment sub-prahy).
 - **`%CALIBRATE`** — sub-prah „CLAUDE.md +50 %" stále resetnut.
 
-## Sub-prah (G3 follow-up, sez. 36)
+## Sub-prah (G3 + DD-45 follow-up, sez. 36)
 
 - [ ] **Snow surface (G4 kandidát)** — dnes `polar.*` v `BIOME_SURFACES` používá `sand` jako proxy pro sníh. Vizuálně to vypadá jako poušť, ne sníh. G4: přidat `snow` surface kind do `SURFACE_Y_OFFSET` v terrain.js + atlas paleta (klon `grass-top` s bílou). Migrate `polar.*` z `sand` na `snow`. Drobný DD scope.
+- [ ] **Bimodální heightmap — threshold step / dual noise (G5 kandidát)** — DD-45 fBm+ridge³ zlepšilo high relief variabilitu, ale výstup je single-peak distribuce (kolem mean), ne bimodální "hřebeny + údolí". Pro skutečné horské hřebeny s ostrými údolími by bylo nutné: (a) **threshold step** (`fbm < 0.5 ? valley_Y : peak_Y`) — explicit bimodál, smooth-stepped přechod; nebo (b) **dual noise** (continent mask z low-freq fBm + ridge detail z high-freq, additive: `height = continent + mountain * (continent > threshold ? 1 : 0)`) — peaks lokalizované do regionů. Vyžaduje vlastní DD a vizuální user feedback po DD-45 testu. Wait pro user.
+- [ ] **Math.floor experiment pro low relief plateau** — DD-45 `Math.round(blended * amp)` clusteruje fBm distribuci kolem mean (relief 5 amp 3 → 55 % na top voxel). Experiment: nahradit `floor` (lower bias) pro relief ≤ 5. Cena: ztratí 1 voxel max výšky pro pure fBm. Wait pro user feedback ze sez. 36 testu DD-45.
 
 ## Sub-prah (G2 follow-up, sez. 35)
 
