@@ -26,6 +26,24 @@
     /* COUNTER řádky (dynamicky přidané divy) — lehký rozestup mezi řádky */
     #hud > div { margin-top: 2px; }
 
+    /* Perf HUD — pravý horní roh, vizuálně izomorfní s `#hud` (vlevo).
+       Sez. 28: `renderer.info` (draw calls / triangles / geometries / materials)
+       throttle 1×/s v animate(). Diagnostický overlay, ne production UI. */
+    #perfhud {
+      position: fixed; top: 10px; right: 10px;
+      background: rgba(0, 0, 0, 0.55);
+      color: #fff;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      user-select: none;
+      pointer-events: none;
+      line-height: 1.45;
+    }
+    #perfhud .label { opacity: 0.55; margin-right: 4px; }
+    #perfhud .val { color: #66ccdd; }  /* tyrkysový akcent shodný s terrainctrl */
+
     /* Infotip = hover panel s atributy instance pod kurzorem.
        Default skrytý; JS ho pozicuje a zobrazuje. */
     #tooltip {
@@ -135,6 +153,15 @@
 <body>
   <div id="hud">
     <span class="label">TIME:</span><span id="time">0</span>
+  </div>
+  <!-- Perf HUD (sez. 28 diagnostic). FPS = 1000/dt průměr přes vteřinu, calls/tri
+       = `renderer.info.render`, geom/mat = `renderer.info.memory`. -->
+  <div id="perfhud">
+    <div><span class="label">FPS:</span><span class="val" id="ph-fps">—</span></div>
+    <div><span class="label">calls:</span><span class="val" id="ph-calls">—</span></div>
+    <div><span class="label">tri:</span><span class="val" id="ph-tri">—</span></div>
+    <div><span class="label">geom:</span><span class="val" id="ph-geom">—</span></div>
+    <div><span class="label">mat:</span><span class="val" id="ph-mat">—</span></div>
   </div>
   <div id="tooltip"></div>
 
