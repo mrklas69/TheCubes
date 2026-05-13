@@ -16,7 +16,7 @@
 
 ### Otevřené body / kandidáti DD
 
-- [!] **InstancedMesh refactor** — sez. 30 100×100 stress test odhalil draw-call ceiling: 47k calls @ FPS 7 (CPU bound, GPU vyhrává 549k tri easily). Atlas pipeline (DD-36) už vyčerpaná, dál sníží jen instancing. Per atlas material → 1 InstancedMesh batch (TCUBES 4 kindy × 1 + rampy 3 typy × 3 surface = ~13 batchů celkem). Hover refactor: `raycaster.intersectObject().instanceId` → `modelInstance` map místo per-mesh. Odhad zisk: 47k → ~13 calls → FPS 7 → ~150+ @ 100×100. Velký refactor, vlastní DD-37 kandidát.
+- [ ] **BatchedMesh refactor** — sez. 31 InstancedMesh (DD-37) srazila 100×100 na ~13 draw calls. Three.js `BatchedMesh` (r167+) by mohl sloučit TCUBES + rampy do ~3 calls (per-instance geom). Projekt na r160 — vyžaduje bump + nové API porozumění. Diminishing returns (13 → 3 = velmi marginální FPS), low prio.
 - [ ] **`LIQUID` třída** (DD-25 vrstva 4) pro vodní plane(y) — momentálně mimo OOP model (DD-33 kandidát).
 - [ ] **Klastrování spojitých water cells** do bounding boxů (flood-fill, jeden plane na celé jezero) místo 1×1 per cell.
 - [ ] **Roadmap relief 9..10**: valley carving / ridge noise algoritmus (heavily dissected / alpine plně).
@@ -45,7 +45,7 @@ Kosmetické:
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — 1/8 sezení od sez. 29. Další doporučený sez. 37+.
-- **`%AUDIT:DOCS`** — 1/10 sezení od sez. 29. Další doporučený sez. 39+.
-- **IDEAS/TODO pruning** — 11/12 (po sez. 30 přesun hotových do DONE).
+- **`%AUDIT:CODE`** — 2/8 sezení od sez. 29. Další doporučený sez. 37+.
+- **`%AUDIT:DOCS`** — 2/10 sezení od sez. 29. Další doporučený sez. 39+.
+- **IDEAS/TODO pruning** — 12/12 (po sez. 31 přesun hotových do DONE).
 - **`%CALIBRATE`** — sub-prah „CLAUDE.md +50 %" stále resetnut.

@@ -6,6 +6,10 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, TTUNELS, SPRITES, COMPOSITES, PATH, TIMER, COUNTER } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
 import { generateTerrain } from "./terrain.js";
@@ -30,7 +34,17 @@ renderer.shadowMap.type = THREE.PCFShadowMap;
 // === Scéna ===
 // Scene = kontejner pro všechny 3D objekty (kostky, světla, kamery).
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1a1a2e); // tmavě modrofialová pozadí
+const SKY_COLOR = 0x1a1a2e;
+scene.background = new THREE.Color(SKY_COLOR); // tmavě modrofialová pozadí
+// Atmospheric fog — vzdálené objekty plynule blednou do barvy pozadí.
+// `THREE.Fog(color, near, far)` lineární mlha: na vzdálenosti < `near` = ostrý
+// obraz, mezi `near` a `far` = lineární přechod, > `far` = plně pozadí. Pro
+// 100×100 terrain (half=50) far=120 = vidíš až k okraji, ale s ubývající jasností.
+//
+// Drž jako reference (ne přímo `scene.fog = new Fog(...)`), aby toggle on/off
+// (přes `#settings` panel) mohl restore stejnou instanci místo realokace.
+const sceneFog = new THREE.Fog(SKY_COLOR, 30, 120);
+scene.fog = sceneFog;
 
 // === Kamera ===
 // PerspectiveCamera = perspektivní projekce (vzdálené věci jsou menší).
@@ -91,6 +105,69 @@ sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.bias = -0.0001;
 sun.shadow.normalBias = 0;
 scene.add(sun);
+
+// Vizualizace slunce — drobná bílá koule ve směru `sun.position` daleko za
+// scénou. `MeshBasicMaterial` je unlit (ignoruje osvětlení) → koule "svítí"
+// konstantní bílou nezávisle na DirectionalLight. Vzdálenost ×5 (= ~80 j)
+// umístí ji za hranici 100×100 terrain (half=50). Radius 1.5 = drobný bod
+// na obloze (realistická distance perspective).
+//
+// Statická pozice — DAY/SEASON animace (Příště): přidat helper `updateSunMesh()`
+// volaný z animátoru nebo TIME tick, který sync.point.copy(sun.position).
+// multiplyScalar(SUN_DISTANCE_SCALE). Až WORLD dostane TIME/SUN_ANGLE atribut
+// (DD-29 politika), animátor mutuje obojí naráz.
+const SUN_DISTANCE_SCALE = 5;
+const sunMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(1.5, 16, 16),
+  // `fog: false` = slunce ignoruje scene.fog; jinak by se bílá koule s rostoucí
+  // vzdáleností rozplynula do barvy oblohy (na ~80 j by zmizela úplně).
+  new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }),
+);
+sunMesh.position.copy(sun.position).multiplyScalar(SUN_DISTANCE_SCALE);
+scene.add(sunMesh);
+
+// === Post-processing (DOF + fog) =============================================
+// EffectComposer = wrapper kolem rendereru; provede sérii `passes` na off-screen
+// texturách a finální výstup poslat na canvas. Pro DOF (Depth-of-Field) potřeba:
+//   1. RenderPass — vykreslí scénu do off-screen target (s color + depth bufferem).
+//   2. BokehPass  — Gaussian blur podle depth: ostrá zóna ±maxblur kolem `focus`,
+//                   ostatní rozostřené. Vyžaduje depth buffer z RenderPass.
+//   3. OutputPass — gamma/color-space korekce (sRGB → linear → sRGB), kterou jinak
+//                   dělá WebGLRenderer automaticky. Bez OutputPass by composer
+//                   output byl tmavší.
+//
+// `focus` se synchronizuje v animate() s `camera.position.distanceTo(controls.
+// target)` — ohnisko = vzdálenost kamera→target (= střed scény). Při zoom in/out
+// (Y/X klávesa) se focus dynamicky drží na cíli.
+//
+// `aperture` = sílu blur (větší = víc blur); 0.0005 = jemný DoF, na pixel-art
+// textury (NearestFilter 16px) by větší hodnoty rozmazaly atlas tile boundary.
+// `maxblur` = max strength of blur (0.005 = decentní bokeh, ne dramatický).
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bokehPass = new BokehPass(scene, camera, {
+  focus:    10,       // overridujeme v animate() dynamicky
+  aperture: 0.0005,
+  maxblur:  0.005,
+});
+composer.addPass(bokehPass);
+composer.addPass(new OutputPass());
+
+// === Settings API — toggle volitelných vizuálních efektů ====================
+// Wire-up: `index.html` panel `#settings` (3 checkboxy) volá `window.settings.
+// setXxx(on)` na `change` event. Default v HTML = `checked` (vše on),
+// matchne aktuální stav po inicializaci.
+//
+// DOF: `BokehPass.enabled = false` přeskočí pass v composeru (= 1 méně shader
+// průchod, +5-10 FPS na 100×100).
+// Fog: `scene.fog = null` vypne fog uniform v MeshStandardMaterial shaderech.
+// Restoreujeme stejnou instanci `sceneFog` (cheap toggle, žádná realokace).
+// Sun: `sunMesh.visible = false` skipne render meshu (Three.js standard).
+window.settings = {
+  setDOF(on) { bokehPass.enabled = on; },
+  setFog(on) { scene.fog = on ? sceneFog : null; },
+  setSun(on) { sunMesh.visible = on; },
+};
 
 // F12 (sez. 29) — fix: shadow frustum reaktivně dle aktuální velikosti terrain.
 // Volaný z `spawnTerrain` po každém regen. Buffer +4 j pokrývá vyšší objekty
@@ -2049,6 +2126,80 @@ function getRampAtlasMaterial(type, surface) {
   return mat;
 }
 
+// === Terrain InstancedMesh batches (sez. 31, DD-37 kandidát) ================
+// Sez. 30 stress test 100×100: 47k draw calls @ FPS 7 (CPU bound). Atlas
+// pipeline (DD-36) sjednotila geom + materiály, ale 1 `THREE.Mesh` = 1 draw
+// call → strop. Tady mergujeme N instancí stejného (geom, atlas mat) páru do
+// **1 `InstancedMesh`** = 1 draw call. Per-instance se liší jen matrix
+// (`setMatrixAt`) a barva (`setColorAt`, hover tint).
+//
+// Klíč batch:
+//   "tcubes:<kind>"     — TCUBES terrain (grass/dirt/stone/sand)
+//   "trramps:<surface>" — TRRAMPS klín ramp (grass/stone/sand)
+//   "ttramps:<surface>" — TTRAMPS jehlan ramp
+//   "tdramp:<surface>"  — TDRAMP diagonal ramp
+//
+// Hodnota: `THREE.InstancedMesh` s rozšířeným `userData`:
+//   .terrain          = true                     (regen filter)
+//   .batchKey         = "tcubes:grass" atd.      (debug, dispose lookup)
+//   .instancesByIdx   = [inst0, inst1, ...]      (raycaster: instanceId → model)
+//
+// `meshByInstance` po refactoru drží 2 tvary hodnot (discriminated union):
+//   instance.ID → `{ batch, idx }`   pro terrain bloky/rampy (InstancedMesh)
+//   instance.ID → `Object3D`         pro non-terrain (PATH, SPRITES, slow-path
+//                                    TCUBES, water plane) — beze změny
+const _terrainBatches = new Map();
+
+// Hover tint pro instanceColor (multiplikuje albedo v shaderu). MeshStandardMaterial
+// nepodporuje per-instance emissive v batchi bez custom shader; instanceColor
+// multiplikace by sama jen ztmavovala (values 0..1). **Trik:** `Float32Array`
+// buffer v `InstancedBufferAttribute` **nemá clamp** — values > 1.0 dávají
+// overbright efekt (R=1.6 = R kanál albedo × 1.6 → projasní), funkčně blízko
+// emissive boostu. Hodnoty zvoleny tak, aby výsledná barva přes většinu
+// surfaců byla **sytá oranžová** (R boost, G mírný, B redukce).
+const HOVER_TINT_COLOR = new THREE.Color(1.6, 0.8, 0.2);
+const _batchColorWhite = new THREE.Color(1, 1, 1);
+
+// Scratch objekty pro `compose` matice (žádné per-instance alokace).
+const _batchPos    = new THREE.Vector3();
+const _batchEuler  = new THREE.Euler();
+const _batchQuat   = new THREE.Quaternion();
+const _batchScale  = new THREE.Vector3(1, 1, 1);
+const _batchMatrix = new THREE.Matrix4();
+
+// Vytvoří fresh `InstancedMesh` s kapacitou `count`, registruje do scene a
+// `_terrainBatches`. `batch.count` nastavíme **na 0** (i když Three.js volá
+// constructor s `count`); plníme inkrementálně přes `pushInstanceToBatch`,
+// na konci spawn loopu odpovídá skutečnému počtu vložených instancí.
+function createTerrainBatch(key, geom, mat, capacity) {
+  const batch = new THREE.InstancedMesh(geom, mat, capacity);
+  batch.userData.terrain        = true;
+  batch.userData.batchKey       = key;
+  batch.userData.instancesByIdx = new Array(capacity);
+  batch.castShadow              = true;
+  batch.receiveShadow           = true;
+  batch.count                   = 0;
+  _terrainBatches.set(key, batch);
+  scene.add(batch);
+  return batch;
+}
+
+// Přidá instanci do batche. `rotY` v radiánech (0 pro TCUBES, ORIENTATION pro
+// rampy). `setMatrixAt` zapíše do `instanceMatrix` Float32Array buffer;
+// `setColorAt` lazy-alokuje `instanceColor` při prvním zápisu (white default).
+function pushInstanceToBatch(batch, instance, x, y, z, rotY) {
+  const idx = batch.count;
+  _batchPos.set(x, y, z);
+  _batchEuler.set(0, rotY, 0);
+  _batchQuat.setFromEuler(_batchEuler);
+  _batchMatrix.compose(_batchPos, _batchQuat, _batchScale);
+  batch.setMatrixAt(idx, _batchMatrix);
+  batch.setColorAt(idx, _batchColorWhite);
+  batch.userData.instancesByIdx[idx] = instance;
+  meshByInstance.set(instance.ID, { batch, idx });
+  batch.count = idx + 1;
+}
+
 function createRampEdge(r) {
   const tex = RAMP_EDGE_TEXTURES[r.surface] ?? RAMP_EDGE_TEXTURES.grass;
   return new TRRAMPS(
@@ -2087,58 +2238,130 @@ const TERRAIN_DEFAULTS = {
   seed:     42,
 };
 
-// Spawne terrain z parametrů do scény. Každý mesh dostane `userData.terrain
-// = true` jako marker pro `regenerateScene` (filter při wipe). Volaný z
-// `buildScene` (init) i z `regenerateScene` (UI panel `change` events).
+// Spawne terrain z parametrů do scény. Sez. 31 InstancedMesh refactor:
+// místo N `THREE.Mesh` per blok/ramp → 1 `InstancedMesh` per (geom, atlas mat)
+// pár, ~13 batchů celkem @ libovolný size. Water plane(y) zůstávají single-mesh
+// (low count, ne worth instancing).
+//
+// 3-pass:
+//   1) Pre-count instancí per batch klíč (pro alokaci kapacity).
+//   2) Alokuj batchy (`createTerrainBatch` přes `getSharedAtlasBoxGeom` +
+//      `getTcubesKindMaterial` pro TCUBES, ramp geom cache + `getRampAtlasMaterial`
+//      pro rampy).
+//   3) Spawn instancí (`pushInstanceToBatch` plní matrix + barvu + map).
 function spawnTerrain(params) {
   const terrain = generateTerrain(params);
-  for (const [kind, x, y, z] of terrain.blocks) {
-    const mesh = createMeshFor(createBlock(kind, x, y, z));
-    mesh.userData.terrain = true;
-    scene.add(mesh);
+
+  // 1) Pre-count.
+  const counts = new Map();  // batchKey → int
+  for (const [kind] of terrain.blocks) {
+    if (!BLOCK_TEXTURES[kind]) continue;  // unknown kind skip (slow path neexistuje pro terrain)
+    const key = `tcubes:${kind}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
+  for (const r of terrain.ramps ?? []) {
+    const type = r.kind === "edge"     ? "trramps"
+               : r.kind === "corner"   ? "ttramps"
+               : r.kind === "diagonal" ? "tdramp"
+               : null;
+    if (!type) continue;
+    counts.set(`${type}:${r.surface}`, (counts.get(`${type}:${r.surface}`) ?? 0) + 1);
+  }
+
+  // 2) Alokuj batchy s přesnou kapacitou.
+  for (const [key, capacity] of counts) {
+    const [type, surface] = key.split(":");
+    let geom, mat;
+    if (type === "tcubes") {
+      geom = getSharedAtlasBoxGeom();
+      mat  = getTcubesKindMaterial(surface);  // surface tady = kind (grass/dirt/stone/sand)
+    } else if (type === "trramps") {
+      geom = TRRAMP_GEOM_CACHE;
+      mat  = getRampAtlasMaterial("trramps", surface);
+    } else if (type === "ttramps") {
+      geom = TTRAMP_GEOM_CACHE;
+      mat  = getRampAtlasMaterial("ttramps", surface);
+    } else if (type === "tdramp") {
+      geom = TDRAMP_GEOM_CACHE;
+      mat  = getRampAtlasMaterial("tdramp", surface);
+    }
+    if (!geom || !mat) continue;
+    createTerrainBatch(key, geom, mat, capacity);
+  }
+
+  // 3) Fill batches.
+  for (const [kind, x, y, z] of terrain.blocks) {
+    const batch = _terrainBatches.get(`tcubes:${kind}`);
+    if (!batch) continue;
+    const inst = createBlock(kind, x, y, z);
+    pushInstanceToBatch(batch, inst, x, y, z, 0);  // TCUBES bez rotace
+  }
+  for (const r of terrain.ramps ?? []) {
+    let inst, type;
+    if      (r.kind === "edge")     { inst = createRampEdge(r);     type = "trramps"; }
+    else if (r.kind === "corner")   { inst = createRampCorner(r);   type = "ttramps"; }
+    else if (r.kind === "diagonal") { inst = createRampDiagonal(r); type = "tdramp"; }
+    else continue;
+    const batch = _terrainBatches.get(`${type}:${r.surface}`);
+    if (!batch) continue;
+    const rotY = (r.orientation ?? 0) * (Math.PI / 180);  // DD-26: stupně → rad
+    pushInstanceToBatch(batch, inst, r.x, r.y, r.z, rotY);
+  }
+
+  // Flush GPU buffery (instanceMatrix vždy; instanceColor lazy-alokovaný v
+  // pushInstanceToBatch přes setColorAt).
+  for (const batch of _terrainBatches.values()) {
+    batch.instanceMatrix.needsUpdate = true;
+    if (batch.instanceColor) batch.instanceColor.needsUpdate = true;
+  }
+
+  // Water plane(y) zůstávají single-mesh (5-10 instancí typically, regen levný).
   for (const w of terrain.water) {
     const mesh = createWaterPlane(w);
     mesh.userData.terrain = true;
     scene.add(mesh);
   }
-  // Rampy vyhladí 1-voxel stepy (DD-34 kandidát) — kindy: edge (TRRAMPS),
-  // corner (TTRAMPS), diagonal (TDRAMP). Generátor v `terrain.js` kroku 5.
-  for (const r of terrain.ramps ?? []) {
-    let inst;
-    if      (r.kind === "edge")     inst = createRampEdge(r);
-    else if (r.kind === "corner")   inst = createRampCorner(r);
-    else if (r.kind === "diagonal") inst = createRampDiagonal(r);
-    else continue;
-    const mesh = createMeshFor(inst);
-    mesh.userData.terrain = true;
-    scene.add(mesh);
-  }
+
   // F12: shadow frustum dle aktuální size — bez updatu by stíny ostříhly
   // na ±8 (aktuální i 30×30 už mimo, 100×100 by drželo stíny v centrální 1/6).
   updateShadowFrustum(Math.max(params.size[0], params.size[1]));
 }
 
-// Vymaže staré terrain meshes ze scény (filter dle `userData.terrain`) a
-// spawne nové dle `params`. Volaný z UI panelu `#terrainctrl` na `change`
-// event slideru (rozhodnutí sez. 26: ne `input`, ne debounce, ne button —
-// jeden regen per dotažení slideru).
+// Vymaže staré terrain prvky ze scény (batchy + water single-mesh) a spawne
+// nové dle `params`. Volaný z UI panelu `#terrainctrl` na `change` event
+// slideru (rozhodnutí sez. 26: ne `input`, ne debounce, ne button — jeden
+// regen per dotažení slideru).
 //
-// Cleanup `meshByInstance`: každý terrain block je TCUBES instance s unikátním
-// ID `terrain_<kind>_<x>_<y>_<z>` (viz `createBlock`); po odstranění mesh-e
-// pustíme i mapu, jinak by tooltip držel zmrtvělé reference.
+// Cleanup `meshByInstance`:
+//   - Batchy: každá entry `{ batch, idx }` se vyčistí podle `batch.userData.
+//     instancesByIdx` (instanceId → instance map).
+//   - Water: single-mesh entries čistíme přes `userData.instance` jako dřív.
 //
-// Geometrie + materiály: per-face textury TCUBES jsou sdílené singletony
-// (BLOCK_TEXTURES + texture cache), water plane sdílí `_waterGeom`/`_waterMat`
-// — tedy žádné `dispose()` (zničili bychom shared resource). GC posbírá jen
-// Mesh wrappery.
+// Dispose:
+//   - `batch.dispose()` uvolní GPU buffery instanceMatrix + instanceColor.
+//     Geometrii a materiál NEdisposovat (sdílené singletony — atlas mat
+//     cache + shared geom cache, dispose by zničil ostatní spawny).
+//   - Water `_waterGeom`/`_waterMat` taktéž sdílené, GC posbírá jen Mesh.
 function regenerateScene(params) {
-  const stale = scene.children.filter((c) => c.userData.terrain === true);
-  for (const mesh of stale) {
+  // 1) Terrain batchy (InstancedMesh).
+  for (const batch of _terrainBatches.values()) {
+    for (let i = 0; i < batch.count; i++) {
+      const inst = batch.userData.instancesByIdx[i];
+      if (inst) meshByInstance.delete(inst.ID);
+    }
+    scene.remove(batch);
+    batch.dispose();
+  }
+  _terrainBatches.clear();
+
+  // 2) Water single-meshe (filter pres userData.terrain, NE InstancedMesh).
+  const staleWater = scene.children.filter((c) => c.userData.terrain === true);
+  for (const mesh of staleWater) {
     scene.remove(mesh);
     const inst = mesh.userData.instance;
     if (inst) meshByInstance.delete(inst.ID);
   }
+
   spawnTerrain(params);
 }
 // Globální expose pro HTML panel `#terrainctrl` (inline script v index.html).
@@ -2155,30 +2378,42 @@ function buildScene(scene) {
 buildScene(scene);
 
 // === Hover highlight (editor-like feedback) ===
-// Při najetí kurzoru na CUBES-potomka (kromě SPRITES) jemně zežloutne celý
-// objekt — boost emissive komponenty materiálu. Vizuálně se objekt rozsvítí
-// žlutým „světélkováním" bez ostrých hran.
+// Při najetí kurzoru na CUBES-potomka (kromě SPRITES) se objekt nažlutle.
+// Dva mechanismy podle toho, jak je instance reprezentována v `meshByInstance`:
 //
-// Sdílení materiálů: TREE _treeMatCache (DD-23) sdílí MeshStandardMaterial
-// mezi sourozenci stejné barvy. Pokud bychom mutovali emissive na sdíleném
-// materiálu, hover by zvýraznil všechny stromy téže barvy. Řešení:
-// **lazy clone-on-first-hover** — při prvním hoveru klonujeme materials per
-// mesh, originály držíme v userData. Při on/off přepneme `child.material`
-// mezi originálem a klonem; emissive nastavujeme jen na klonu.
+//   (A) Batch case — `meshByInstance.get(ID) === { batch, idx }`.
+//       Terrain bloky/rampy jsou sloučené v `InstancedMesh` (sez. 31, DD-37
+//       kandidát). Hover přes `instanceColor` attribut: `setColorAt(idx, tint)`
+//       multiplikuje albedo žlutým nádechem. Trade-off vs. emissive boost:
+//       jemnější light efekt (multiplicative tint místo additive světélkování),
+//       ale per-instance v 1 batchi = ~0 GPU overhead, zero allocation.
 //
-// SPRITES skip: 2D billboardy s SpriteMaterial nemají emissive komponentu.
-// KISS: pokud mat.emissive neexistuje, hover je no-op pro ten material.
+//   (B) Single-mesh case — `meshByInstance.get(ID) === THREE.Object3D`.
+//       Non-terrain entity (PATH, slow-path TCUBES, water plane, budoucí
+//       COMPOSITES) zůstávají single-mesh. Hover přes lazy clone-on-first-hover
+//       (mutate emissive na klonovaném materiálu, sourozenci se sdíleným
+//       originálem zůstanou nedotknuti).
+//
+// SPRITES skip: 2D billboardy s SpriteMaterial nemají emissive komponentu;
+// KISS no-op.
 
-const HOVER_EMISSIVE_HEX = 0x404020;  // jemné žluté světélkování (R=0x40, G=0x40, B=0x20)
+const HOVER_EMISSIVE_HEX = 0x404020;  // single-mesh path: žluté světélkování (R=0x40, G=0x40, B=0x20)
 
 function setHoverHighlight(instance, on) {
   if (!instance) return;
   if (instance instanceof SPRITES) return;
-  const root = meshByInstance.get(instance.ID);
-  if (!root) return;
+  const ref = meshByInstance.get(instance.ID);
+  if (!ref) return;
 
-  // Lazy příprava clone materials při prvním zapnutí. Klon je per-mesh, takže
-  // sourozenci se sdíleným originálem zůstanou nedotknuti.
+  // (A) Batch case — discriminated union přes `.batch` property.
+  if (ref.batch) {
+    ref.batch.setColorAt(ref.idx, on ? HOVER_TINT_COLOR : _batchColorWhite);
+    if (ref.batch.instanceColor) ref.batch.instanceColor.needsUpdate = true;
+    return;
+  }
+
+  // (B) Single-mesh case — lazy clone-on-first-hover.
+  const root = ref;
   if (!root.userData.hoverInit) {
     root.traverse((child) => {
       if (!child.isMesh) return;
@@ -2211,7 +2446,6 @@ const tooltipEl = document.getElementById("tooltip");
 const raycaster = new THREE.Raycaster();
 // pointer = normalized device coordinates: X v [-1, +1], Y v [-1, +1]
 const pointer = new THREE.Vector2();
-let lastHoveredMesh = null;
 let lastHoveredInstance = null;   // pro edge highlight — pamatovat, kdo byl highlighted
 
 // Escape HTML kvůli bezpečnosti — NAME/DESCRIPTION může v budoucnu přijít
@@ -2270,14 +2504,29 @@ function renderTooltip(instance) {
 }
 
 function showTooltip(event, instance) {
-  // Pokud najedeme na stejný mesh jako posledně, nepřerenderujeme obsah
-  if (lastHoveredMesh?.userData.instance !== instance) renderTooltip(instance);
+  // Pokud najedeme na stejnou instanci jako posledně, nepřerenderujeme obsah.
+  // `lastHoveredInstance` se aktualizuje až po `showTooltip` v pointermove
+  // handleru, takže tady reflektuje předchozí frame — přesně to, co chceme
+  // jako diff check.
+  if (lastHoveredInstance !== instance) renderTooltip(instance);
   // Offset 14 px od kurzoru, aby tooltip nepřekrýval samotný target
   tooltipEl.style.left = `${event.clientX + 14}px`;
   tooltipEl.style.top  = `${event.clientY + 14}px`;
   tooltipEl.style.display = "block";
 }
 function hideTooltip() { tooltipEl.style.display = "none"; }
+
+// Resolve instance z raycast hitu — discriminated union:
+//   - InstancedMesh hit: `hit.object.userData.instancesByIdx[hit.instanceId]`
+//     (sez. 31 terrain batch). `instanceId` je per-hit int from Three.js.
+//   - Single mesh hit: `hit.object.userData.instance` (legacy).
+function resolveInstanceFromHit(hit) {
+  const obj = hit.object;
+  if (obj.isInstancedMesh && obj.userData.instancesByIdx) {
+    return obj.userData.instancesByIdx[hit.instanceId] ?? null;
+  }
+  return obj.userData?.instance ?? null;
+}
 
 // mousemove handler → raycaster → infotip
 canvas.addEventListener("pointermove", (event) => {
@@ -2288,25 +2537,27 @@ canvas.addEventListener("pointermove", (event) => {
   // Vyšleme paprsek z kamery přes kurzor a najdeme protnuté meshe
   raycaster.setFromCamera(pointer, camera);
   const hits = raycaster.intersectObjects(scene.children, true);
-  // Zajímají nás jen meshe, které mají userData.instance (tj. reprezentují model)
-  const firstHit = hits.find((h) => h.object.userData?.instance);
+  // První hit, který má rozluštitelnou instanci (batch nebo single-mesh).
+  let firstHit = null;
+  let firstInstance = null;
+  for (const h of hits) {
+    const inst = resolveInstanceFromHit(h);
+    if (inst) { firstHit = h; firstInstance = inst; break; }
+  }
 
   if (firstHit) {
-    const instance = firstHit.object.userData.instance;
-    showTooltip(event, instance);
-    lastHoveredMesh = firstHit.object;
+    showTooltip(event, firstInstance);
     // Edge highlight: pokud jsme přešli na jinou instanci, vypni starý
     // overlay a zapni nový. Same-instance hover → nic (overlay už svítí).
-    if (instance !== lastHoveredInstance) {
+    if (firstInstance !== lastHoveredInstance) {
       setHoverHighlight(lastHoveredInstance, false);
-      setHoverHighlight(instance, true);
-      lastHoveredInstance = instance;
+      setHoverHighlight(firstInstance, true);
+      lastHoveredInstance = firstInstance;
     }
   } else {
     hideTooltip();
     setHoverHighlight(lastHoveredInstance, false);
     lastHoveredInstance = null;
-    lastHoveredMesh = null;
   }
 });
 // Skryj tooltip + edge highlight, když kurzor opustí canvas úplně
@@ -2395,6 +2646,8 @@ window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  // Composer pracuje s vlastními off-screen targets; ty musí být zvětšené taky.
+  composer.setSize(window.innerWidth, window.innerHeight);
 });
 
 // === TIME tikání ===
@@ -2446,7 +2699,11 @@ function animate() {
   // (tbox_0002 orbituje, …).
   updateBubbleTails();
   updateKeyboardCamera(dt);
-  renderer.render(scene, camera);
+  // DOF focus = vzdálenost kamera→target (= střed scény při OrbitControls).
+  // BokehPass má `uniforms.focus` ve fragment shaderu; setujeme každý frame,
+  // takže při zoom in/out se ostrá zóna posouvá s cílem.
+  bokehPass.uniforms.focus.value = camera.position.distanceTo(controls.target);
+  composer.render();
 
   // Perf HUD report 1×/s — `renderer.info.render.*` reflektuje *poslední*
   // render() (právě výš), takže čteme po něm. `info.memory.*` jsou kumulativní

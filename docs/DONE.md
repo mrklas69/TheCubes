@@ -350,3 +350,73 @@ User žádost *„Zkus umožnit v generátoru SIZE 100×100"*.
 
 `2f6ac79` (rampy atlas + F9 + PROMPTS.md): `+143/−67`, 2 files.
 `<sez. 30 commit>` (size 100 + F12 + docs sez. 30): `~+200/−40`, ~6 files.
+
+## Sezení 31 (2026-05-13) — InstancedMesh refactor + sun + post-process (DOF/fog) + settings panel
+
+Single-instance na main (bez topic branche per user volba Q3=B v plánu, KISS — atomický refactor s `git revert` fallback).
+
+### InstancedMesh refactor — DD-37 (z TODO Otevřené body)
+
+User volby: Q1=A (albedo overbright tint místo emissive boost), Q2=B (vše v 1 rolu).
+
+- [x] **`_terrainBatches: Map<key, InstancedMesh>`** — batch klíče `tcubes:<kind>` (4) + `<ramp_type>:<surface>` (9) = ~13 batchů @ libovolný size.
+- [x] **`createTerrainBatch(key, geom, mat, capacity)` + `pushInstanceToBatch(batch, instance, x, y, z, rotY)` helpery** — alokace `InstancedMesh` s `count=0` + lazy fill přes scratch `Matrix4.compose(pos, quat, scale)` (žádné per-instance allocations).
+- [x] **`spawnTerrain` 3-pass** (count → allocate → fill) — single sweep `terrain.blocks` + `terrain.ramps`, pre-počítaná kapacita per batch. Water plane(y) zůstávají single-mesh.
+- [x] **`regenerateScene` batch-dispose** — `scene.remove(batch) + batch.dispose()` (uvolní instanceMatrix + instanceColor buffery), sdílené geom/mat NEdisposovat. `meshByInstance.clear()` per batch's `instancesByIdx`.
+- [x] **`meshByInstance` discriminated union** — terrain instance → `{ batch, idx }`, non-terrain → `Object3D` (legacy). Polymorfní lookup `if (ref.batch)`.
+- [x] **`setHoverHighlight` discriminated union** — batch case `setColorAt(idx, HOVER_TINT_COLOR) + instanceColor.needsUpdate = true`; single-mesh case zachová emissive boost (lazy clone-on-first-hover).
+- [x] **`HOVER_TINT_COLOR = (1.6, 0.8, 0.2)` overbright trik** — `Float32Array` v `InstancedBufferAttribute` nemá clamp → values > 1.0 = albedo overbright (sytá oranžová). Náhrada emissive boost — vědomá estetická regrese kompenzovaná draw-call redukcí.
+- [x] **`resolveInstanceFromHit(hit)` v pointermove** — `hit.object.isInstancedMesh` → `instancesByIdx[hit.instanceId]`; jinak `hit.object.userData.instance`.
+- [x] **`showTooltip` skip-check `lastHoveredInstance !== instance`** — předchozí check `lastHoveredMesh.userData.instance` byl bug pro InstancedMesh (userData.instance neexistuje na batchi, per-frame DOM mutate).
+
+**Výsledky (seed 42):**
+
+| metrika | 30×30 sez. 30 | 30×30 sez. 31 | 100×100 sez. 30 | 100×100 sez. 31 |
+|---|---|---|---|---|
+| FPS | 123 | ~140 | **7** | **104** |
+| draw calls | 4 290 | ~13 | 47 642 | **1 016** |
+| `mat` (atlas count) | 7 | 7 | 7 | 13 |
+
+100×100 FPS skok 7 → 104 (**14.9×**), draw calls 47k → 1k (**46.9×**). Predikce v `%THINK` byla 150+ FPS — realita 104 (GPU bound s 549k tri + shadow pass nelze překonat).
+
+### Sun mesh — drobná bílá koule jako vzdálené slunce
+
+User dotaz *„Uměl bys přidat slunce jako bílou kouli?"*. Q1=A realistická / Q2=A statická (později reaktivní).
+
+- [x] **`sunMesh = THREE.Mesh(SphereGeometry(1.5, 16, 16), MeshBasicMaterial(color: 0xffffff, fog: false))`** umístěn na `sun.position × SUN_DISTANCE_SCALE` = (-50, 40, 50). `MeshBasicMaterial` je unlit = ignoruje DirectionalLight → "svítí" vlastní bílou.
+- [x] **`material.fog = false`** override — bez něj by se bílá koule rozplynula do mlhy na ~80 j.
+
+### Post-processing — atmospheric fog + Depth of Field (BokehPass)
+
+User dotaz *„Uměl bys přidat efekt rozostření pozadí i popředí?"*. Q1=C (fog + DOF + obojí), Q2=A (ohnisko ve středu scény).
+
+- [x] **`scene.fog = new THREE.Fog(SKY_COLOR, 30, 120)`** — lineární mlha matchuje barvu pozadí; vzdálené blocky plynule blednou. `sceneFog` reference držena (pro toggle restore).
+- [x] **`EffectComposer` + 3 passy** — `RenderPass` (scéna s depth) → `BokehPass` (Gaussian blur dle depth, focus / aperture / maxblur) → `OutputPass` (sRGB color-space correction).
+- [x] **Dynamic focus** — `bokehPass.uniforms.focus.value = camera.position.distanceTo(controls.target)` v animate(); ostrá zóna se posouvá s OrbitControls target při zoom in/out.
+- [x] **Parametry pixel-art friendly**: `aperture: 0.0005`, `maxblur: 0.005` (jemný DoF, ne dramatický bokeh).
+- [x] **`resize` handler** rozšířen o `composer.setSize(...)` (off-screen targets).
+- [x] **Render loop** `renderer.render(scene, camera)` → `composer.render()`.
+
+### Settings panel `#settings` — 3 toggles
+
+User feedback po implementaci: *„Bude to toggle volba zobrazení. Nový panel SETTINGS."*. Q1=C (DOF + Fog + Sun), Q2=A (vše ON default).
+
+- [x] **`window.settings = { setDOF, setFog, setSun }` API** v `main.js` — toggle `bokehPass.enabled` / `scene.fog = sceneFog|null` / `sunMesh.visible`.
+- [x] **HTML `#settings` panel** levý dolní roh (izomorfní s `#hud` / `#perfhud` / `#terrainctrl` — coral akcent header, tyrkysový accent checkbox).
+- [x] **Wire inline script** v `index.html` — 3 checkbox `change` event → `window.settings.setXxx(checked)`.
+
+### Cleanup
+
+- [x] **`lastHoveredMesh` dead code** smazán — variable se psala v pointermove ale po refactoru se nikde nečetla.
+
+### Slepá ulička — Stage 2 TDRAMP → TTRAMP
+
+User feedback *„Na -7,0,9 by se dal přidat TTRAMP"*. Analýza topologie ukázala cell (-7,9) y_top=−1 s highDirs [S, W] + diag SW (-8,8) y_top=1 (+2 nad cell, ne +1) — Stage 2 L-shape spawn TDRAMP. Hypotéza: vrátit Stage 2 zpět na TTRAMP (sez. 26 raná iterace, TTRAMPS 0 new walls vs. TDRAMP 1.0).
+
+Implementace `terrain.js` — Stage 2 přepojeno na TTRAMP corner s direct-soused surface match (b1/b2 fallback, ne diag). Verify: 100×100 seed 42 TDRAMP 848 → 783, TTRAMPS 548 → 613 (+65 L-shape cells přepnutých). Cell (-7,9) sand orient 0 sedl.
+
+User vizuální verdict: *„Tohle je špatně, vrať se k předchozí verzi"* → revert. Žádná změna terrain.js v finální commitu sez. 31. Sez. 26 final volba TDRAMP na L-shape platí dál.
+
+### Diff celkem (1 commit)
+
+Sez. 31 commit (uncommitted): `src/main.js` +~250/−40, `index.html` +~65/−5, `docs/*` ~+200 ř.

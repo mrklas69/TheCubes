@@ -719,3 +719,70 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 - DD-14 (face material dispatch) — `faceMaterialFor` původní dispatch.
 - Sez. 26 user feedback *„30×30 pomalé"* — trigger.
 
+## DD-37 — InstancedMesh batch pipeline pro terrain (sez. 31)
+
+**Stav:** Sez. 31. Pokračování DD-36 atlas pipeline po stress testu 100×100 (sez. 30): FPS **7**, 47 642 draw calls. Atlas (shared geom + per-kind material) eliminovala material-array fragmentaci na 1 draw call per Mesh, ale **1 `THREE.Mesh` = 1 draw call** zůstává neprůstřelnou hranicí. Refactor mergeuje N `Mesh` instancí stejného (geom, atlas material) páru do **1 `InstancedMesh`** = 1 draw call per batch. Pre-flight `%THINK` (sez. 31) zvážil 4 alternativy (InstancedMesh / BatchedMesh r167+ / web worker generace / mesh merge per cell) — InstancedMesh stable A.
+
+**Rozhodnutí:**
+
+1. **Batch klíč** `(geom_typ, surface)`:
+   - `tcubes:<kind>` — TCUBES terrain (`grass`/`dirt`/`stone`/`sand`) × shared box geom.
+   - `<ramp_type>:<surface>` — `trramps:grass`, `ttramps:stone`, `tdramp:sand`, ... × ramp geom cache.
+   - Celkem ~13 batchů (4 TCUBES + 9 ramp = 3 typy × 3 surfaces). `mat: 7` v perf HUD = 4+3 active při default 30×30; 100×100 odhalí všech 13.
+   - Water plane(y) zůstávají single-mesh (low count typically <10, regen levný).
+
+2. **`_terrainBatches: Map<key, InstancedMesh>`.** Helpery:
+   - `createTerrainBatch(key, geom, mat, capacity)` — alokuje `new THREE.InstancedMesh(geom, mat, capacity)` s `castShadow = receiveShadow = true`, `count = 0`, `userData.terrain = true`, `userData.instancesByIdx = []` (instanceId → modelInstance reverse map).
+   - `pushInstanceToBatch(batch, instance, x, y, z, rotY)` — `setMatrixAt(idx, M4)` přes scratch `Matrix4.compose(pos, quat, scale)` (žádné per-instance allocations) + `setColorAt(idx, white)` (lazy alloc `instanceColor` při prvním zápisu).
+
+3. **Spawn 3-pass.** `spawnTerrain(params)`:
+   - **Pass 1** pre-count instancí per batch klíč.
+   - **Pass 2** alokuj batchy s přesnou kapacitou.
+   - **Pass 3** fill — pro každou cell v `terrain.blocks`/`ramps` push do správného batche.
+   - **Flush** `instanceMatrix.needsUpdate = true` + `instanceColor.needsUpdate = true` per batch.
+
+4. **`meshByInstance` discriminated union.** Mapa drží 2 tvary hodnot:
+   - `{ batch, idx }` pro terrain (InstancedMesh).
+   - `Object3D` pro non-terrain (PATH, SPRITES, slow-path TCUBES, water plane).
+   - Polymorfní lookup: `if (ref.batch) { ... }` diskriminuje case bez explicit typeof.
+
+5. **Hover přes `instanceColor` overbright.** Albedo multiplikace `setColorAt(idx, tint)` — emissive boost (DD-25 sez. 16 pattern) nepřenositelný do batche bez custom shader. **Trik:** `Float32Array` v `InstancedBufferAttribute` nemá clamp → values > 1.0 = overbright (`HOVER_TINT_COLOR = (1.6, 0.8, 0.2)`, sytá oranžová). Single-mesh hover (legacy lazy clone-on-first-hover) zachován pro non-terrain entity.
+
+6. **Tooltip raycast.** `resolveInstanceFromHit(hit)` discriminated union:
+   - `hit.object.isInstancedMesh` → `hit.object.userData.instancesByIdx[hit.instanceId]`.
+   - Single Mesh → `hit.object.userData.instance`.
+
+7. **Regen flow.** `regenerateScene(params)`:
+   - Vyčisti `meshByInstance` z `batch.userData.instancesByIdx`.
+   - `scene.remove(batch)` + `batch.dispose()` (uvolní `instanceMatrix` + `instanceColor` buffery; geom/mat sdílené singletony NEdisposovat).
+   - `_terrainBatches.clear()`.
+   - Water single-meshe filter `userData.terrain` (NE InstancedMesh) + `scene.remove`.
+   - `spawnTerrain(params)`.
+
+**Důsledek (seed 42):**
+
+| metrika | 30×30 sez. 30 (atlas) | 30×30 sez. 31 (instanced) | 100×100 sez. 30 | 100×100 sez. 31 |
+|---|---|---|---|---|
+| FPS | 123 | ~140 (head-room) | **7** | **104** |
+| draw calls | 4 290 | ~13 | 47 642 | **1 016** |
+| triangles | ~49k | ~49k | 549 698 | 549 698 |
+| geometries (`info.memory`) | 8 | 8 | 8 | 8 |
+| `mat` (atlas cache size) | 7 | 7 | 7 | 13 |
+
+**Důvod (proč DD a ne jen perf tweak):**
+- Změna architektonického kontraktu: `createMeshFor` se pro terrain **nevolá** (spawn vede přímo do `pushInstanceToBatch`). Hover lookup, regen flow a tooltip raycast používají batch-aware codepath. Discriminated union v `meshByInstance` je trvalý structural shift, ne lokální optimalizace.
+- Hover albedo overbright (1.6, 0.8, 0.2) je estetická regrese oproti emissive boost (DD-25 light-up look) — kompenzace **47k→1k draw call redukcí** byla user-accepted, ale je to vědomá změna feel.
+- Conceptual Integrity (CLAUDE.md): když se změní rendering pipeline napříč všemi BLOCKS potomky, DD je vrstva, která to zachytí.
+
+**Známá omezení:**
+- **Frustum culling** — InstancedMesh má 1 bounding box pro celý batch → 100×100 vše vidí, 10×10 trochu plýtvání. Žádné per-instance culling bez custom shader.
+- **Bez animátorů per-instance** — terrain blocks nemají `ANIMATE`, takže žádný driver per-frame mutuje instance matrix. Pokud někdy přibyde (e.g. floating ramp), bude třeba batch-aware animátor.
+- **Slow-path TCUBES** (emoji demo `tbox_0001/0002` ze sez. 4) zůstávají single-mesh. `createMeshFor` + `_faceMaterialCache` zachován.
+- **BatchedMesh r167+** by mohlo sloučit TCUBES + rampy do ~3 calls (per-instance geom). Three.js v projektu r160. Sledováno v IDEAS jako budoucí option.
+
+**Reference:**
+- DD-36 (TCUBES atlas pipeline) — kontext, sdílená geom + per-kind material.
+- DD-25 (BLOCKS rodina) — pokrytí ramp typů.
+- DD-26 (ORIENTATION) — rampy rotace v batchi přes `setMatrixAt(idx, M4)` s `Euler(0, rotY, 0)`.
+- Sez. 30 stress test 100×100 — trigger (FPS 7, calls 47k).
+
