@@ -719,3 +719,59 @@ Browser test 5 scénářů (user):
 5. Humidity=Sucho → žádná voda nikde ✓ (poušť).
 
 Sez. 38 audit cadence reset 0/8. Žádné regression.
+
+## Sez. 40 — DD-49 implementace + DD-50 SEASON driver + 6 kalibrací
+
+### DD-49 plná implementace (Fáze 1-5)
+
+- [x] **Fáze 1 — `src/composites/toolkit.js`** *(~95 ř., nový modul)*. 6 paleta konstant (`BARK_BROWN` 0x5a3e22 / `LEAF_GREEN` 0x3d7a2a / `LEAF_AUTUMN` 0xc8722a / `ROCK_GRAY` 0x6e6e72 / `GRASS_GREEN` 0x6aaa3a / `BUSH_GREEN` 0x4d8a30 / `SNOW_WHITE` 0xf5f5f5 — last přidaná pro snow caps follow-up). `lowpolyMat(color)` per-color singleton cache (`Map<number, MeshLambertMaterial>` s `flatShading: true`). `getGeomCache(kind, partKey, factory)` per-(KIND × part) singleton geometry cache s lazy factory closure. Re-export `mulberry32` z `terrain.js` (exportován z `function mulberry32` → `export function mulberry32`). `window.toolkit` dev exposure.
+- [x] **Fáze 2 — `src/composites/builders.js`** *(~300 ř., nový modul)*. 5 procedurálních builderů: `buildSpruce` (kmen Cylinder + 3-5 ConeGeometry pater, hexagonal 6 segmentů, top tier nejužší), `buildOak` (silnější Cylinder + 2-4 IcosahedronGeometry(0) clusters kolem apex), `buildBush` (3-5 Icosahedron clusters nízko bez kmene), `buildRock` (1-3 anisotropic Icosahedron chunks, 60 % zapuštěno), `buildGrassTuft` (3-5 thin ConeGeometry(4 seg) shards fan-out z origin). `DECOR_BUILDERS` lookup export. Per-instance variace přes transform (position/rotation/scale), geom cache zachována.
+- [x] **Fáze 3 — DECOR třída + dispatch**. `class DECOR extends COMPOSITES` v `model.js` s atributy `KIND` / `SEED` / `SCALE` / `SNOWED` (last přidán pro snow caps follow-up). `createDecor(instance)` v `main.js` — volá `DECOR_BUILDERS[KIND](group, { seed, scale, snowed })`. Dispatch `if (instance instanceof DECOR) return createDecor(instance)` v `createMeshFor` (před SPRITES).
+- [x] **Fáze 4 — `DECOR_DENSITY[lat][hum]` + `decorate()` Krok 7**. Per-biome 4×3 tabulka KIND → weight. `decorate(cells, ramps, latitude, humidity, seed)` iteruje top voxely, skip vodní cells, stone surface → jen rock, snowed × 0.5 density, weighted KIND pick, jitter ±0.3 v X/Z. `generateTerrain` rozšířen o `decorSpec` arg, vrací `decorations[]`. `spawnTerrain` v `main.js` iteruje a vytváří DECOR instance přes `createMeshFor`. `decorSpecForClimate(lat, hum)` helper. `regenerateScene` cleanup rozšířen o `meshByInstance.delete` pro single-mesh entries.
+- [x] **Fáze 5 — Smoke test v prohlížeči**. User vizuální test 12 biomů potvrdil — hustý prales v `tropical.wet`, sparse tundra v `polar.mid`, atd.
+
+### Sez. 40 kalibrace (follow-up Fáze 5)
+
+- [x] **Snow caps na DECOR top elementu** *(user feedback)*. Spruce: poslední (nejvyšší) tier dostal SNOW_WHITE → následně user wish „celý strom kromě kmene bílý" → všechny patra spruce/clusters oak+bush SNOW_WHITE pokud snowed. Rock: jen top chunk (max Y) bílý. Grass_tuft později (bod 1 níže) plně bílý.
+- [x] **Decor base scale 0.5×** *(user wish)*. `DECOR_BASE_SCALE` lookup v terrain.js: spruce/oak/bush/rock 0.5, grass_tuft 1.0 (= zachovat ~30 cm shards). `decorate()` propaguje do `decoration.scale`, spawn loop do `DECOR.SCALE`, builder `group.scale.multiplyScalar(scale)` aplikuje.
+- [x] **Bílá tráva na snowed cells (Bod 1 sez. 40)**. `buildGrassTuft` přijímá `opts.snowed` — shards barvy `SNOW_WHITE` místo `GRASS_GREEN`.
+- [x] **Ramp Y přepočet pro DECOR (Bod 2 sez. 40)**. `decorate()` přijímá `ramps[]`, sestaví Set ramp cell coords, pro ramp cells `decor.y = c.y_top + 1.0` (= střed ramp diagonal) místo `+ 0.5` (= zapuštěno pod ramp surface).
+- [x] **Bush cluster Y proporční k scale.y (Bod 3 sez. 40)**. Před: `cluster.position.y = randRange(0.15, 0.40)` hard-coded → mohlo dát bottom > 0 pokud `scale.y` bylo malé (decor_0003 plaval na sand y=0). Po: `cluster.position.y = scale.y * randRange(0.5, 0.9)` → bottom guaranteed pod 0 (50-90 % radius nad ground = 10-50 % zapuštěno).
+- [x] **Wet DECOR_DENSITY navýšit (80%→20% škála)**. Tropical.wet 0.30→0.80 sum (hustý prales, oak/bush dominantní), subtropical.wet 0.24→0.60, temperate.wet 0.30→0.40, polar.wet 0.12→0.20 (drop spruce, jen bush+tuft+rock).
+
+### Sez. 40 další kalibrace (mimo DECOR)
+
+- [x] **DAY_SPEED default 0 → 0.001** *(WORLD)*. ~17 min/cyklus, pomalá animace slunce při bootu místo paused. Sync HTML slider `value="0.001"` + readout.
+- [x] **BIOME_SURFACES mid + dry rebalance** *(user wish)*. Mid sloupec: stone × 0.5, sand × 1.75, grass picks residual (= mid biomy „pouštnatější"). Dry sloupec: stone × 0.25, sand picks residual (= „v poušti o 3/4 méně skal"). Wet sloupec beze změny. Všech 12 buněk validováno (sum = 1.0 ± 0.0001).
+
+### DD-50 — WORLD.SEASON driver (minimal scope)
+
+- [x] **`world.SEASON ∈ {spring, summer, autumn, winter}`** atribut WORLD, default `summer` (= dnešní bezsezonní stav).
+- [x] **`snowSpecForLatitude(latitude, season)`** rozšíření — temperate `patchThreshold` per season via `SNOW_PATCH_BY_SEASON` lookup. Summer 1.00 (0 % snow), spring/autumn 0.85 (15 %), winter 0.40 (60 %). Polar `mode: "polar"` invariant.
+- [x] **`waterSpecForClimate(latitude, humidity, season)`** rozšíření — temperate `freezeRatio` per season via `WATER_FREEZE_BY_SEASON` lookup. Summer 0.0, spring 0.2, autumn 0.3, winter 0.7. Polar 1.0 invariant.
+- [x] **`SEASONS` export array** + `settings.setSeason(v)` mutator (validace `SEASONS.includes`).
+- [x] **UI 4-step slider `tc-season`** v Climate sekci `#terrainctrl`. Display: Jaro/Léto/Podzim/Zima. Default value=1 (Léto). `input` mutuje, `change` triggeruje regen.
+- [x] **DD-50 zápis** — kotva v DESIGN_DECISIONS.md (7 rozhodnutí + 5 omezení + 6 references).
+
+### Sez. 40 Diff
+
+- `src/composites/toolkit.js` nový +95 ř.
+- `src/composites/builders.js` nový +320 ř.
+- `src/terrain.js` +~150 / −~25 ř. (mulberry32 export, DECOR_DENSITY tabulka, DECOR_BASE_SCALE, decorate() + Krok 7 v generateTerrain, decorSpecForClimate, SEASONS + SNOW_PATCH_BY_SEASON + WATER_FREEZE_BY_SEASON, snowSpec/waterSpec rozšířené signatury, BIOME_SURFACES mid+dry rebalance, polar.wet alias komentář sync).
+- `src/model.js` +~25 / −~5 ř. (DECOR class, WORLD.SEASON + DAY_SPEED default).
+- `src/main.js` +~30 / −~3 ř. (DECOR import + dispatch + createDecor, decorSpecForClimate + SEASONS import + window expose, settings.setSeason, buildScene passne season, spawn loop pro decorations, regenerateScene cleanup meshByInstance fix).
+- `index.html` +~25 / −~5 ř. (SEASON slider HTML + IIFE wire, DAY_SPEED slider default 0.001).
+- `docs/DESIGN_DECISIONS.md` +~60 ř. (DD-50 sekce).
+- `docs/TODO.md` ~+30 / −~50 ř. (close DD-49 Fáze 1-5 + DD-50 minimal, replace fáze 1-5 sekce s Fáze 6 + DD-50 follow-up).
+- `docs/DONE.md` (tento záznam).
+
+### Sez. 40 Smoke test (user)
+
+- decor_0003 přistál ✓ (po bush Y fix).
+- Tropical.wet hustý prales ✓.
+- Polar.wet sparse tundra bez stromů ✓.
+- Snow caps na temperate (winter) ✓.
+- Ramp decor stojí na rampě ✓.
+- SEASON slider temperate winter: 60 % snow + 70 % ice ✓.
+
+Sez. 40 audit cadence 2/8 (`%AUDIT:CODE`) / 1/10 (`%AUDIT:DOCS`) / 9/12 (IDEAS/TODO pruning). Žádné regression.

@@ -6,7 +6,7 @@ Model-first **procedurální terrain sandbox** s OOP modelem jako runtime *(DD-3
 
 ## Status
 
-**Aktuálně:** `main` po sez. 39 (DD-49 kotva, bez impl). DD-32 Fáze 0–3 + **InstancedMesh refactor (DD-37, sez. 31)** + **WORLD DAY/DAY_SPEED (DD-38, sez. 32)** + **atmospheric lerp DD-39 + LAMP/SpotLight DD-40 (sez. 33)** + **lowpoly vertex-color pipeline DD-41 (sez. 34, nahrazuje DD-36 atlas)** + **G2 Climate WORLD.LATITUDE × HUMIDITY DD-42 + DAY mapping DD-43 (sez. 35)** + **G3 SURFACES driver-derived per biome DD-44 + fBm/ridge³ heightmap DD-45 (sez. 36)** + **smoothstep bimodální heightmap pro r ≥ 6 DD-46 (sez. 37)** + **G6 climate-driven surface state (drop water surface, snow per LATITUDE, water LIQUID prototype flood-fill, ice) DD-47 + atmospheric color extensions (sun piecewise + sky 3-keypoint dusk + water wave) DD-48 (sez. 38)** hotové. **Sez. 39:** `%AUDIT:DOCS` cleanup (drift po DD-42 → DD-48) + **DD-49 kotva** pro krajinné COMPOSITES (procedurální `DECOR` třída + 5 builderů spruce/oak/bush/rock/grass_tuft + biome-aware density), implementace v navazujících sezeních. 100×100 terrain playable @ FPS 104, denní cyklus + klima driver pro biomy + sníh/jezera/led přes UI.
+**Aktuálně:** `main` po sez. 40 (DD-49 plná impl + DD-50 SEASON driver). DD-32 Fáze 0–3 + **InstancedMesh refactor (DD-37, sez. 31)** + **WORLD DAY/DAY_SPEED (DD-38, sez. 32)** + **atmospheric lerp DD-39 + LAMP/SpotLight DD-40 (sez. 33)** + **lowpoly vertex-color pipeline DD-41 (sez. 34, nahrazuje DD-36 atlas)** + **G2 Climate WORLD.LATITUDE × HUMIDITY DD-42 + DAY mapping DD-43 (sez. 35)** + **G3 SURFACES driver-derived per biome DD-44 + fBm/ridge³ heightmap DD-45 (sez. 36)** + **smoothstep bimodální heightmap pro r ≥ 6 DD-46 (sez. 37)** + **G6 climate-driven surface state (drop water surface, snow per LATITUDE, water LIQUID prototype flood-fill, ice) DD-47 + atmospheric color extensions (sun piecewise + sky 3-keypoint dusk + water wave) DD-48 (sez. 38)** + **DD-49 plná impl: procedurální DECOR (5 KIND spruce/oak/bush/rock/grass_tuft + biome-aware density + snow caps + wet 80%→20% škála) + DD-50 SEASON driver (4-enum, temperate snow/ice modifier per season) + 6 kalibrací (sez. 40)** hotové. 100×100 terrain playable @ FPS 104, denní cyklus + klima driver pro biomy + sníh/jezera/led + sezonní variace + procedurální dekorace přes UI.
 
 Předchozí identitní vrstvy (factory toy DD-30/DD-31, severská dioráma DD-25/DD-27) jsou **zafixované v git historii** (`main`, commity sez. 14–23) jako uzavřené kapitoly — DD-32 je revoke z aktivního vývoje, ne smaz historického záznamu.
 
@@ -42,21 +42,20 @@ OBJECTS (ID, NAME, DESCRIPTION, ANIMATE)
 - **M1–M7** hotové (sez. 1–5): statický svět, voxelové potomky, COMPOSITES, SPRITES, TCUBES, ANIMATE dispatch.
 - **M8+** průběžně (sez. 6–38): další `ANIMATE.kind`y, SPRITES.SPEAKER (DD-16), TIMER + COUNTER (DD-17), pevné měřítko (DD-22), all-voxel pivot (DD-23), 4-vrstvá taxonomie + BLOCKS rodina (DD-25), sjednocená ORIENTATION (DD-26), PATH (DD-27), sjednocená Y konvence (DD-28), **terrain generator pivot (DD-32)**, ramp smoothing layer (DD-33 + DD-34), TDRAMP (DD-35), TCUBES atlas pipeline (DD-36, nahrazen DD-41), **InstancedMesh batch pipeline (DD-37)** + sun mesh + post-process (fog + DOF/BokehPass) + settings panel, **WORLD re-introduce (DD-38)** s DAY/DAY_SPEED + sun denní cyklus, **atmospheric lerping (DD-39, rozšířen DD-48)**, **LAMP/SpotLight (DD-40)**, **lowpoly vertex-color pipeline (DD-41)**, **G2 Climate WORLD.LATITUDE × HUMIDITY (DD-42)** + DAY mapping fix (DD-43), **G3 SURFACES driver-derived (DD-44)** + fBm/ridge³ heightmap (DD-45), **smoothstep bimodální heightmap pro r ≥ 6 (DD-46)**, **G6 climate-driven surface state (snow + LIQUID prototype flood-fill, ice) (DD-47)** + **atmospheric color extensions (sun piecewise + sky 3-keypoint + water wave) (DD-48)**.
 
-Detail v `docs/DIARY.md` (chronologie sezení), `docs/DESIGN_DECISIONS.md` (DD-01 až DD-48).
+Detail v `docs/DIARY.md` (chronologie sezení), `docs/DESIGN_DECISIONS.md` (DD-01 až DD-50).
 
-**Plán (po sez. 39):**
-- **Aktivní:**
-  - **DD-49 implementace** — 5 procedurálních builderů (spruce/oak/bush/rock/grass_tuft) + `DECOR` třída + biome-aware density driver + `decorate` Krok 7 v `generateTerrain`. Viz TODO sekce „Krajinné COMPOSITES (DD-49)".
-- **Otevřené:**
+**Plán (po sez. 40):**
+- **Otevřené (volitelný směr pro sez. 41+):**
+  - **DD-50 follow-up: LEAF_AUTUMN paleta** — DECOR oak/bush v autumn dostane oranžovou místo zelené (spruce zachová zelený). Mid+plný scope DD-50 sub-prah.
+  - **Fáze 6 DECOR KIND extension** — `palm` (tropical.wet), `cactus` (subtropical/temperate.dry), `stump`/`log` (woodland clean-up), `flower` (temperate.wet louka), `_dead` postfix.
   - Slider DAY sync z value při auto-advance (drobnost UX).
   - LIQUID 1. třída entita (DD-25 vrstva 4) — DD-47 sez. 38 dnes single-mesh per cell prototype. Plná: OOP třída pod CUBES, atribut LEVEL/TEMPERATURE/FLOW_DIRECTION + STEAM/FOG rozšíření (IDEAS „Voda ve všech skupenstvích").
   - **Klastrování water cells do bbox** (connected components flood-fill, jeden plane na jezero) — DD-47 follow-up perf optimalizace pro velké scény (100×100 polar mid ~500 cells → 5-20 jezer).
-  - **WORLD.SEASON driver** pro `freezeRatio` (zima víc led, léto méně). DD-29 → DD-38 → DD-42 → DD-47 progresion: SEASON další konzument.
   - HSL hue shift pro sky lerp (DD-48 follow-up — current RGB-linear přechází přes desaturovanou hnědou).
   - Mraky/srážky (déšť, sníh padá z mraků; particle system base infrastruktura, IDEAS sez. 38).
   - Roadmap relief 9..10 (valley carving / ridge noise — DD-46 řeší r ≥ 6 bimodal, r > 8 stále clamp na 8).
   - Procedural paths + tunely v generovaném terénu (viz TODO).
-  - `.glb`/glTF asset import pipeline (otevírá Stickman integraci a hezčí lampu — odložené po DD-49 procedurální cesta zafixovaná).
+  - `.glb`/glTF asset import pipeline (otevírá Stickman integraci a hezčí lampu — odložené, DD-49 procedurální cesta zafixovaná).
   - BatchedMesh refactor (r167+, 13 → ~3 calls) — diminishing returns, low prio.
 
 ## Stack

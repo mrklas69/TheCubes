@@ -17,8 +17,9 @@
 
 // Mulberry32 — deterministický pseudo-random 32-bit generátor. Stejný idiom
 // jako historická `populateNorthernScene` (sez. 17) — DRY napříč projektem,
-// žádné externí deps.
-function mulberry32(seed) {
+// žádné externí deps. Exportován i pro `src/composites/toolkit.js` (DD-49) —
+// procedurální buildery COMPOSITES sdílí stejný seed-based RNG jako terrain.
+export function mulberry32(seed) {
   return function () {
     let t = (seed += 0x6d2b79f5);
     t = Math.imul(t ^ (t >>> 15), t | 1);
@@ -141,7 +142,7 @@ const SURFACE_Y_OFFSET = {
   sand: -1,
 };
 
-export function generateTerrain({ size, relief, surfaces, seed = 42, snowSpec = { mode: "none" }, waterSpec = { enabled: false } }) {
+export function generateTerrain({ size, relief, surfaces, seed = 42, snowSpec = { mode: "none" }, waterSpec = { enabled: false }, decorSpec = { mode: "none" } }) {
   // === Validace ===
   if (!Array.isArray(size) || size.length !== 2) {
     throw new Error("generateTerrain: size musí být [sx, sz]");
@@ -700,7 +701,172 @@ export function generateTerrain({ size, relief, surfaces, seed = 42, snowSpec = 
     }
   }
 
-  return { blocks, ramps, water };
+  // === Krok 7: krajinné dekorace (sez. 40, DD-49) =============================
+  // Procedurální scatter COMPOSITES (stromy, keře, kameny, tráva) přes
+  // `DECOR_DENSITY[lat][hum]` lookup tabulku. Per top-voxel cell rozhodne RNG
+  // o spawnu a vážený výběr KIND-u. Voda → skip; stone surface → jen rock;
+  // snowed cells → density × 0.5. Vrací `decorations[]` = array objektů
+  // `{ kind, x, y, z, seed }` v world coords (caller v `main.js` z toho vytvoří
+  // DECOR instance).
+  //
+  // `decorSpec.mode`:
+  //   "biome" → použij `DECOR_DENSITY[decorSpec.latitude][decorSpec.humidity]`.
+  //   "none"  → vrátí prázdné pole (= žádné decor).
+  const decorations = (decorSpec.mode === "biome")
+    ? decorate(cells, ramps, decorSpec.latitude, decorSpec.humidity, seed)
+    : [];
+
+  return { blocks, ramps, water, decorations };
+}
+
+// === DECOR_DENSITY (sez. 40, DD-49) =========================================
+// Per (LATITUDE × HUMIDITY) → `{ kind: weight }`. `weight` = nezávislá
+// pravděpodobnost spawnu té KIND v cell (suma weights = celková spawn prob).
+// Hodnoty kalibrované tak, aby suma per cell zůstala ≤ 0.3 (= max 30 % buněk
+// dostane decor) — jinak by scéna byla zarostlá a perf trpěl.
+//
+// Vzory:
+//   - **wet biome** = hodně zeleně (oak/bush dominantní)
+//   - **mid biome** = vyváženo (oak + spruce + bush + rock)
+//   - **dry biome** = sparse, jen tuft + rock
+//   - **polar** = spruce (taiga edge) + rock; dry polar = jen rock
+//   - **tropical** = oak (listnaté), žádný spruce
+//   - **temperate** = mix (spruce + oak)
+export const DECOR_DENSITY = {
+  // Sez. 40 rebalance — wet sloupec škálovaný 80% (tropical) → 20% (polar),
+  // s posunem od dominantních stromů (tropical/subtropical) přes mix
+  // (temperate) k jen-trávy-a-keře (polar). User wish: „od tropického
+  // pralesa 80% pokrytí → polární tundra 20% pokrytí spíše trávami/keři".
+  tropical: {
+    wet: { oak: 0.35, bush: 0.25, grass_tuft: 0.15, rock: 0.05 },                // sum 0.80 — hustý prales
+    mid: { oak: 0.04, bush: 0.04, grass_tuft: 0.06, rock: 0.02 },                // sum 0.16 — savana
+    dry: { grass_tuft: 0.03, rock: 0.05 },                                       // sum 0.08 — poušť
+  },
+  subtropical: {
+    wet: { oak: 0.25, bush: 0.20, grass_tuft: 0.10, rock: 0.05 },                // sum 0.60 — vlhký les
+    mid: { oak: 0.03, bush: 0.04, grass_tuft: 0.05, rock: 0.03 },                // sum 0.15 — mediteránní
+    dry: { bush: 0.02, grass_tuft: 0.03, rock: 0.05 },                           // sum 0.10 — step
+  },
+  temperate: {
+    wet: { oak: 0.15, spruce: 0.10, bush: 0.08, grass_tuft: 0.05, rock: 0.02 },  // sum 0.40 — listnatý les
+    mid: { oak: 0.04, spruce: 0.06, bush: 0.04, grass_tuft: 0.06, rock: 0.02 },  // sum 0.22 — smíšený
+    dry: { spruce: 0.01, bush: 0.02, grass_tuft: 0.04, rock: 0.05 },             // sum 0.12 — chladná step
+  },
+  polar: {
+    wet: { bush: 0.08, grass_tuft: 0.08, rock: 0.04 },                           // sum 0.20 — polární tundra (jen trávy/keře, žádný spruce)
+    mid: { spruce: 0.04, bush: 0.02, grass_tuft: 0.02, rock: 0.04 },             // sum 0.12 — tundra
+    dry: { rock: 0.04 },                                                         // sum 0.04 — ledová poušť
+  },
+};
+
+// `decorSpecForClimate(latitude, humidity)` — helper pro caller. Symetrický
+// s `snowSpecForLatitude` / `waterSpecForClimate`. Pokud někdy přidáme
+// "vypnout decor" toggle (UI checkbox), tady jeden bod.
+export function decorSpecForClimate(latitude, humidity) {
+  return { mode: "biome", latitude, humidity };
+}
+
+// `DECOR_BASE_SCALE[kind]` — globální size factor per KIND, passnutý do
+// `DECOR.SCALE` (= `group.scale.multiplyScalar(scale)` v buildery). User
+// feedback sez. 40: stromy/keře/kameny v 1.0× působily jako "lese-bonsaje
+// nad voxely" (~1.5 m výška vs. 1 m hrana voxelu = OK, ale user chtěl
+// "krajinné dekorace" = subtle, ne dominantní). 0.5× drží decor pod voxel
+// height, voxely zůstávají dominantní vrstva scény. Grass_tuft 1.0×
+// (= ~30 cm shards, malé i tak).
+const DECOR_BASE_SCALE = {
+  spruce:     0.5,
+  oak:        0.5,
+  bush:       0.5,
+  rock:       0.5,
+  grass_tuft: 1.0,
+};
+
+// `decorate(cells, ramps, latitude, humidity, seed)` — scatter implementace.
+//   - **Skip cells with water** (decor neroste pod hladinou).
+//   - **Stone surface** → jen "rock" povolen (kamenitý terén — stromy/keře
+//     nemají kořeny ve skále, sub-prah pokud bude vzdorovat user vkusu).
+//   - **Snowed cells** → density × 0.5 (DD-49 spec: sníh tlumí scatter).
+//   - **Ramp cells** → Y posunutý nahoru o 0.5 (sez. 40 bod 2 fix). Bez tohoto
+//     by decor byl zapuštěn do ramp diagonal a vyčníval by jen špička.
+//     Ramp surface stoupá z `y_top + 0.5` do `y_top + 1.5`; decor `y = y_top + 1.0`
+//     je střední úroveň, strom roste z rampového středu (kompromis mezi base
+//     rampy a top end).
+//   - Weighted random pick KIND-u podle filtered weights.
+//   - Jitter ±0.3 v X/Z uvnitř cell — decor sedí mezi voxely, ne přesně
+//     na intersection. Y = top voxel top face (= `y_top + 0.5`).
+//
+// Vrací `decorations[]` array objektů `{ kind, x, y, z, seed, scale, snowed }`.
+function decorate(cells, ramps, latitude, humidity, seed) {
+  const baseWeights = DECOR_DENSITY[latitude]?.[humidity] ?? {};
+  if (Object.keys(baseWeights).length === 0) return [];
+
+  // Nezávislý RNG namespace (seed +3 oproti height +0, biome +1, snow +2).
+  const rng = mulberry32(seed + 3);
+  const decorations = [];
+
+  // Set ramp cell koordinát pro O(1) lookup při Y výpočtu (sez. 40 bod 2).
+  // `ramps[]` má per-cell entry `{ x, y, z, kind, surface, orientation }`,
+  // pozice odpovídá source cell `a` (= ten co stoupá k vyššímu sousedovi).
+  const rampCells = new Set();
+  for (const r of ramps ?? []) rampCells.add(`${r.x},${r.z}`);
+
+  for (const c of cells) {
+    if (c.water === true) continue;
+
+    // Filter dle surface constraints. Allowed = baseWeights bez nepovolených KIND-ů.
+    // `Object.entries(obj)` vrací `[[key, val], ...]` array, `.filter` standardní.
+    const allowedEntries = Object.entries(baseWeights).filter(([kind]) => {
+      if (c.surface === "stone" && kind !== "rock") return false;
+      return true;
+    });
+    if (allowedEntries.length === 0) continue;
+
+    // Total weight per cell. Snowed = ×0.5 (DD-49 density damping).
+    let totalWeight = allowedEntries.reduce((sum, [, w]) => sum + w, 0);
+    if (c.snowed) totalWeight *= 0.5;
+
+    // Spawn roll. Pokud rng() vyhodí pod totalWeight, spawne; jinak skip.
+    if (rng() >= totalWeight) continue;
+
+    // Weighted pick KIND-u (linear search — pole 1-5 položek, O(n) OK).
+    const sumAllowed = allowedEntries.reduce((sum, [, w]) => sum + w, 0);
+    let r = rng() * sumAllowed;
+    let pickedKind = allowedEntries[allowedEntries.length - 1][0];  // fallback poslední
+    for (const [kind, w] of allowedEntries) {
+      r -= w;
+      if (r < 0) { pickedKind = kind; break; }
+    }
+
+    // Jitter ±0.3 (uvnitř cell ~ 60 % šíře, nejde nikdy přes hranu).
+    const jitterX = (rng() - 0.5) * 0.6;
+    const jitterZ = (rng() - 0.5) * 0.6;
+    // Y na top face voxelu (= y_top + 0.5). Pro ramp cells posun o +0.5 nahoru
+    // (= střed ramp diagonal, dekorace neleží zapuštěná pod ramp surface).
+    const onRamp = rampCells.has(`${c.x},${c.z}`);
+    const decY = c.y_top + (onRamp ? 1.0 : 0.5);
+
+    // Per-instance seed pro builder variace — derivované z scatter RNG, takže
+    // stejný global `seed` dá deterministicky stejnou scénu.
+    // `Math.floor(rng() * 2^32)` — 32-bit integer rozsah pro mulberry32.
+    const decSeed = Math.floor(rng() * 0xffffffff);
+
+    decorations.push({
+      kind: pickedKind,
+      x: c.x + jitterX,
+      y: decY,
+      z: c.z + jitterZ,
+      seed: decSeed,
+      // Globální size factor per KIND (sez. 40 follow-up). Propagovaný do
+      // DECOR.SCALE → builder `group.scale.multiplyScalar(scale)`.
+      scale: DECOR_BASE_SCALE[pickedKind] ?? 1.0,
+      // Propagace `c.snowed` (sez. 40 follow-up) — builder v `main.js` z toho
+      // určí snow cap (top element bílý) pro zasněžený biome. `bool` (default
+      // `false` pokud cell.snowed undefined při snowSpec.mode="none").
+      snowed: c.snowed === true,
+    });
+  }
+
+  return decorations;
 }
 
 // === G2 (sez. 35) — biome matice 4×3 (LATITUDE × HUMIDITY). ===
@@ -736,26 +902,36 @@ export const BIOME_NAMES = {
 // `polar.wet` = alias `polar.mid` (geografi vzácné combo → fallback). UI
 // uchová `BIOME_NAMES.polar.wet = "Polární tundra"` (transparent fallback).
 export const BIOME_SURFACES = {
+  // Sez. 40 rebalance (user wish):
+  //   - **mid** sloupec: stone × 0.5, sand × 1.75, grass picks residual.
+  //     („mid biomy mají víc písku, méně skal" — savana/medit/step vypadají
+  //     pouštnatěji.)
+  //   - **dry** sloupec: stone × 0.25, sand picks residual.
+  //     („v poušti je o 3/4 méně skal, vše ostatní písek".)
+  //   - **wet** sloupec beze změny.
   tropical: {
-    wet: { grass: 0.90, stone: 0.05, sand: 0.05 },
-    mid: { grass: 0.70, stone: 0.10, sand: 0.20 },
-    dry: { grass: 0.00, stone: 0.10, sand: 0.90 },
+    wet: { grass: 0.90, stone: 0.05,   sand: 0.05 },
+    mid: { grass: 0.60, stone: 0.05,   sand: 0.35 },
+    dry: { grass: 0.00, stone: 0.025,  sand: 0.975 },
   },
   subtropical: {
-    wet: { grass: 0.80, stone: 0.10, sand: 0.10 },
-    mid: { grass: 0.60, stone: 0.30, sand: 0.10 },
-    dry: { grass: 0.15, stone: 0.40, sand: 0.45 },
+    wet: { grass: 0.80, stone: 0.10,   sand: 0.10 },
+    mid: { grass: 0.675, stone: 0.15,  sand: 0.175 },
+    dry: { grass: 0.15, stone: 0.10,   sand: 0.75 },
   },
   temperate: {
-    wet: { grass: 0.85, stone: 0.10, sand: 0.05 },
-    mid: { grass: 0.75, stone: 0.20, sand: 0.05 },
-    dry: { grass: 0.20, stone: 0.45, sand: 0.35 },
+    wet: { grass: 0.85, stone: 0.10,   sand: 0.05 },
+    mid: { grass: 0.8125, stone: 0.10, sand: 0.0875 },
+    dry: { grass: 0.20, stone: 0.1125, sand: 0.6875 },
   },
   polar: {
-    // wet = alias mid (Arktická tundra geografi nejbližší).
-    wet: { grass: 0.10, stone: 0.55, sand: 0.35 },
-    mid: { grass: 0.10, stone: 0.55, sand: 0.35 },
-    dry: { grass: 0.00, stone: 0.40, sand: 0.60 },
+    // wet = stejný surface mix jako mid (Arktická tundra geografi nejbližší).
+    // DECOR_DENSITY sez. 40 rebalance ale rozlišuje: polar.wet = 0.20 sum
+    // (trávy/keře), polar.mid = 0.12 sum (spruce + bush). Surfaces zachovány
+    // (UI shape stejná pro oba), liší se decor scatter.
+    wet: { grass: 0.1125, stone: 0.275, sand: 0.6125 },
+    mid: { grass: 0.1125, stone: 0.275, sand: 0.6125 },
+    dry: { grass: 0.00, stone: 0.10,    sand: 0.90 },
   },
 };
 
@@ -766,26 +942,63 @@ export function surfacesForBiome(latitude, humidity) {
   return BIOME_SURFACES[latitude]?.[humidity] ?? BIOME_SURFACES.temperate.mid;
 }
 
-// Helper: snowSpec dle LATITUDE (sez. 38, DD-47). Polar = jednotně bílo,
-// temperate = vrcholky hor (Y ≥ 6) + klastrované patches (snowNoise > 0.7),
-// jiné = bez sněhu. Parameter `altThreshold` / `patchThreshold` lze tweaknout
-// (např. teplejší temperate jaro = vyšší altThreshold).
-export function snowSpecForLatitude(latitude) {
+// === SEASON driver (DD-50, sez. 40) =========================================
+// 4-enum WORLD atribut. Modifikuje temperate biom (jeho snow patches +
+// water ice). Polar perpetually-winter (invariant), tropical/subtropical
+// season-invariant (bez snow/ice napříč).
+//
+// Lookup tabulky:
+//   `SNOW_PATCH_BY_SEASON[season]` → temperate `snowSpec.patchThreshold`.
+//     patchThreshold 1.0 = 0 % cells s sněhem (= summer).
+//     patchThreshold 0.85 = 15 % cells (= spring/autumn).
+//     patchThreshold 0.40 = 60 % cells (= winter).
+//   `WATER_FREEZE_BY_SEASON[season]` → temperate `waterSpec.freezeRatio`.
+//     summer 0.0 = no ice; spring 0.2; autumn 0.3; winter 0.7.
+//
+// Polar `freezeRatio` zůstává 1.0 (vše led) napříč seasony — fix sub-prah.
+export const SEASONS = ["spring", "summer", "autumn", "winter"];
+
+const SNOW_PATCH_BY_SEASON = {
+  spring: 0.85,
+  summer: 1.00,  // patchThreshold ≥ 1 → snowCount=Math.floor(N×0)=0 → 0 % snowed
+  autumn: 0.85,
+  winter: 0.40,
+};
+
+const WATER_FREEZE_BY_SEASON = {
+  spring: 0.2,
+  summer: 0.0,
+  autumn: 0.3,
+  winter: 0.7,
+};
+
+// Helper: snowSpec dle LATITUDE × SEASON (sez. 38 DD-47, sez. 40 DD-50).
+// Polar = jednotně bílo (sezon-invariant). Temperate = vrcholky hor (Y ≥ 6)
+// + klastrované patches; **`patchThreshold` per season** (winter více sněhu).
+// Jiné latitudy = bez sněhu napříč seasony.
+export function snowSpecForLatitude(latitude, season = "summer") {
   if (latitude === "polar")    return { mode: "polar" };
-  if (latitude === "temperate") return { mode: "temperate", altThreshold: 6, patchThreshold: 0.7, altBias: 0.3 };
+  if (latitude === "temperate") {
+    return {
+      mode: "temperate",
+      altThreshold: 6,
+      patchThreshold: SNOW_PATCH_BY_SEASON[season] ?? 1.00,
+      altBias: 0.3,
+    };
+  }
   return { mode: "none" };
 }
 
-// Helper: waterSpec dle LATITUDE × HUMIDITY (sez. 38, post-DD-47 LIQUID prototype).
-// `dry` = bez vody (poušť bez jezer, Q1 sez. 38). `wet`/`mid` = water enabled,
-// freezeRatio dle latitude (polar = 1.0 vše led, temperate = 0.3 částečně led,
-// sub/tropical = 0.0 voda bez ledu).
-export function waterSpecForClimate(latitude, humidity) {
+// Helper: waterSpec dle LATITUDE × HUMIDITY × SEASON (sez. 38 DD-47, sez. 40 DD-50).
+// `dry` = bez vody (poušť bez jezer). `wet`/`mid` = water enabled, freezeRatio
+// dle latitude. **Temperate `freezeRatio` per season** (winter víc ledu).
+// Polar = 1.0 napříč (vše led), sub/tropical = 0.0 napříč.
+export function waterSpecForClimate(latitude, humidity, season = "summer") {
   if (humidity === "dry") return { enabled: false };
   let freezeRatio;
-  if (latitude === "polar")     freezeRatio = 1.0;
-  else if (latitude === "temperate") freezeRatio = 0.3;
-  else                          freezeRatio = 0.0;
+  if (latitude === "polar")          freezeRatio = 1.0;
+  else if (latitude === "temperate") freezeRatio = WATER_FREEZE_BY_SEASON[season] ?? 0.0;
+  else                               freezeRatio = 0.0;
   return { enabled: true, freezeRatio };
 }
 

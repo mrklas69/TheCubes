@@ -292,6 +292,40 @@ export class COMPOSITES extends CUBES {
 export class LAMP extends COMPOSITES {}
 
 /**
+ * DECOR = procedurální krajinná dekorace (stromy, keře, kameny, tráva) —
+ * DD-49 (sez. 39 kotva, sez. 40 implementace).
+ *
+ * Generická třída pro celou paletu rostlin a kamenů: jeden constructor,
+ * konkrétní tvar řídí `KIND` lookup v `DECOR_BUILDERS` (`src/composites/
+ * builders.js`). KISS rozhodnutí (DD-49 A5) — místo 5 specializovaných tříd
+ * (SPRUCE/OAK/BUSH/ROCK/GRASS_TUFT) jedna DECOR + string discriminator.
+ *
+ * Atributy:
+ *  - `KIND` — string, jeden z `"spruce" | "oak" | "bush" | "rock" |
+ *    "grass_tuft"`. Builder lookup v `createDecor` dispatchi.
+ *  - `SEED` — integer, deterministický RNG seed pro variace (počet pater,
+ *    velikost, rotace, …). Stejný SEED = stejný strom.
+ *  - `SCALE` — float multiplikátor pro celkové rozměry (default 1.0).
+ *    Builder po dokončení dělá `group.scale.multiplyScalar(SCALE)`.
+ *
+ * Pozice je spojitá (zděděno z COMPOSITES → CUBES, DD-12). Float scatter
+ * v `decorate` (Fáze 4) umístí dekorace mezi voxely.
+ */
+export class DECOR extends COMPOSITES {
+  constructor(id, name, x, y, z, kind, seed = 0, scale = 1.0, snowed = false, description = "") {
+    super(id, name, x, y, z, description);
+    this.KIND   = kind;
+    this.SEED   = seed;
+    this.SCALE  = scale;
+    // SNOWED (sez. 40 follow-up) — boolean, true pokud cell pod dekorací má
+    // `_snow` postfix (= scatter v zasněženém biomu). Builder dle flagu přebarví
+    // top element na SNOW_WHITE (sníh seshora). Propagovaný z `cells[i].snowed`
+    // v `decorate()` (terrain.js) → `decoration.snowed` → DECOR.SNOWED.
+    this.SNOWED = snowed;
+  }
+}
+
+/**
  * PATH = 1D křivka (DD-25 vrstva 3 — Linie). Catmull-Rom spline rendrovaný
  * jako plochý strip mesh šířky ~0.5 j s drobným Y offsetem nad terrain
  * (proti z-fighting).
@@ -385,14 +419,18 @@ export class TIMER extends OBJECTS {
  *     Default 0.5 (poledne, scéna při bootu plně osvětlená). Mapping fix sez. 35
  *     (původní DD-38 měl 0=východ, 0.25=poledne — matematicky úsporné, ale prakticky
  *     matoucí pro user-facing slider).
- *   - `DAY_SPEED ∈ ℝ⁺` — kolik cyklů za sekundu. 0 = pauza. Default 0 (KISS,
- *     user explicit zapne přes #settings slider nebo `window.world.DAY_SPEED = 0.05`).
+ *   - `DAY_SPEED ∈ ℝ⁺` — kolik cyklů za sekundu. 0 = pauza. Default 0.001
+ *     (sez. 40) — ~17 min/cyklus, pomalá animace slunce při bootu.
  *   - `LATITUDE ∈ {tropical, subtropical, temperate, polar}` — geografické pásmo
  *     (G2, sez. 35). Konzument: `SUN_TILT_BY_LATITUDE` v main.js (úhel slunce
  *     od svislice — rovník = vyšší slunce, póly = nižší). Default `temperate`.
  *   - `HUMIDITY ∈ {wet, mid, dry}` — vlhkostní pásmo (G2). Druhá osa biome matice
  *     4×3 (LATITUDE × HUMIDITY = 12 biomů). G2 MVP konzument: UI biome readout
  *     (display-only). G3 konzument: `surfaces` mix z biome lookup. Default `mid`.
+ *   - `SEASON ∈ {spring, summer, autumn, winter}` — roční období (DD-50, sez. 40).
+ *     Default `summer`. Konzumenti: `snowSpecForLatitude` + `waterSpecForClimate`
+ *     pro temperate biom (zima víc sněhu/ledu, léto bez). Polar/tropical season-
+ *     invariant.
  *
  * Politika DD-29 stále platí: nové atributy přibudou jen s živým konzumentem.
  */
@@ -401,15 +439,25 @@ export class WORLD extends OBJECTS {
     super(id, name, description);
     // DAY = fáze 24h cyklu, normalizovaná na [0, 1). Default poledne (sez. 35 fix).
     this.DAY = 0.5;
-    // DAY_SPEED = cykly/s. 0 = paused (default). Engine v main.js inkrementuje
+    // DAY_SPEED = cykly/s. 0 = paused. Engine v main.js inkrementuje
     // DAY v render loopu (`world.DAY = (world.DAY + dt * world.DAY_SPEED) % 1`).
-    this.DAY_SPEED = 0;
+    // Default 0.001 cyklů/s ≈ 1000 s/cyklus ≈ 17 min/cyklus (sez. 40 user wish)
+    // — pomalá animace slunce při bootu, ne paused.
+    this.DAY_SPEED = 0.001;
     // LATITUDE = geografické pásmo (G2, sez. 35). 4 enum hodnoty. Konzument:
     // `SUN_TILT_BY_LATITUDE` v main.js → výška slunce v poledni.
     this.LATITUDE = "temperate";
     // HUMIDITY = vlhkostní pásmo (G2). 3 enum hodnoty. Spolu s LATITUDE = 4×3
     // matice biomů (12 typů). G2 MVP: UI display-only. G3: driver `surfaces` mix.
     this.HUMIDITY = "mid";
+    // SEASON = roční období (DD-50, sez. 40). 4 enum: "spring" | "summer" |
+    // "autumn" | "winter". Default summer = "léto" (= dnešní bezsezonní stav).
+    // Konzument (minimal scope): `snowSpecForLatitude(lat, season)` v terrain.js
+    // modifikuje temperate snowPatchThreshold (zima víc sněhu, léto bez), plus
+    // `waterSpecForClimate(lat, hum, season)` modifikuje temperate freezeRatio
+    // (zima víc ledu na jezerech). Polar perpetually-winter, tropical/subtropical
+    // season-invariant. Sub-prah: LEAF_AUTUMN paleta + DECOR_DENSITY sezonní modifier.
+    this.SEASON = "summer";
   }
 }
 

@@ -8,7 +8,7 @@
 
 - [ ] **`.glb`/glTF asset import pipeline** — `GLTFLoader` + AssetCache + shadow setup pro načítané meshe. Otevírá: (a) hezčí lampu z user-poskytnutého PBR Street Props balíčku, (b) Stickman integraci (varianta A níže), (c) dekorativní obyvatele scény. Vyžaduje nový DD (asset pipeline = strukturální), sez. 29 F3 smazala stará MagicaVoxel pipeline (OBJ/MTL Loader) — pattern obnovit, ale na glTF stack.
 - [ ] **Integrace externího Stickmana** — TBD způsob: `[A]` `.glb` import (závislé na asset pipeline výš), `[B]` sibling ES module `../Stickman/src/...`, `[C]` jiné. Otevře novou DD při rozhodnutí.
-- [~] **Náhradní obyvatel scény** — *plánováno DD-49 (sez. 39 kotva, bez impl)*. Procedurální COMPOSITES landscape decoration (stromy/keře/kameny/tráva) přes generickou `DECOR` třídu + biome-aware density driver. Viz DD-49 + sekce „Krajinné COMPOSITES (DD-49)" níže.
+- [x] **Náhradní obyvatel scény** *(sez. 40, DD-49 impl + DD-50 SEASON driver)*. Procedurální COMPOSITES landscape decoration (spruce/oak/bush/rock/grass_tuft) přes generickou `DECOR` třídu, biome-aware `DECOR_DENSITY[lat][hum]`, snow caps + scale 0.5×, ramp Y fix, bush Y proporční. DD-50 SEASON minimal scope (snow + ice modifier pro temperate). Viz DONE.md + DD-49 + DD-50.
 
 ## DAY-cycle (WORLD DD-38 follow-up)
 
@@ -46,63 +46,35 @@
 - [ ] **BUILDING třída** *(IDEAS — budoucí dekorativní/factory entity nad generovaným terénem)*.
 - [ ] **TRACK třída** *(IDEAS — sourozenec PATH, vlaky odloženy)*.
 
-## Krajinné COMPOSITES (DD-49)
+## Krajinné COMPOSITES (DD-49) + SEASON (DD-50) sub-prahy
 
-DD-49 kotvící (sez. 39, bez impl). Implementační fáze pro budoucí sezení:
+DD-49 + DD-50 implementovány sez. 40. Fáze 1-5 hotové (viz DONE.md). Otevřené sub-prahy:
 
-### Fáze 1 — toolkit (`src/composites/toolkit.js`)
+### Fáze 6 — follow-up DECOR (KIND extension)
 
-- [ ] **`src/composites/` adresář** + `toolkit.js` modul (nový).
-- [ ] **`lowpolyMat(color)`** per-color singleton cache (`Map<number, MeshLambertMaterial>` s `flatShading: true`).
-- [ ] **`getGeomCache(kind, partKey)`** per-(KIND × part) singleton geometry cache. Volá factory dle partKey (`trunk` → CylinderGeometry, `leafCluster` → IcosahedronGeometry(0), atd.).
-- [ ] **`mulberry32(seed)`** — buď re-export z `terrain.js`, nebo nový `src/random.js` shared.
-- [ ] **Paleta konstanty** — 6 spectra: `BARK_BROWN`, `LEAF_GREEN`, `LEAF_AUTUMN`, `ROCK_GRAY`, `GRASS_GREEN`, `BUSH_GREEN`.
-
-### Fáze 2 — 5 buildery
-
-- [ ] **`buildSpruce(group, opts)`** — CylinderGeometry kmen + 3-5 ConeGeometry korunních pater (top tapering).
-- [ ] **`buildOak(group, opts)`** — CylinderGeometry kmen + 2-4 IcosahedronGeometry(0) listových clusterů.
-- [ ] **`buildBush(group, opts)`** — 3-5 IcosahedronGeometry(0)/SphereGeometry low cluster nízko.
-- [ ] **`buildRock(group, opts)`** — 1-3 IcosahedronGeometry(0) chunks s random scale/rotation.
-- [ ] **`buildGrassTuft(group, opts)`** — 3-5 tenkých ConeGeometry/BoxGeometry shards rozkládajících se z bodu.
-- [ ] **`DECOR_BUILDERS` lookup** export.
-
-### Fáze 3 — model + dispatch
-
-- [ ] **`DECOR extends COMPOSITES`** v `model.js`. Atributy: `KIND`, `SEED`, `SCALE`. Default `KIND = null`, `SEED = 0`, `SCALE = 1.0`.
-- [ ] **`createDecor(instance)`** v `main.js` — volá `DECOR_BUILDERS[instance.KIND]` s `{ seed: instance.SEED, scale: instance.SCALE }`. Apply `userData.{terrain: true, instanceId, hoverable}`, `castShadow=true`, `receiveShadow=false`.
-- [ ] **Dispatch v `createMeshFor`** — `if (instance instanceof DECOR) return createDecor(instance)`.
-
-### Fáze 4 — biome-aware density + scatter
-
-- [ ] **`DECOR_DENSITY[latitude][humidity]`** lookup v `terrain.js`. Per (LATITUDE × HUMIDITY) → `{ kind: weight, ... }`. Viz DD-49 rozhodnutí 5 pro kalibraci.
-- [ ] **`decorate(blocks, biome, latitude, humidity, seed)`** funkce → `decorations[]` = `[{ kind, x, y, z, seed }, ...]`. Iteruje top voxely, per cell `rng() < sum(weights)` rozhodne spawn. Vážený výběr KIND-u. `_snow` cells × 0.5 density. Voda / stone (kromě rock) skip.
-- [ ] **`generateTerrain` Krok 7** — volá `decorate`, vrací `{ blocks, water, ramps, decorations }`.
-- [ ] **`spawnTerrain` v `main.js`** — iteruje `decorations[]`, `scene.add(createMeshFor(new DECOR(...)))`.
-
-### Fáze 5 — test + tweak
-
-- [ ] **Smoke test 30×30** — všech 12 biomů (LATITUDE × HUMIDITY), screenshot porovnání density / variant rozumný.
-- [ ] **Stress test 100×100** — FPS / draw calls / scenetree size. Pokud pokles, sub-prah mesh merge per KIND.
-- [ ] **Hover infotip** — `DECOR` instance s `KIND="spruce"`, `SEED=…` viditelný v infotipu (generický přes Object.entries OK).
-
-### Fáze 6 — follow-up sub-prah (after MVP)
-
-- [ ] **Pařezy + kmeny** — `stump`, `log`. Nízké válce / hranol s anuli.
 - [ ] **`palm` KIND** — `tropical.wet` palmy (CylinderGeom kmen + 5-7 long ConeGeom listy z apex).
 - [ ] **`cactus` KIND** — `subtropical.dry` (CylinderGeom svislé sloupce, 1-3 paže).
 - [ ] **`flower` KIND** — `temperate.wet` louka kvítky (small SphereGeom + thin stem).
-- [ ] **Sezónní varianty** — `_autumn` postfix (LEAF_AUTUMN paleta), `_dead` postfix (no leaves, dark bark).
-- [ ] **`_snow` post-fix DECOR varianty** — sníh na korunách (white IcosahedronGeometry cap).
+- [ ] **Pařezy + kmeny** — `stump`, `log`. Nízké válce / hranol s anuli.
+- [ ] **`_dead` postfix** — no leaves, dark bark (sušené stromy v dry biomech).
 - [ ] **Density UI control** — slider v `#terrainctrl` „Decoration density" (multiplikátor 0..2× nad DECOR_DENSITY).
-- [ ] **InstancedMesh refactor pro DECOR** — pokud Fáze 5 perf test selže (= scenetree overhead pro >5k Object3D).
+- [ ] **InstancedMesh refactor pro DECOR** — pokud >5k DECOR Object3D ve scenetree degraduje FPS na 100×100.
+- [ ] **Receive shadow opt-out flag** — `userData.noReceiveShadow` analogicky k `noShadow`. DD-49 spec původně receiveShadow=false pro decor (marginal perf save). Aktuálně default traversal nastaví na true.
+
+### DD-50 SEASON follow-up (mid + plný scope)
+
+- [ ] **LEAF_AUTUMN paleta v autumn** — DECOR oak/bush v autumn dostane LEAF_AUTUMN (oranžová) místo LEAF_GREEN. Spruce zachová zelený (jehličnan). Builder přijme `opts.season` přes DECOR.SEASON atribut nebo `decorate` propagace per cell.
+- [ ] **DECOR_DENSITY sezonní modifier** — autumn -20 % leaves, winter -50 % leaves + 20 % rock visibility. `decorate()` rozšíření o season-weighted multiplier.
+- [ ] **Polar season variace** — polar summer ablation (méně led, méně sníh), polar winter pernamentní 1.0 napříč. Vyžaduje rozdvojit polar branch v `snowSpecForLatitude` / `waterSpecForClimate`.
+- [ ] **Sky/sun color season modifier** — DD-48 `_skyDay` / `_skyDusk` keypoints jsou season-invariant. Sezonní subtle tint (winter colder modřejší, summer warmer žlutější).
+- [ ] **Snow accumulation animace přes DAY_SPEED** — temporal evolution (sníh roste v zimě, taje na jaře) přes WORLD.DAY × SEASON interpolation.
 
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — **0/8 reset** *(sez. 38 audit běžel: K1/K2 docs drift fix, D1 BLOCKS+COMPOSITES import drop, D2 TTUNELS drop ~287 ř., D3 terrain.js komentář, D4 GLOSSARY engine-internal maps)*. Next: ~sez. 46.
-- **`%AUDIT:DOCS`** — **0/10 reset** *(sez. 39 audit běžel: K1-K4 + 9 D + 6 KK + 2 S nálezů)*. Next: ~sez. 49.
-- **IDEAS/TODO pruning** — 6/12 (sez. 38: close G4 snow + DD-39 dusk sub-prahy, add 3 DD-47 follow-up sub-prahy, add 2 DD-48 follow-up, add „Vytunit reliéf" + „Mraky/srážky" IDEAS entries).
+- **`%AUDIT:CODE`** — **2/8** *(sez. 40 jen impl, žádný audit)*. Next: ~sez. 46.
+- **`%AUDIT:DOCS`** — **1/10** *(sez. 40 jen impl, žádný audit)*. Next: ~sez. 49.
+- **IDEAS/TODO pruning** — **9/12** *(sez. 40 prune: close DD-49 Fáze 1-5 + DD-50 minimal + close WORLD.SEASON DD-47 follow-up; add DD-50 follow-up section + DECOR Fáze 6 sub-prahy)*.
 
 - [ ] **Symmetric VALLEY_AMP = −amplitude varianta** — DD-46 dnes asymetrický (VALLEY=−1, PEAK=amplitude). Peak side rozprostřená přes víc úrovní (Y=2,3,4) než valley side (Y=−1 dominantní). Pro skutečně symetrický bimodal (= stejné peaks i valleys distribuce) by VALLEY=−amplitude dalo range [-amp, +amp]. Pro r6 by to znamenalo -4..4. Wait pro user feedback typu „valley je moc dominantní" / „peaks rozcucnatý".
 - [ ] **Plynulý morph r5↔r6** — DD-46 hard switch při r=6 (ridge³ → smoothstep bimodal). Pokud user pocítí „přechod mezi rolling a horami je trhanej", parametrizovat `bimodalWeight = clamp((relief-5)/3, 0, 1)` a lerp mezi ridge³ output a smoothstep output. Wait pro user feedback.
@@ -111,7 +83,7 @@ DD-49 kotvící (sez. 39, bez impl). Implementační fáze pro budoucí sezení:
 
 - [ ] **Snow noise patches calibration** — temperate snow dnes sort+rank top 30 % s `altBias = 0.3`. Pokud user feedback bude „moc/málo sněhu v mírném pásmu", tweak: `snowSpec.patchThreshold` (0.7 = 30 %) a/nebo `snowSpec.altBias` (0.3). Možná `freezeRatio` per HUMIDITY (wet temperate = víc sněhu než mid).
 - [ ] **Water cluster connected components** — viz Otevřené body výš (bbox clustering, ~500 cells → 5-20 jezer pro polar mid 100×100).
-- [ ] **WORLD.SEASON driver pro freezeRatio** — dnes `polar=1.0, temperate=0.3` hard-coded. Reálná Země: zima víc led, léto méně. SEASON ∈ {jaro, léto, podzim, zima} → modifikuje freezeRatio (polar zůstává 1.0 napříč; temperate kolísá 0.0..0.6).
+- [x] **WORLD.SEASON driver pro freezeRatio** *(sez. 40, DD-50 minimal scope)* — `SEASON ∈ {spring, summer, autumn, winter}` atribut WORLD. `snowSpecForLatitude(lat, season)` + `waterSpecForClimate(lat, hum, season)` rozšířeny — temperate `patchThreshold` + `freezeRatio` per season. Polar invariant (perpetually-winter), tropical/subtropical invariant. UI 4-step slider v Climate sekci. Viz DONE.md + DD-50. Plný scope (LEAF_AUTUMN, DECOR_DENSITY sezonní, polar season variace, sky color sezonní, snow accumulation animace) zůstává sub-prah — viz DD-50 follow-up sekce výše.
 - [ ] **Ice canvas texture** — `_iceMat.color = 0xd9e8ec` je solid. Reálný „zasněžený led" by měl noise patches (= partially zasněžený, partially čistý led). Canvas texture s bílo-modrými skvrnami nebo vertex colors per plane corner.
 
 ## Sub-prah (DD-48 follow-up, sez. 38)

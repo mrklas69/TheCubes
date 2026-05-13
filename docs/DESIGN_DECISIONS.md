@@ -1397,3 +1397,34 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 - Quaternius Ultimate Nature Pack (`.blend` zdroj, hand-modeled faceted lowpoly) — vizuální reference, ne přímý asset import.
 - Sez. 39 user volby: A1=a (faceted lowpoly) / A2=a (5 KIND minimum) / A3=c (Claude přímo, ne aréna) / A4=jen DD kotva / A5=a (generická DECOR) / A6=b (biome-aware) / A7=b (shared geom cache) / A8=a (DD-49 kotva před impl) / A9=ok (spruce/oak/bush/rock/grass_tuft). Kontext v `docs/diary/2026-05-13.md` Sezení 39.
 
+## DD-50 — WORLD.SEASON driver (4-enum roční období, sez. 40)
+
+**Rozhodnutí:**
+
+1. **`world.SEASON ∈ {spring, summer, autumn, winter}`** — 4-enum WORLD atribut. Default `"summer"` (= dnešní bezsezonní stav, zachová stávající boot vizuál). Pořadí kalendářní (jaro → léto → podzim → zima).
+2. **Minimal scope (first-pass) — 2 konzumenti:**
+   - **`snowSpecForLatitude(latitude, season)`** — temperate `patchThreshold` modifikátor. Lookup `SNOW_PATCH_BY_SEASON[season]`: spring/autumn 0.85 (~15 % cells), summer 1.00 (0 %), winter 0.40 (60 %). Polar `mode: "polar"` invariant. Tropical/subtropical `mode: "none"` invariant.
+   - **`waterSpecForClimate(latitude, humidity, season)`** — temperate `freezeRatio` modifikátor. Lookup `WATER_FREEZE_BY_SEASON[season]`: spring 0.2, summer 0.0, autumn 0.3, winter 0.7. Polar `freezeRatio: 1.0` invariant.
+3. **UI** — 4-step slider `tc-season` v Climate sekci `#terrainctrl` (vedle LATITUDE + HUMIDITY). Display: jaro/léto/podzim/zima. `input` event mutuje `world.SEASON` (přes `window.settings.setSeason`), `change` triggeruje regen. Default slider value=1 (léto).
+4. **Polar perpetually-winter (sub-prah)** — polar season-invariant napříč `snowSpec` i `waterSpec`. Reálná Arktida má sezonní svit (polar day/night) + místní ablation, ale to je layer #2 (DAY × SEASON × LATITUDE composite), sub-prah.
+5. **Tropical/subtropical season-invariant** — bez snow/ice napříč seasony. „Tropický podzim" znamená jen že list padá, ale to je sub-prah Fáze 6 (LEAF_AUTUMN paleta).
+6. **`SEASONS` export array** — `["spring", "summer", "autumn", "winter"]` z `terrain.js`. Lookup pro UI controller (slider idx → key).
+7. **`settings.setSeason(v)` mutator** — validace `SEASONS.includes(v)` (silent skip neznámých). Symetricky s `setLatitude` / `setHumidity`.
+
+**Omezení (sub-prah pro budoucí sezení):**
+
+- **LEAF_AUTUMN paleta** — DECOR oak/bush v autumn dostane LEAF_AUTUMN (oranžová) místo LEAF_GREEN. Spruce jehličnan zachová. Builder úprava `opts.season` propagace přes DECOR.SEASON atribut nebo `decorate` propagace per cell.
+- **DECOR_DENSITY sezonní modifier** — autumn -20 % leaves, winter -50 % leaves + 20 % rock visibility. Vyžaduje `decorate()` rozšíření o season-weighted DECOR_DENSITY tabulku.
+- **Polar season variace** — polar summer ablation (méně led, méně sníh), polar winter pernamentní 1.0 napříč. Sub-prah po prvnich vizuálních testech (může se ukázat zbytečné — polar je dnes "perpetually-Arctic" simplifikace).
+- **Sky/sun color season modifier** — DD-48 `_skyDay`/`_skyDusk` keypoints jsou season-invariant. Sezonní subtle tint (winter colder modřejší, summer warmer žlutější) je layer #3 (DAY × SEASON × LATITUDE), sub-prah.
+- **Snow accumulation animace přes DAY_SPEED** — temporal evolution (sníh roste v zimě, taje na jaře) by vyžadovala WORLD.DAY × SEASON interpolation. Mimo first-pass.
+
+**References:**
+
+- DD-29 (sez. 19) — politika *„nové atributy přibudou jen s živým konzumentem"*. DD-50 splňuje (2 konzumenti v `terrain.js`).
+- DD-38 (sez. 27) — WORLD třída + DAY/DAY_SPEED. DD-50 přidává 4. atribut WORLD (po DAY/LATITUDE/HUMIDITY).
+- DD-42 (sez. 35) — LATITUDE driver (4-enum). DD-50 izomorfní pattern (4-enum, lookup tabulky, UI slider).
+- DD-47 (sez. 38) — snow/water driver helpers (`snowSpecForLatitude`, `waterSpecForClimate`). DD-50 přidá 2.-3. arg `season` k oběma signaturám.
+- TODO „WORLD.SEASON driver pro freezeRatio" (sez. 38 DD-47 follow-up) — DD-50 realizuje.
+- Sez. 40 user volby: scope=minimální (jen snow modifier) / default=summer / DD-50=kotva. Kontext v `docs/diary/2026-05-13.md` Sezení 40.
+

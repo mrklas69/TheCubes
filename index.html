@@ -279,6 +279,11 @@
         <input type="range" id="tc-humidity" min="0" max="2" step="1" value="1">
         <span class="tc-val" id="tc-humidity-val">Středně</span>
       </div>
+      <div class="tc-row climate-row">
+        <span class="tc-key">období</span>
+        <input type="range" id="tc-season" min="0" max="3" step="1" value="1">
+        <span class="tc-val" id="tc-season-val">Léto</span>
+      </div>
       <div class="tc-biome">► biome: <span id="tc-biome-val">Step / Prérie</span></div>
     </div>
   </div>
@@ -296,8 +301,8 @@
       <input type="range" id="set-day" min="0" max="0.999" step="0.01" value="0.5">
     </div>
     <div class="slider-row">
-      <label for="set-day-speed">DAY_SPEED <span id="set-day-speed-val">0.000</span></label>
-      <input type="range" id="set-day-speed" min="0" max="0.1" step="0.001" value="0">
+      <label for="set-day-speed">DAY_SPEED <span id="set-day-speed-val">0.001</span></label>
+      <input type="range" id="set-day-speed" min="0" max="0.1" step="0.001" value="0.001">
     </div>
   </div>
 
@@ -330,6 +335,10 @@
        // klíče zůstávají "wet"/"mid"/"dry" (sémantika klimatu, ne pozice).
       const HUMIDITY_KEYS  = ["dry", "mid", "wet"];
       const HUMIDITY_NAMES = ["Sucho", "Středně", "Vlhko"];
+      // DD-50 (sez. 40) — SEASON 4-enum. Pořadí kalendářní (jaro → léto → podzim
+      // → zima). Default slider value=1 (Léto = bezsezonní default).
+      const SEASON_KEYS  = ["spring", "summer", "autumn", "winter"];
+      const SEASON_NAMES = ["Jaro", "Léto", "Podzim", "Zima"];
 
       const $ = (id) => document.getElementById(id);
       const sizeX  = $("tc-size-x"),  sizeXVal  = $("tc-size-x-val");
@@ -338,6 +347,7 @@
       const seed   = $("tc-seed");
       const lat      = $("tc-latitude"), latVal   = $("tc-latitude-val");
       const hum      = $("tc-humidity"), humVal   = $("tc-humidity-val");
+      const season   = $("tc-season"),   seasonVal = $("tc-season-val");
       const biomeVal = $("tc-biome-val");
 
       // Sestaví aktuální parametry z UI stavu. Volaný z `change` handleru.
@@ -347,12 +357,17 @@
       // DD-47 (sez. 38): plus `snowSpec` driver-derived z LATITUDE (`polar`
       // = jednotně bílo, `temperate` = vrcholky + patches, jiné = bez sněhu).
       function readParams() {
-        const latKey = LATITUDE_KEYS[parseInt(lat.value, 10)];
-        const humKey = HUMIDITY_KEYS[parseInt(hum.value, 10)];
+        const latKey    = LATITUDE_KEYS[parseInt(lat.value, 10)];
+        const humKey    = HUMIDITY_KEYS[parseInt(hum.value, 10)];
+        const seasonKey = SEASON_KEYS[parseInt(season.value, 10)];
         const surfaces = window.surfacesForBiome?.(latKey, humKey)
                       ?? { grass: 0.75, stone: 0.20, sand: 0.05 };  // fallback = temperate.mid (DD-47 drop water)
-        const snowSpec  = window.snowSpecForLatitude?.(latKey) ?? { mode: "none" };
-        const waterSpec = window.waterSpecForClimate?.(latKey, humKey) ?? { enabled: false };
+        // DD-50 (sez. 40) — snowSpec + waterSpec berou season jako 2.-3. arg.
+        const snowSpec  = window.snowSpecForLatitude?.(latKey, seasonKey) ?? { mode: "none" };
+        const waterSpec = window.waterSpecForClimate?.(latKey, humKey, seasonKey) ?? { enabled: false };
+        // DD-49 (sez. 40) — decorSpec driver-derived ze stejné dvojice (lat, hum).
+        // Krajinné dekorace (stromy/keře/kameny/tráva) per biome density driver.
+        const decorSpec = window.decorSpecForClimate?.(latKey, humKey) ?? { mode: "none" };
         return {
           size:     [parseInt(sizeX.value, 10), parseInt(sizeZ.value, 10)],
           relief:   parseInt(relief.value, 10),
@@ -360,6 +375,7 @@
           seed:     parseInt(seed.value, 10),
           snowSpec,
           waterSpec,
+          decorSpec,
         };
       }
 
@@ -426,10 +442,20 @@
         updateBiomeReadout();
       });
 
+      // DD-50 (sez. 40) — SEASON slider. `input` event mutuje WORLD.SEASON
+      // (per-frame fce snow/ice modifier při dalším regen). `change` triggeruje
+      // regen — terrain snow patches + water ice se přepočítají per season.
+      season.addEventListener("input", () => {
+        const idx = parseInt(season.value, 10);
+        seasonVal.textContent = SEASON_NAMES[idx];
+        window.settings.setSeason(SEASON_KEYS[idx]);
+      });
+
       // G3 (sez. 36) — regen na `change` (po dotažení slideru). Surface mix
       // se přepočítá z aktuálního Climate stavu (BIOME_SURFACES lookup).
       lat.addEventListener("change", onChange);
       hum.addEventListener("change", onChange);
+      season.addEventListener("change", onChange);
 
       // Init (sez. 38 bug fix) — defer na DOMContentLoaded. Inline classic
       // `<script>` (tento IIFE) běží **synchroně při parsování HTML**, tj.

@@ -10,9 +10,10 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
-import { CUBES, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, SPRITES, LAMP, PATH, TIMER, COUNTER, WORLD } from "./model.js";
+import { CUBES, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, SPRITES, LAMP, DECOR, PATH, TIMER, COUNTER, WORLD } from "./model.js";
+import { DECOR_BUILDERS } from "./composites/builders.js";
 import { TIME, advanceTime } from "./time.js";
-import { generateTerrain, maxReliefForSize, BIOME_NAMES, BIOME_SURFACES, surfacesForBiome, snowSpecForLatitude, waterSpecForClimate } from "./terrain.js";
+import { generateTerrain, maxReliefForSize, BIOME_NAMES, BIOME_SURFACES, surfacesForBiome, snowSpecForLatitude, waterSpecForClimate, decorSpecForClimate, DECOR_DENSITY, SEASONS } from "./terrain.js";
 
 // === Renderer ===
 // WebGLRenderer = Three.js komponenta, která překládá scénu na GPU volání.
@@ -318,6 +319,8 @@ window.settings = {
   // hodnot (UI controller posílá jen z LATITUDE_KEYS / HUMIDITY_KEYS).
   setLatitude(v)  { if (v in SUN_TILT_BY_LATITUDE) world.LATITUDE = v; },
   setHumidity(v)  { world.HUMIDITY = v; },
+  // DD-50 (sez. 40) — SEASON mutátor. Validace: musí být v SEASONS enum.
+  setSeason(v)    { if (SEASONS.includes(v)) world.SEASON = v; },
 };
 
 // F12 (sez. 29) — fix: shadow frustum reaktivně dle aktuální velikosti terrain.
@@ -1167,6 +1170,10 @@ function createMeshFor(instance) {
   } else if (instance instanceof LAMP) {
     // Pouliční lampa — sloupek + svítící hlava + PointLight. Group, float pozice.
     object3d = buildLamp(instance);
+  } else if (instance instanceof DECOR) {
+    // Krajinná dekorace (strom/keř/kámen/tráva) — Group s procedurálním obsahem
+    // dle `instance.KIND` lookup v `DECOR_BUILDERS` (DD-49). Float pozice.
+    object3d = createDecor(instance);
   } else if (instance instanceof SPRITES) {
     // 2D billboard — obrázek vždy otočený ke kameře. Nevoxelový potomek,
     // pozice float bez snap-to-grid.
@@ -1716,6 +1723,37 @@ function buildLamp(instance) {
   // Pozice + rotace ze model instance. Group origin = pata sloupu v (X,Y,Z).
   group.position.set(instance.X, instance.Y, instance.Z);
   group.rotation.y = THREE.MathUtils.degToRad(instance.ORIENTATION);
+  return group;
+}
+
+// === createDecor — krajinná dekorace (DECOR COMPOSITES, DD-49) =============
+// Dispatch dle `instance.KIND` na builder v `DECOR_BUILDERS` (importovaný
+// z `src/composites/builders.js`). Builder dostane prázdnou Group a vyplní
+// ji procedurálně podle `{ seed: instance.SEED, scale: instance.SCALE }`.
+//
+// Pokud KIND neexistuje v lookup tabulce (typo, future-incompatible save),
+// vrátíme prázdnou Group s warning v konzoli — žádný crash. Caller (createMeshFor)
+// pak Group přidá do scény jako neviditelný placeholder.
+//
+// Pozice je float (DD-12, COMPOSITES nedělá snap-to-grid). ORIENTATION
+// z COMPOSITES base třídy by se mohl použít, ale buildery už dělají vlastní
+// Y rotaci (seed-based variace) — kombinace by se srážela. Pro teď ORIENTATION
+// ignorujeme; pokud by vznikl use-case explicit „natoč strom takhle", builder
+// by musel rozlišit „seeded random" vs. „explicit override".
+function createDecor(instance) {
+  const group = new THREE.Group();
+  const builder = DECOR_BUILDERS[instance.KIND];
+  if (builder) {
+    builder(group, {
+      seed:   instance.SEED,
+      scale:  instance.SCALE,
+      snowed: instance.SNOWED,  // builder dle flagu přebarví top element na SNOW_WHITE
+    });
+  } else {
+    // KIND neznámý — log + prázdná Group. Diagnostic, ne fatal.
+    console.warn(`DECOR: unknown KIND "${instance.KIND}" (id=${instance.ID})`);
+  }
+  group.position.set(instance.X, instance.Y, instance.Z);
   return group;
 }
 
@@ -2278,6 +2316,24 @@ function spawnTerrain(params) {
     scene.add(mesh);
   }
 
+  // Krajinná dekorace (sez. 40, DD-49) — DECOR instance per scatter entry.
+  // `terrain.decorations[]` jsou raw plan z `decorate()`; tady z nich vytvoříme
+  // DECOR modelové instance a scéna je přidá přes standardní `createMeshFor`
+  // dispatch (DECOR větev → `createDecor` → `DECOR_BUILDERS[kind]`).
+  // `userData.terrain = true` značí entry pro `regenerateScene` cleanup.
+  let decorIdx = 0;
+  for (const d of terrain.decorations ?? []) {
+    // ID: `decor_NNNN` (4-mistné zero-pad). Unikátnost stačí v rámci jedné
+    // scény (regenerateScene clearuje všechny entries). Hover infotip ho
+    // ukáže, ale nezachovává mezi regen.
+    const id = `decor_${String(decorIdx++).padStart(4, "0")}`;
+    const name = d.kind;
+    const instance = new DECOR(id, name, d.x, d.y, d.z, d.kind, d.seed, d.scale ?? 1.0, d.snowed === true);
+    const mesh = createMeshFor(instance);
+    mesh.userData.terrain = true;
+    scene.add(mesh);
+  }
+
   // F12: shadow frustum dle aktuální size — bez updatu by stíny ostříhly
   // na ±8 (aktuální i 30×30 už mimo, 100×100 by drželo stíny v centrální 1/6).
   updateShadowFrustum(Math.max(params.size[0], params.size[1]));
@@ -2310,12 +2366,16 @@ function regenerateScene(params) {
   }
   _terrainBatches.clear();
 
-  // 2) Water single-meshe (filter přes userData.terrain). Sez. 38 LIQUID
-  // prototype: water cells jsou per-cell THREE.Mesh, ne InstancedMesh batch.
-  const staleWater = scene.children.filter((c) => c.userData.terrain === true);
-  for (const mesh of staleWater) {
+  // 2) Single-mesh entries s `userData.terrain === true` (water + DECOR
+  //    od sez. 40 DD-49). Water plane nemá `userData.instance` (nešel přes
+  //    `createMeshFor`), DECOR Group ho má — pokud existuje, `meshByInstance`
+  //    cleanup uvolní zombie reference.
+  const staleEntries = scene.children.filter((c) => c.userData.terrain === true);
+  for (const mesh of staleEntries) {
     scene.remove(mesh);
     disposeHoverClones(mesh);
+    const inst = mesh.userData.instance;
+    if (inst) meshByInstance.delete(inst.ID);
   }
   _waterMeshes.clear();  // wave anim Set sync — staré meshe jsou pryč
 
@@ -2352,6 +2412,11 @@ window.surfacesForBiome = surfacesForBiome;
 window.snowSpecForLatitude = snowSpecForLatitude;
 // Sez. 38 LIQUID prototype — waterSpec helper (flood-fill voda dle climate).
 window.waterSpecForClimate = waterSpecForClimate;
+// Sez. 40 DD-49 — decorSpec helper + DECOR_DENSITY tabulka pro UI/dev.
+window.decorSpecForClimate = decorSpecForClimate;
+window.DECOR_DENSITY = DECOR_DENSITY;
+// Sez. 40 DD-50 — SEASONS enum array pro UI (4 hodnoty pro slider lookup).
+window.SEASONS = SEASONS;
 
 function buildScene(scene) {
   // G3 (sez. 36, DD-44) — surfaces driver-derived z WORLD climate atributů.
@@ -2359,11 +2424,15 @@ function buildScene(scene) {
   // Climate slidery mutují `world.LATITUDE/HUMIDITY` (přes `window.settings`)
   // a regen-trigger volá `regenerateScene(readParams())` z HTML controlleru,
   // který oba parametry dohnají identicky z aktuálního WORLD stavu.
+  // Sez. 40 (DD-49) — plus decorSpec driver-derived z (LATITUDE, HUMIDITY).
+  // Sez. 40 (DD-50) — plus SEASON driver pro snowSpec.patchThreshold +
+  // waterSpec.freezeRatio v temperate biomu.
   spawnTerrain({
     ...TERRAIN_DEFAULTS,
     surfaces:  surfacesForBiome(world.LATITUDE, world.HUMIDITY),
-    snowSpec:  snowSpecForLatitude(world.LATITUDE),
-    waterSpec: waterSpecForClimate(world.LATITUDE, world.HUMIDITY),
+    snowSpec:  snowSpecForLatitude(world.LATITUDE, world.SEASON),
+    waterSpec: waterSpecForClimate(world.LATITUDE, world.HUMIDITY, world.SEASON),
+    decorSpec: decorSpecForClimate(world.LATITUDE, world.HUMIDITY),
   });
 }
 
