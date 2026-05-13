@@ -672,3 +672,50 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 - DD-33 (ramp smoothing layer) — kontext, ramp detection algoritmus.
 - DD-34 (orientation mapping) — TDRAMP_PEAK_ORIENT empirické hodnoty.
 - DD-25 (4-vrstvá taxonomie scény) — TDRAMP přibyl do BLOCKS rodiny.
+
+## DD-36 — TCUBES atlas pipeline: shared geometry + per-kind atlas material (sez. 28)
+
+**Stav:** Sez. 28. Performance refactor na `feat/terrain-perf` větvi po user feedbacku sez. 26 *„30×30 vykreslování pomalé"* (FPS ~15). %THINK ze sez. 28 doporučil **diagnose first** přes performance HUD + `console.time` instrumenty — baseline 30×30 odhalil `tri/call ≈ 2` = `THREE.Mesh` s `material = [m0..m5]` rozsekal každý box na 6 material groups → **6× draw calls per box** (25k calls celkem). Refactor nahrazuje per-blok `material[6]` pole **shared `BoxGeometry` + per-kind atlas material** pro terrain TCUBES.
+
+**Rozhodnutí:**
+
+1. **`BLOCK_TEXTURES` (whitelist).** Per-kind mapa textur 4 terrain kindů (`grass`/`dirt`/`stone`/`sand`) z `src/main.js`. Kind v BLOCK_TEXTURES → fast path (atlas), jinak → slow path (původní material array).
+
+2. **`getSharedAtlasBoxGeom()` lazy singleton.** Sdílená `BoxGeometry(1,1,1)` pro všechny terrain TCUBES s UVs přepsanými na 1/6-tice atlasu (face N → u ∈ [N/6, (N+1)/6]). 30×30 z ~5500 geometrií → 8.
+
+3. **`getTcubesKindMaterial(kind)` cache.** Per-kind `_tcubesAtlasMatCache` Map. Atlas = 6 facelets (E/W/T/B/S/N) slepené horizontálně do `CanvasTexture` 96×16 px (`ATLAS_TILE_PX = 16`, shoda s `:named-texture` rozlišením). `NearestFilter` + `SRGBColorSpace` (parita s factory texturami).
+
+4. **`createTCubeFor` fast/slow path dispatch.**
+   - **Fast path** — `instance.NAME ∈ BLOCK_TEXTURES`: `new THREE.Mesh(sharedGeom, atlasMat)` = **1 draw call per box**.
+   - **Slow path** — non-terrain (emoji demo boxy sez. 4): původní `material[6]` array zachován pro per-face emoji.
+
+5. **`_faceMaterialCache` memoizace** (komplementární optimalizace). `Map<key, Material>` pro slow path + rampy — `:dirt` etc. faces sdílejí 1 material napříč všemi instancemi (~16k allocs → 4 unique materials).
+
+6. **Perf HUD** (`#perf-hud`, permanent observability). Pravý horní roh, throttled 1×/s: FPS / calls / triangles / geometries / mat cache size. Není dev-only — projektová observability pro budoucí refactory.
+
+**Důsledek (30×30 baseline → atlas):**
+
+| metrika | před | po | změna |
+|---|---|---|---|
+| FPS | 15 | 92 | **6.1×** |
+| draw calls | 25 106 | ~5 050 | 0.20× |
+| geometries | ~5 500 | 8 | sdílená |
+| spawnTerrain.blocks | 38.6 ms | 6.5 ms | 5.9× |
+| regen total | 43 ms | 9 ms | 4.8× |
+
+**Důvod (proč DD a ne jen perf tweak):**
+- Změna architektonického kontraktu: TCUBES nadále **nedrží per-face material array per instance**, místo toho **sdílí material per kind**. Hover sez. 16 pattern (`Array.isArray(orig) ? orig.map(...) : orig.clone()`) automaticky přepíná pole↔single dispatch.
+- Conceptual Integrity (CLAUDE.md): když se změní koncept (TCUBES rendering pipeline), aktualizuj všechny vrstvy. DD je vrstva.
+- Sez. 28 původně `Žádný DD` — sez. 29 audit (Agent A nález #4) doporučil zápis. Akceptováno.
+
+**Známá omezení (kandidáti future refactor):**
+- **Atlas/slow-path texture-source divergence**: atlas builder volá `factory()` přímo (řádek 1975 main.js), slow path přes `_faceMaterialCache` — dvě různé textury pro stejný `:named-texture` (různé random patches). Vizuálně subtle, user pre-flight check sez. 29 *parita OK*. Fix trivial (shared registry texture-per-key), odložen.
+- **Tile pattern uvnitř kindu**: všechny `:dirt` faces sdílejí 1 atlas/texturu → identicky vypadají. Trade-off za 6× FPS (pre-existing od `_faceMaterialCache` memoizace, ne specifický atlasu).
+- **Rampy stále na slow path** s `material[N]` per instance (TRRAMPS 5 / TTRAMPS 4 / TDRAMP 5 / TTUNELS 4 faces) = ~1 200 calls @ 30×30 = 24 % celkem. Atlas pattern repeatovatelný — TODO sez. 29+ (`Příště` sez. 28).
+
+**Reference:**
+- DD-32 (terrain sandbox pivot) — kontext, scéna potřebuje 30×30 plynule.
+- DD-25 (4-vrstvá taxonomie) — BLOCKS rodina, kde TCUBES žije.
+- DD-14 (face material dispatch) — `faceMaterialFor` původní dispatch.
+- Sez. 26 user feedback *„30×30 pomalé"* — trigger.
+

@@ -6,9 +6,7 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
-import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
-import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, TTUNELS, SPRITES, COMPOSITES, VOXEL_MODEL, PATH, TIMER, COUNTER, WORLD } from "./model.js";
+import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, TTUNELS, SPRITES, COMPOSITES, PATH, TIMER, COUNTER } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
 import { generateTerrain } from "./terrain.js";
 
@@ -432,13 +430,6 @@ function faceMaterialFor(val) {
 // Proč nesahá model přímo na mesh? DD-11 (model/engine separation) — model
 // je čistě datový, o Three.js neví. Animátor je tedy v `main.js`, ne v třídě.
 const animators = [];
-
-// WORLD singleton (DD-29, sez. 20) — globální stav scény. `WIND_STRENGTH`
-// + `TIME_SCALE` jako konzumenty. Bez aktivních klientů ve scéně po DD-32
-// pivotu (tree_sway smazán); zůstává jako infrastruktura pro budoucí
-// terrain-driven animátory (např. swaying grass v generovaném terénu).
-const world = new WORLD();
-window.world = world;
 
 // Plný kruh v radiánech — pojmenovaná konstanta, aby `(TAU * t) / period` šel
 // číst jako „kolik period uplynulo v radiánech". Math.PI * 2 = 2π.
@@ -915,14 +906,11 @@ function registerBehavior(instance) {
 //
 // Pozice (DD-12): voxelové potomky (CCUBES, TCUBES) snap-to-grid
 // přes Math.round — brání z-fightingu mezi sousedícími kostkami.
-// Nevoxelové (SPRITES, COMPOSITES) dostanou spojitou float pozici.
+// Nevoxelové (SPRITES) dostanou spojitou float pozici.
 function createMeshFor(instance) {
   let object3d;
 
-  if (instance instanceof COMPOSITES) {
-    // 3D mesh složený z primitivů. Konkrétní tvar řešíme podle podtřídy.
-    object3d = createCompositeFor(instance);
-  } else if (instance instanceof PATH) {
+  if (instance instanceof PATH) {
     // 1D křivka (DD-25 vrstva 3 Linie) — strip mesh sledující POINTS.
     object3d = createPathFor(instance);
   } else if (instance instanceof SPRITES) {
@@ -1756,65 +1744,6 @@ function createSpriteFor(instance) {
   return group;
 }
 
-// Sestaví 3D strukturu pro COMPOSITES instanci. Vrací THREE.Group
-// (kontejner pro více mesh-children — Three.js s nimi pracuje jako s celkem).
-// Pozice je spojitá (float) — bez snap-to-grid.
-//
-// Dispatch podle konkrétní podtřídy COMPOSITES. Po DD-32 (sez. 24) zůstává
-// jen VOXEL_MODEL (externí MagicaVoxel pipeline, DD-21).
-function createCompositeFor(instance) {
-  const group = new THREE.Group();
-  group.position.set(instance.X, instance.Y, instance.Z);
-  // ORIENTATION (DD-26) — uniform Y rotace pro všechny COMPOSITES. Ve modelu
-  // jsou stupně, engine převádí na radiány. Auto-centrování VOXEL_MODELu pak
-  // proběhne v lokálním (rotovaném) prostoru group → bbox stále sedí.
-  group.rotation.y = instance.ORIENTATION * (Math.PI / 180);
-
-  if (instance instanceof VOXEL_MODEL) {
-    buildVoxelModel(group, instance);
-  }
-
-  return group;
-}
-
-// VOXEL_MODEL builder (DD-21 + DD-22) — async načte `.obj` + `.mtl` + `.png`
-// z `./assets/`, aplikuje scale (default 0.625 = 1 MV voxel = 1/16 TC voxelu),
-// rotaci kolem Y, auto-centruje v XZ a posune Y tak, aby spodek mesh seděl
-// přesně na `instance.Y`. Pixel-art filter (NearestFilter) na všechny textury.
-function buildVoxelModel(group, instance) {
-  const mtlLoader = new MTLLoader().setPath("./assets/");
-  mtlLoader.load(`${instance.ASSET}.mtl`, (materials) => {
-    materials.preload();
-    const objLoader = new OBJLoader().setMaterials(materials).setPath("./assets/");
-    objLoader.load(`${instance.ASSET}.obj`, (object) => {
-      // Pořadí transformací (Three.js skládá scale → position): uniform
-      // scale, pak auto-centrování. Rotace kolem Y se aplikuje na rodičovský
-      // group v `createCompositeFor` (DD-26 ORIENTATION).
-      object.scale.setScalar(instance.SCALE);
-      object.updateMatrixWorld(true);
-      const bbox = new THREE.Box3().setFromObject(object);
-      object.position.set(
-        -(bbox.min.x + bbox.max.x) / 2,    // auto-center X
-        -bbox.min.y,                        // bottom snap k Y=0 lokálně
-        -(bbox.min.z + bbox.max.z) / 2,    // auto-center Z
-      );
-      // Pixel-art filter + shadows na všechny mesh-e v importu
-      object.traverse((child) => {
-        if (!child.isMesh) return;
-        child.castShadow = true;
-        child.receiveShadow = true;
-        if (child.material?.map) {
-          child.material.map.magFilter = THREE.NearestFilter;
-          child.material.map.minFilter = THREE.NearestFilter;
-          child.material.map.colorSpace = THREE.SRGBColorSpace;
-          child.material.map.needsUpdate = true;
-        }
-      });
-      group.add(object);
-    }, undefined, (err) => console.error(`OBJ load failed: ${instance.ASSET}.obj`, err));
-  }, undefined, (err) => console.error(`MTL load failed: ${instance.ASSET}.mtl`, err));
-}
-
 // === PATH — Linie (DD-25 vrstva 3) ============================================
 // 1D křivka jako plochý strip mesh. POINTS interpolovány Catmull-Rom curvou,
 // sample 64 bodů, levá/pravá strana strip podle tangenty (kolmá v XZ rovině).
@@ -2162,9 +2091,7 @@ buildScene(scene);
 // mezi originálem a klonem; emissive nastavujeme jen na klonu.
 //
 // SPRITES skip: 2D billboardy s SpriteMaterial nemají emissive komponentu.
-// VOXEL_MODEL ze MagicaVoxelu má MeshLambertMaterial bez emissive — pro něj
-// fallback: emissive vlastnost dodáme dynamicky (Lambert ji neumí, ale Standard
-// ano). KISS: pokud mat.emissive neexistuje, hover je no-op pro ten material.
+// KISS: pokud mat.emissive neexistuje, hover je no-op pro ten material.
 
 const HOVER_EMISSIVE_HEX = 0x404020;  // jemné žluté světélkování (R=0x40, G=0x40, B=0x20)
 

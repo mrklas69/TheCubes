@@ -316,8 +316,7 @@ export class SPRITES extends CUBES {
     this.SPEAKER = null;
     // SPEAKER_OFFSET_Y = vertikální posun nad pozici `SPEAKER` (instance varianta).
     // Default `0.5` cílí na vrch standardního voxelu 1×1×1 centrovaného v Y=0.
-    // Pro větší COMPOSITES (TREE pixel varianty, VOXEL_MODEL) uživatel nastaví ručně —
-    // např. `dialog.SPEAKER_OFFSET_Y = 1.8` cílí do koruny stromu. Pro
+    // Pro větší COMPOSITES (budoucí potomci) uživatel nastaví ručně. Pro
     // literální `{x,y,z}` SPEAKER nemá význam (cíl je přesně zadaný bod).
     this.SPEAKER_OFFSET_Y = 0.5;
   }
@@ -362,40 +361,6 @@ export class PATH extends CUBES {
     super(id, name, 0, 0, 0, description);
     this.KIND   = kind;
     this.POINTS = points;
-  }
-}
-
-/**
- * VOXEL_MODEL = obecný COMPOSITES, který načte mesh ze souboru `.obj` (s
- * `.mtl` materiálem a `.png` paletou) — typicky export z MagicaVoxelu.
- * Engine asynchronně dotáhne soubor a vyplní `Group` o načtený `Object3D`.
- *
- * Atributy:
- *  - `ASSET` — basename souboru v `./assets/` (např. `"cube-grass"` → `cube-grass.obj`
- *    + `cube-grass.mtl` + `cube-grass.png`).
- *  - `SCALE` — uniformní scale faktor (DD-22 konvence: **0.625**, tj. 1 MV
- *    voxel = 1/16 TC voxelu = 6.25 cm. Velikost objektu řídí MV grid; tunel
- *    48³ MV se vyrenderuje jako 3×3×3 TC).
- *  - `ORIENTATION` (DD-26, zděděno z COMPOSITES) — natočení kolem Y osy ve
- *    stupních [0, 360), default 0. Engine převede na radiány.
- *
- * Engine po načtení **auto-centruje** model v XZ a posune Y tak, aby spodek
- * mesh seděl na `instance.Y` (DD-28 — surface konvence sdílená s pixel-voxel
- * COMPOSITES).
- *
- * Use case: importovat hotové 3D modely z externích nástrojů bez nutnosti
- * ručně kódit COMPOSITES dispatch.
- *
- * Sez. 17 stav: žádná aktivní instance ve scéně (`tunel-grass` a `ramp-grass`
- * nahrazeny TTUNELS / TRRAMPS v sez. 16). Třída i `cube-grass.vox` template
- * v `assets/` zůstávají jako infrastruktura pro budoucí komplexní MV importy
- * (vozidla, postavy, charakteristické landmarky).
- */
-export class VOXEL_MODEL extends COMPOSITES {
-  constructor(id, name, x, y, z, asset, scale = 0.625, description = "") {
-    super(id, name, x, y, z, description);
-    this.ASSET = asset;
-    this.SCALE = scale;
   }
 }
 
@@ -460,33 +425,3 @@ export class TIMER extends OBJECTS {
   }
 }
 
-/**
- * WORLD = nevizuální singleton OBJECTS-derived entita pro globální stav scény
- * (DD-29, sez. 20; rozšířeno DD-31, sez. 21). Žije v modelu, nemá X/Y/Z
- * (= demonstruje DD-01 separation: OBJECTS = cokoli v modelu, CUBES = cokoli
- * s polohou).
- *
- * Atributy:
- *  - `WIND_STRENGTH` (float, default 1.0) — multiplikátor amplitudy `tree_sway`
- *    animátoru. `1.0` = neutrál, `0` = bezvětří, `2` = bouře. Konzument:
- *    `animateTreeSway`. Po cleanup fáze D (DD-30) ztratí konzumenta a migruje
- *    do `IDEAS.md`.
- *  - `TIME_SCALE` (float, default 1.0) — multiplikátor rychlosti `productionTick`
- *    (DD-31). `0` = pauza simulace, `2` = 2× rychleji. Konzument: render loop
- *    `productionTick(dt * world.TIME_SCALE)`.
- *  - `RESOURCES` (objekt `{ resource_id: amount }`, default vše 0) — globální
- *    **agregát** napříč `BUFFER` všech `FACILITY` instancí. Derived (engine
- *    přepočítává každý tick), ne SSoT — autoritativní data žijí v `facility.BUFFER`.
- *    Konzument: HUD top bar (6 čítačů). Klíče jsou všechny ID z `RESOURCES_DEF`.
- *
- * Politika DD-29 (atribut gated by konzumenta) platí dál. Plochá struktura
- * (`WIND_STRENGTH`, ne nested `WIND.strength`). Otevřené nápady (SUN_ANGLE,
- * CLIMATE, SEASON, DAY, WIND_DIRECTION) v `docs/IDEAS.md`.
- */
-export class WORLD extends OBJECTS {
-  constructor(id = "world", name = "World", description = "Globální stav scény (singleton).") {
-    super(id, name, description);
-    this.WIND_STRENGTH = 1.0;
-    this.TIME_SCALE = 1.0;
-  }
-}
