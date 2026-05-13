@@ -99,39 +99,29 @@ export class CCUBES extends BLOCKS {
 }
 
 /**
- * TCUBES = Texture Cubes. Voxel s **per-face texturami** — každá ze 6 stran
- * může mít vlastní obsah. Stejně jako CCUBES je to voxel (pozice snap-to-grid
- * v rendereru, DD-12); liší se vizuálním módem — plocha barva vs. 6 ploch
- * s různou texturou. Viz DD-13.
- *
- * Atributy `TEXTURE_TOP`, `TEXTURE_BOTTOM`, `TEXTURE_NORTH`, `TEXTURE_SOUTH`,
- * `TEXTURE_EAST`, `TEXTURE_WEST` — jeden per světovou stranu.
- *
- * Formát jednotlivé strany (dispatch v enginu podle typu):
- *  - `null` / nezadáno → fallback šachovnice (DD-07). Nevyplněná strana
- *    se zobrazí stejně jako mateřská CUBES.
- *  - `number` 0xRRGGBB → plocha barva celé strany.
- *  - `string` začínající `#` (`"#ff0000"`) → plocha barva z hex řetězce.
- *  - jiný `string` (emoji, text `"🌳"`, `"N"`) → canvas s textem vycentrovaným.
- *  - (pozdější rozšíření: URL na PNG, recept generátoru, …).
+ * TCUBES = Texture Cubes. Voxel s lowpoly vertex-color paletou (DD-41).
+ * Stejně jako CCUBES je to voxel (pozice snap-to-grid v rendereru, DD-12);
+ * liší se vizuálním módem — plocha barva (CCUBES) vs. per-face TOP/BOTTOM/SIDE
+ * paleta řízená přes `BLOCK_COLORS[kind]` v main.js (DD-13, DD-41).
  *
  * Mapování světových stran na osy (Three.js, Y-up, +Z = k divákovi):
  *  TOP = +Y, BOTTOM = −Y, EAST = +X, WEST = −X, SOUTH = +Z, NORTH = −Z.
  *
- * Constructor přijímá objekt `{ TOP, BOTTOM, NORTH, SOUTH, EAST, WEST }`.
- * Chybějící klíče zůstanou `null` → fallback šachovnice. Nullish koalescent
- * `??` vrátí pravý operand jen pro `null`/`undefined` (ne pro 0 nebo ""),
- * což je důležité — číslo 0 (černá 0x000000) je validní barva.
+ * Per-face barvy zapsané přímo do `color` attribute sdílené per-kind
+ * BoxGeometry v `getTcubesKindGeom(kind)` (main.js). Pro neznámý kind
+ * fallback šachovnice (DD-07).
+ *
+ * Historicky (do DD-36 sez. 28) měl TCUBES per-face textury (`TEXTURE_TOP`,
+ * `TEXTURE_BOTTOM`, …) přes `faceMaterialFor` dispatch — pole `material[6]`.
+ * DD-36 atlas pipeline sloučila 6 facelet do 1 CanvasTexture per kind. DD-41
+ * (sez. 34) atlas nahradila vertex colors v geometrii → drop `textures` arg
+ * + TEXTURE_* atribut z modelu (čistě data, žádné textury).
  */
 export class TCUBES extends BLOCKS {
-  constructor(id, name, x, y, z, textures = {}, description = "") {
+  // DD-41 (sez. 34): drop `textures` arg + TEXTURE_* fields. Barvy řídí
+  // `BLOCK_COLORS` v main.js, vizuál přes vertex-color BoxGeometry (`getTcubesKindGeom`).
+  constructor(id, name, x, y, z, description = "") {
     super(id, name, x, y, z, description);
-    this.TEXTURE_TOP    = textures.TOP    ?? null;
-    this.TEXTURE_BOTTOM = textures.BOTTOM ?? null;
-    this.TEXTURE_NORTH  = textures.NORTH  ?? null;
-    this.TEXTURE_SOUTH  = textures.SOUTH  ?? null;
-    this.TEXTURE_EAST   = textures.EAST   ?? null;
-    this.TEXTURE_WEST   = textures.WEST   ?? null;
   }
 }
 
@@ -140,30 +130,24 @@ export class TCUBES extends BLOCKS {
  * v 1C bounding boxu. Geologický blok pro stoupání mezi výškovými úrovněmi
  * (Y=0 → Y=1 přes 1C hranu).
  *
- * 5 faces s per-face nátěry:
- *  - **TEXTURE_SLOPE** — svah (= horní šikmá plocha; obdélník 1×√2).
- *  - **TEXTURE_BOTTOM** — spodek (= podstava 1×1, naproti svahu).
- *  - **TEXTURE_BACK** — zadní vertikální stěna (1×1, ke které svah dosahuje na vrchu).
- *  - **TEXTURE_LEFT** — levý bok (= pravoúhlý trojúhelník na X=−0.5 v default orientaci).
- *  - **TEXTURE_RIGHT** — pravý bok (= pravoúhlý trojúhelník na X=+0.5).
+ * 5 faces (SLOPE = šikmý obdélník 1×√2, BOTTOM = podstava 1×1, BACK = zadní
+ * stěna 1×1 ke které svah dosahuje na vrchu, LEFT/RIGHT = pravoúhlé trojúhelníky
+ * na bočních stěnách). Barvy faces řídí `BLOCK_COLORS[surface]` paleta + map
+ * `RAMP_FACE_PALETTE_KEYS.trramps` v main.js (DD-41): SLOPE = `.TOP`,
+ * BOTTOM = `.BOTTOM`, BACK/LEFT/RIGHT = `.SIDE`. Vertex-color BufferGeometry
+ * sdílena přes `getRampGeom("trramps", surface)`.
  *
  * `ORIENTATION` (DD-26) — stupně ∈ [0, 360). 4 cardinální orientace svahu:
  * 0° = svah klesá k +Z (SOUTH), 90° = k −X (WEST), 180° = k −Z (NORTH),
  * 270° = k +X (EAST). User „+90 po směru hod. ručiček" = ORIENTATION −= 90
  * (modulo 360).
- *
- * Každý face dispatch přes `faceMaterialFor` (DD-14, sdílený s TCUBES) —
- * podporuje `null` (fallback šachovnice), `number` 0xRRGGBB, hex string,
- * `:named-texture` (`:grass-top`, `:dirt`, …), nebo emoji/text.
  */
 export class TRRAMPS extends BLOCKS {
-  constructor(id, name, x, y, z, textures = {}, orientation = 0, description = "") {
+  // DD-41 (sez. 34): drop `textures` arg + TEXTURE_* fields. Barvy řídí
+  // `BLOCK_COLORS` + `RAMP_FACE_PALETTE_KEYS` v main.js, vizuál přes lowpoly
+  // ramp geom (`getRampGeom("trramps", surface)`).
+  constructor(id, name, x, y, z, orientation = 0, description = "") {
     super(id, name, x, y, z, description);
-    this.TEXTURE_SLOPE  = textures.SLOPE  ?? null;
-    this.TEXTURE_BOTTOM = textures.BOTTOM ?? null;
-    this.TEXTURE_BACK   = textures.BACK   ?? null;
-    this.TEXTURE_LEFT   = textures.LEFT   ?? null;
-    this.TEXTURE_RIGHT  = textures.RIGHT  ?? null;
     this.ORIENTATION = orientation;
   }
 }
@@ -175,12 +159,11 @@ export class TRRAMPS extends BLOCKS {
  * Použití: rohové rampy (corner ramps), stoupání ze 3 sousedních směrů na
  * jeden vyvýšený roh.
  *
- * 4 faces s per-face nátěry:
- *  - **TEXTURE_SLOPE** — svah (rovnostranný trojúhelník mezi 3 axiálními
- *    body, hrana délky √2).
- *  - **TEXTURE_BOTTOM** — pravoúhlý trojúhelník na Y=−0.5 (odvěsny délky 1).
- *  - **TEXTURE_BACK** — pravoúhlý trojúhelník na Z=−0.5 (vertikální).
- *  - **TEXTURE_LEFT** — pravoúhlý trojúhelník na X=−0.5 (vertikální).
+ * 4 faces (SLOPE = rovnostranný trojúhelník mezi 3 axiálními body hrana √2,
+ * BOTTOM = pravoúhlý trojúhelník na Y=−0.5, BACK = pravoúhlý trojúhelník
+ * na Z=−0.5 vertikální, LEFT = pravoúhlý trojúhelník na X=−0.5 vertikální).
+ * Barvy faces řídí `BLOCK_COLORS[surface]` + `RAMP_FACE_PALETTE_KEYS.ttramps`
+ * (DD-41): SLOPE = `.TOP`, BOTTOM = `.BOTTOM`, BACK/LEFT = `.SIDE`.
  *
  * Default orientace (`ORIENTATION = 0`): roh `C` v lokálním (-0.5, -0.5, -0.5)
  * (= SW-bottom-NORTH), 3 hrany směřují podél +X, +Y, +Z. SLOPE normála míří
@@ -190,12 +173,9 @@ export class TRRAMPS extends BLOCKS {
  * 4 cardinální orientace (násobky 90°) odpovídají 4 rohům, kde může roh `C` ležet.
  */
 export class TTRAMPS extends BLOCKS {
-  constructor(id, name, x, y, z, textures = {}, orientation = 0, description = "") {
+  // DD-41 (sez. 34): drop `textures` arg + TEXTURE_* fields. Viz TRRAMPS — same.
+  constructor(id, name, x, y, z, orientation = 0, description = "") {
     super(id, name, x, y, z, description);
-    this.TEXTURE_SLOPE  = textures.SLOPE  ?? null;
-    this.TEXTURE_BOTTOM = textures.BOTTOM ?? null;
-    this.TEXTURE_BACK   = textures.BACK   ?? null;
-    this.TEXTURE_LEFT   = textures.LEFT   ?? null;
     this.ORIENTATION = orientation;
   }
 }
@@ -208,17 +188,14 @@ export class TTRAMPS extends BLOCKS {
  * **3-cell convex peak** stepu, kde A má 2 sousední direct vyšší + diagonální
  * peak (corner roh) vyšší. Jeden TDRAMP zakryje obě hrany stepu + roh peaku.
  *
- * 7 faces se 5 material groups:
- *  - **TEXTURE_SLOPE** — diagonální šikmá plocha (trojúhelník) z low_bot k
- *    hraně opačného rohu (NE_top–SW_top); walkable povrch.
- *  - **TEXTURE_TOP** — plochý horní trojúhelník na Y=+0.5 (= „horní podstava").
- *    Sdílí lomenou hranu s SLOPE plochou („lomená rampa tvořená dvěma
- *    trojúhelníky" — uživatel sez. 26).
- *  - **TEXTURE_BOTTOM** — čtvercová podstava na Y=−0.5.
- *  - **TEXTURE_WALL_FULL** — 2 plné vertikální stěny (oba quad-y) na stěnách
- *    obsahujících peak corner (= opačně k low corner).
- *  - **TEXTURE_WALL_TRI** — 2 vertikální stěny tvaru pravoúhlého trojúhelníku
- *    na stěnách obsahujících low corner (chybí horní hrana k NW_top).
+ * 7 faces v 5 color group (SLOPE = diagonální šikmá plocha z low_bot
+ * k hraně opačného rohu NE_top–SW_top; TOP = plochý horní trojúhelník na
+ * Y=+0.5 sdílí lomenou hranu s SLOPE — „lomená rampa tvořená dvěma
+ * trojúhelníky" uživatel sez. 26; BOTTOM = čtvercová podstava na Y=−0.5;
+ * WALL_FULL = 2 plné vertikální stěny obsahující peak corner; WALL_TRI =
+ * 2 vertikální stěny tvaru pravoúhlého trojúhelníku obsahující low corner).
+ * Barvy faces řídí `BLOCK_COLORS[surface]` + `RAMP_FACE_PALETTE_KEYS.tdramp`
+ * (DD-41): SLOPE+TOP = `.TOP`, BOTTOM = `.BOTTOM`, WALL_FULL/WALL_TRI = `.SIDE`.
  *
  * Default orientace (`ORIENTATION = 0`): low corner v lokálním (-0.5, ?, -0.5)
  * (= NW-bot v project konvenci kde -Z=N). Peak corner k opačnému rohu
@@ -231,13 +208,9 @@ export class TTRAMPS extends BLOCKS {
  *  - 270 → low corner NE, peak SW
  */
 export class TDRAMP extends BLOCKS {
-  constructor(id, name, x, y, z, textures = {}, orientation = 0, description = "") {
+  // DD-41 (sez. 34): drop `textures` arg + TEXTURE_* fields. Viz TRRAMPS — same.
+  constructor(id, name, x, y, z, orientation = 0, description = "") {
     super(id, name, x, y, z, description);
-    this.TEXTURE_SLOPE     = textures.SLOPE     ?? null;
-    this.TEXTURE_TOP       = textures.TOP       ?? null;
-    this.TEXTURE_BOTTOM    = textures.BOTTOM    ?? null;
-    this.TEXTURE_WALL_FULL = textures.WALL_FULL ?? null;
-    this.TEXTURE_WALL_TRI  = textures.WALL_TRI  ?? null;
     this.ORIENTATION = orientation;
   }
 }

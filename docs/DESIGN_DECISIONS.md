@@ -918,3 +918,54 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 - DD-39 (sez. 33) — atmospheric noc maxed (AMBIENT_NIGHT 0.005). Motivuje LAMP jako vizuální payoff v noci.
 - Sez. 33 — first iteration PointLight, user feedback → SpotLight upgrade. Kontext v `docs/diary/2026-05-13.md` (B) Bod 1 a (G) SpotLight upgrade.
 
+## DD-41 — Lowpoly vertex-color pipeline (supersede DD-36 atlas, sez. 34)
+
+**Stav:** Sez. 34. Roadmap kapitoly Terrain generator G0 "Totální předělávka zobrazení bloků a ramp". Inspirace `jasonkneen/tiny-world-builder` (Three.js r128, `MeshLambertMaterial`, sdílený material registry, tilt-shift). %THINK ze sez. 34 zvážil 3 alternativy (A vertex colors + 1 global mat / B per-kind solid material / C atlas s 1×1 solid color textures), A jednoznačně vyhrál (KISS + řeší tile pattern dluh + připravuje G3 climate-driven barvy).
+
+**Rozhodnutí:**
+
+1. **`BLOCK_COLORS` paleta.** Per-kind 3-key mapa (TOP / BOTTOM / SIDE) v `src/main.js`. Severská konvence (sez. 17) zachována: grass má jen vrch zelený, ostatní homogenní s mírně tmavšími sides/bottom (mikroshade rozdíl mezi sousedy). 4 kindy (grass/dirt/stone/sand). Hodnoty jako data, ne textury → snadno ladit za běhu (bez CanvasTexture rebuildu).
+
+2. **Sdílený `_lowpolyMat`.** Jeden `THREE.MeshLambertMaterial({ vertexColors: true })` napříč **všemi** terrain batchi (4 TCUBES + 9 ramp = 13 batch klíčů). Lambert = diffuse-only, bez PBR specular highlight (lepší fit pro neotexturované voxely než Standard). `flatShading: false` (default) — záměrně NE flat shading, viz pozn. 5 níže.
+
+3. **`getTcubesKindGeom(kind)` — per-kind BoxGeometry s vertex colors.** Cache `_lowpolyBoxGeomCache: Map<kind, BoxGeometry>`. BoxGeometry má 24 vertices (4 per face × 6 faces), pořadí faces +X/−X/+Y/−Y/+Z/−Z (Three.js default). Per-face všechny 4 vertices dostanou stejnou barvu (solid face). Vertex colors v linear space (renderer výstup SRGB → `convertSRGBToLinear()` per kanál).
+
+4. **`getRampGeom(type, surface)` — per (typ, surface) ramp geom s vertex colors.** Klonuje atlas IIFE (TRRAMP/TTRAMP/TDRAMP_GEOM_CACHE) jako raw geom source, stripuje UV attribute, inject color attribute z `BLOCK_COLORS[surface]` + `RAMP_FACE_PALETTE_KEYS[type]` mapy (TOP/BOTTOM/SIDE per face index). 3 typy × 3 surfaces = max 9 cached geomů. TDRAMP SLOPE+TOP sdílí `.TOP` (lomený povrch).
+
+5. **`flatShading: false` (pozn. ke G0 user fix).** Atlas BoxGeometry i ramp BufferGeometries už mají per-face normály v `geometry.attributes.normal` (vertices nesdílené přes faces) → flat look vzniká z geometrie samotné. `flatShading: true` na materiálu nutí shader spočítat normálu z `dFdx/dFdy` derivatives v fragment shaderu — u **InstancedMesh** na hraně mezi 2 sousedními instancemi normála drifuje (cross-instance precision artifact), vznikají tenké šedé/černé seam linky mezi sousedními voxely. Při nižší intenzitě světla (DD-39 night) kontrast roste, artifact je výrazněji vidět. Drop `flatShading: true` → shader používá pre-baked normály z geom, bez derivative computation, bez seam.
+
+6. **Cleanup — smazáno:** `BLOCK_TEXTURES`, `ATLAS_TILE_PX`, `ATLAS_FACE_KEYS`, `_sharedAtlasBoxGeom`, `getSharedAtlasBoxGeom`, `_tcubesAtlasMatCache`, `getTcubesKindMaterial`, `RAMP_EDGE_TEXTURES`, `RAMP_CORNER_TEXTURES`, `RAMP_DIAGONAL_TEXTURES`, `RAMP_SURFACE_FROM_KIND`, `RAMP_ATLAS_SPECS`, `_rampsAtlasMatCache`, `getRampAtlasMaterial`, `createTRRampFor`, `createTTRampFor`, `createTDRampFor`, `createMeshFor` dispatch case pro `TRRAMPS`/`TTRAMPS`/`TDRAMP`. **`createTCubeFor` slow-path** (per-face material array) **smazán** — TCUBES po G0 jen lowpoly fast-path nebo šachovnice fallback (DD-07 unknown kind). `TEXTURE_*` fields + `textures` constructor arg smazány z TCUBES/TRRAMPS/TTRAMPS/TDRAMP v `src/model.js` (TTUNELS si je zachovává — mimo G0 scope).
+
+7. **DD-37 InstancedMesh batche zachovány.** Batch klíč `tcubes:<kind>` / `<ramp_type>:<surface>` beze změny, jen `mat` je teď shared singleton místo per-batch atlas mat. Hover overbright přes `instanceColor` (DD-37 trik s overbright tint > 1.0) funguje **multiplikativně přes vertex colors** v shaderu.
+
+**Důsledek:**
+
+| metrika | DD-36 atlas (sez. 33) | DD-41 lowpoly (sez. 34) | změna |
+|---|---|---|---|
+| 100×100 FPS | 104 | 101 | parita (statisticky stejné) |
+| draw calls | ~13 | ~13 | identické (DD-37 batche stable) |
+| materials | 4 TCUBES + 9 ramp atlas = 13 | 1 sdílený | −12 |
+| geometries | 1 BoxGeom shared + 3 ramp typy = 4 | 4 TCUBES BoxGeoms + 9 ramp BufferGeoms = 13 | +9 (cena za vertex colors data v geomu) |
+| LOC | atlas builders + texture tabulky ~ 250 ř. | BLOCK_COLORS + lowpoly funkce ~ 130 ř. | −120 ř. |
+| visual | pixel-art tile pattern uvnitř kindu | solid color flat shading, žádný tile | DD-36 known limitation resolved |
+
+**Důvod (proč DD a ne jen refactor):**
+
+- Změna architektonického kontraktu: terrain TCUBES + rampy už **nedrží texture data** (žádné `BLOCK_TEXTURES` ani `RAMP_*_TEXTURES`), místo toho mají **per-face barvy v geomu**. Constructor signature 4 BLOCKS tříd změněn (drop `textures` arg).
+- Conceptual Integrity (CLAUDE.md): když se změní koncept (terrain rendering pipeline), aktualizuj všechny vrstvy — model.js, main.js, dokumentace. DD je vrstva.
+- Připravuje G3 (climate-driven biome barvy): barvy v `BLOCK_COLORS` mapě = data, drivable per `world.CLIMATE` (refactor v G2/G3 výhodný).
+- Eliminuje DD-36 známá omezení: tile pattern uvnitř kindu (F5 sez. 32 jen částečný fix), atlas/slow-path texture-source divergence (smazány obě cesty).
+
+**Známá omezení (kandidáti future refactor):**
+
+- Atlas IIFE `TRRAMP/TTRAMP/TDRAMP_GEOM_CACHE` zachovány jako raw geom source pro `getRampGeom` clone (drop UV + add color). IIFE pořád builduje `uv` attribute + `remapU` UV transformace — zbytečný compute (~50 ř.), KISS keep. Cleanup nice-to-have: strip UV at source + rename IIFE na `_RAMP_RAW_GEOM_*`. Sub-prah.
+- TTUNELS si zachovává starou atlas pipeline (per-face `TEXTURE_*` + `faceMaterialFor` array) — TTUNELS instance dnes nikdo nespawne. Cleanup follow-up: bud migrate na vertex colors, nebo úplně smazat (dead code). Sub-prah.
+
+**Reference:**
+
+- DD-36 (sez. 28) — TCUBES atlas pipeline. **Supersedes** by DD-41 (atlas → lowpoly).
+- DD-37 (sez. 31) — InstancedMesh batche. Zachovány, batch klíč beze změny.
+- DD-25 (sez. 16) — 4-vrstvá taxonomie. Hover pattern `instanceColor` overbright (DD-37 ext.) funguje s vertex colors multiplikativně.
+- DD-07 (sez. 3) — CCUBES default šachovnice. Po DD-41 fallback pro unknown TCUBES kind (jinak lowpoly geom).
+- Sez. 34 user feedback `tiny-world-builder` GitHub inspirace + flat-shading seam fix. Kontext v `docs/diary/2026-05-13.md` Sez. 34 (B) %THINK G0 + (F) seam fix.
+
