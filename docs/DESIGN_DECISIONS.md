@@ -1302,3 +1302,98 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 - Sez. 38 user calibration: 1/10 málo, 3/10 přijatelné, period 3s → 9s pro klidný swell. Hover dirt feedback: zesvětlit dirt místo posílit oranžovou (= multiplikativní hover problém pro tmavá albeda).
 - Sez. 38 audit (`%AUDIT:CODE`): K1/K2 docs drift fix, D1 BLOCKS+COMPOSITES drop, D2 TTUNELS drop (~287 ř.), D3 terrain.js komentář, D4 GLOSSARY engine-internal maps. Kontext v `docs/diary/2026-05-13.md` Sezení 38.
 
+## DD-49 — Asset content pipeline pro krajinné COMPOSITES (procedurální builders, sez. 39)
+
+**Stav:** Sez. 39 user request: *„Je na čase dodat COMPOSITES stromy, kmeny, pařezy, kameny, trávu, keře."* Po DD-32 wipe sez. 24 byla decoration vrstva COMPOSITES (TREE/GRASS_TUFT/ROCK_PIXEL/LOG sez. 15-17 pixel-voxel buildery) smazána; DD-40 sez. 33 vrátil pouze LAMP (urban prop, ne krajinný). Inspirace: Quaternius Ultimate Nature Pack (`.blend` zdroj, hand-modeled faceted lowpoly, ~100 modelů). DD-49 je **kotva před implementací** (analogie DD-32 Fáze 0), žádný kód v sez. 39.
+
+**Aréna:** AI workflow odložen (sez. 39 user A3=c → Claude přímo). arena.ai zvážíme až pro variant generation MVP+.
+
+**Rozhodnutí:**
+
+1. **1 generická třída `DECOR`** (potomek COMPOSITES). Atributy:
+   - `KIND` (string, default `null`, lookup do `DECOR_BUILDERS`).
+   - `SEED` (number, default `0`, deterministic varianty per instance).
+   - `SCALE` (number, default `1.0`, opcionální zoom).
+   KISS volba (A5=a) — místo 5 separátních tříd (`TREE`/`BUSH`/`ROCK`/`GRASS_TUFT`/`LOG`) jediný shell s lookup tabulkou builderů (per DD-41 pattern: paleta řízena z main.js, ne z modelu).
+
+2. **Procedurální JS buildery, faceted lowpoly estetika** (A1=a). Signature:
+   ```
+   function build<Kind>(group: THREE.Group, opts: { seed: number, scale: number }): void
+   ```
+   Primitives: `BoxGeometry` / `CylinderGeometry` / `ConeGeometry` / `IcosahedronGeometry(detail=0)` / `SphereGeometry(low-segs)`. Materiál: sdílený `MeshLambertMaterial({ flatShading: true })` per color. Žádné textury, žádné voxely (= DD-23 pixel-voxel pivot **neplatí pro decoration vrstvu** — voxel identita je vrstva 1 BLOCKS, decoration vrstva 2 COMPOSITES jde faceted).
+
+3. **First-pass 5 KIND-y** (A2=a + A9=ok):
+   - **`spruce`** — jehličnatý strom: `CylinderGeometry` kmen + 3-5 `ConeGeometry` jehlicovitých korunních pater (top tapering).
+   - **`oak`** — listnatý strom: `CylinderGeometry` kmen + 2-4 `IcosahedronGeometry(0)` listových clusterů (kulatá koruna).
+   - **`bush`** — keř: 3-5 `IcosahedronGeometry(0)` / `SphereGeometry(low)` clusterů nízko nad zemí.
+   - **`rock`** — kámen: 1-3 `IcosahedronGeometry(0)` chunks s random scale/rotation.
+   - **`grass_tuft`** — trsová tráva: 3-5 tenkých `ConeGeometry` nebo `BoxGeometry` shards rozkládajících se z bodu.
+   Pařezy + kmeny + sezónní varianty + cacti v second pass (sub-prah).
+
+4. **Shared toolkit** v novém `src/composites/toolkit.js` (A7=b):
+   - **Material cache** — `lowpolyMat(color)` → per-color singleton `Map<number, MeshLambertMaterial>`. Sní 1 materiál per barva napříč všemi instances.
+   - **Geometry cache** — `getGeomCache(kind, partKey)` → per-(KIND × part) singleton `BoxGeometry`/`ConeGeometry`/`IcosahedronGeometry`/etc. Sní GPU memory.
+   - **`mulberry32(seed)`** — DRY z `terrain.js` (kandidát: nový `src/random.js` re-export pro oba konzumenty).
+   - **Paleta konstanty (6 spectra):** `BARK_BROWN` (0x6b4226), `LEAF_GREEN` (0x4a7a32), `LEAF_AUTUMN` (0xc77a30), `ROCK_GRAY` (0x707878), `GRASS_GREEN` (0x5fa040), `BUSH_GREEN` (0x386830).
+   - **`DECOR_BUILDERS` lookup** — `{ spruce: buildSpruce, oak: buildOak, bush: buildBush, rock: buildRock, grass_tuft: buildGrassTuft }`.
+
+5. **Biome-aware density driver `DECOR_DENSITY`** (A6=b) — per (LATITUDE × HUMIDITY) → `{ kind: weight, ... }` mapa. Příklady (kalibrace v implementaci):
+   - `tropical.wet` → `oak: 0.06, bush: 0.08, grass_tuft: 0.04` (subtotal ~18 %; palm jako future KIND).
+   - `temperate.mid` → `spruce: 0.05, oak: 0.04, bush: 0.03, rock: 0.02, grass_tuft: 0.05` (subtotal ~19 %, mixed).
+   - `temperate.wet` → `oak: 0.06, bush: 0.05, grass_tuft: 0.06, rock: 0.01` (~18 %, vlhký smíšený les).
+   - `polar.*` → `rock: 0.02, grass_tuft: 0.01` (~3 %, sparse).
+   - `subtropical.dry` → `rock: 0.04, grass_tuft: 0.02, bush: 0.02` (~8 %, kaktus jako future KIND).
+   Per-cell rozhodnutí: `rng() < sum_density → vybrat KIND vážen weight` (izomorfie s DD-47 sort+rank). Spawn jen na **top voxel grass nebo sand** (živý povrch); `stone` → jen rock; `_snow` varianty → density × 0.5 (zima méně vegetace). Voda nikdy.
+
+6. **Auto-scatter v `generateTerrain` Krok 7** (po water flood-fill DD-47):
+   ```
+   decorate(blocks, biome, latitude, humidity, seed) → decorations[]
+   ```
+   Iteruje top voxely, per cell rozhodne dle `DECOR_DENSITY[latitude][humidity]`. Návratový typ `generateTerrain` rozšířen na `{ blocks, ramps, water, decorations }`. `decorations[]` = `[{ kind, x, y, z, seed }, ...]`. `spawnTerrain` v `main.js` na to navazuje: `decorations.forEach(d => scene.add(createMeshFor(new DECOR(...))))`.
+
+7. **Performance baseline** (A7=b ramifikace):
+   - Per-instance vlastní `THREE.Group` (varianty pose/scale per seed = ne InstancedMesh-friendly).
+   - Sdílené geometry per (KIND, part) cache v toolkit (= MVP klíčový perf knob).
+   - Materials = per-color singleton.
+   - Pro 100×100 × ~10 % density → ~1k DECOR instances × ~5 mesh children = 5k Object3D. Three.js scenetree overhead OK do ~10k. Mez test: 30×30 baseline + 100×100 stress test.
+   - Pokud FPS pokles, sub-prah na mesh merge per KIND (= 1 BufferGeometry per KIND s `mergeBufferGeometries`, **ztrácí hover granularitu na úroveň KIND-u**, ne per-instance).
+
+8. **Dispatch v `createMeshFor`:**
+   ```
+   if (instance instanceof DECOR) return createDecor(instance);
+   // createDecor → DECOR_BUILDERS[KIND](group, { seed, scale }) → return group
+   ```
+   `userData.{terrain: true, instanceId, hoverable}` flagy (cleanup v `regenerateScene`, hover detection). `castShadow = true`, `receiveShadow = false`. Per-color material singleton (sdílený s toolkit cache).
+
+9. **Y konvence DD-28** (= surface mesh-bottom pro non-BLOCKS). Builder produkuje `Group` s **origin v y=0**, mesh dílů od y=0 nahoru. Spawn pozice: `x = cell.x + 0.5, y = cell.y_top + 1, z = cell.z + 0.5` (= mesh bottom na top face cellu).
+
+**Důvod:**
+
+- **Strukturní obnova vrstvy modelu.** Po DD-32 wipe COMPOSITES decoration vrstva má jen LAMP. Krajinné kompozity jsou důležitější než kosmetické sub-prahy (HSL hue shift / water bbox / SEASON). Per README ř. 11 *„Náhradní obyvatel scény"* otevřený TODO bod.
+- **Procedurální místo asset import.** AI mesh generation 2026 (Hunyuan/Meshy/Tripo) produkuje smooth subdivision meshes, ne faceted Quaternius styl. Procedurální JS = exact stylistic control + seed varianty zdarma + konzistence s DD-21 *„parametrizované entity → procedurální COMPOSITES"* politikou.
+- **Generická `DECOR` třída** = SLAP-konzistentní s DD-41 (1 nový potomek + lookup tabulka, ne 5 nových tříd). Plus user-facing infotip uvidí `KIND = "spruce"` místo třídního dispatch detailu.
+- **Biome-aware density driver** = 3. osa climate-driven systému (po DD-44 surface mix + DD-47 snow/water state). Vrátí emergentní vrstvu krajiny per `WORLD.LATITUDE × HUMIDITY` (per CLAUDE.md `%THINK` 5: emergentní z jednoduchých pravidel).
+- **Shared toolkit** = DRY (1 paleta, 1 geom cache, 1 RNG napříč 5+ buildery).
+- **Faceted lowpoly** = vizuálně konzistentní s LAMP (DD-40, sez. 33) a budoucími urban props. Pixel-voxel sez. 15-17 buildery zaznamenány v git historii (`b6e3...` sez. 17 commit) jako reference, pokud bychom někdy chtěli pixel-voxel decoration varianty.
+
+**Známá omezení:**
+
+- **Performance neověřeno.** 100×100 × ~10 % density = ~1k Groups × ~5 dílů = 5k Object3D. Mez Three.js scenetree pro 60 FPS ~10k. Sub-prah test až po implementaci.
+- **Aesthetic quality risk** — seed-driven buildery mohou vypadat algoritmicky (proporce, větvení). Mitigace: explicit pravidla v builderu (jehlice top-tapering, listy klastrované) + ruční tuning konstant po user feedback.
+- **First pass 5 KIND.** Pařezy / kmeny / cacti / sezónní varianty / `_snow` post-fix varianty = sub-prah DD-49 follow-up.
+- **Bez InstancedMesh** = scenetree overhead bottleneck pro 200×200+ scény (zatím out of scope).
+- **`tropical.wet` palm KIND chybí v MVP.** Náhrada `oak` v MVP (= ne stylové, sub-prah follow-up).
+- **`subtropical.dry` cactus KIND chybí.** Náhrada `rock`-dominantní MVP (sub-prah).
+
+**Reference:**
+
+- DD-21 (sez. 14) — hybrid politika: parametrizované entity → procedurální COMPOSITES, statická → VOXEL_MODEL. DD-49 obsazuje parametrickou polovinu (VOXEL_MODEL infrastruktura smazána sez. 29 audit).
+- DD-32 (sez. 24) — wipe COMPOSITES decoration vrstvu (TREE/GRASS_TUFT/ROCK_PIXEL/LOG). DD-49 vrací vrstvu v lowpoly faceted estetice (ne pixel-voxel).
+- DD-25 (sez. 16) — 4-vrstvá taxonomie. DD-49 obnovuje vrstvu 2 (COMPOSITES decoration), vedle vrstvy 1 (BLOCKS terrain), 3 (LINES PATH), 4 (LIQUID prototype DD-47).
+- DD-40 (sez. 33) — LAMP první COMPOSITES potomek po DD-32. DD-49 sleduje builder pattern (procedural JS, pure THREE.Group, flatShading).
+- DD-41 (sez. 34) — lookup-table paleta v main.js (`BLOCK_COLORS`). DD-49 paleta = per-color material singleton (similar pattern, jiný target — vertex colors vs. material color).
+- DD-42 (sez. 35) + DD-44 (sez. 36) + DD-47 (sez. 38) — climate-driven driver pattern. DD-49 přidá `DECOR_DENSITY[latitude][humidity]` = třetí osa.
+- README *„Náhradní obyvatel scény"* (M8+ TODO) — DD-49 řeší.
+- Quaternius Ultimate Nature Pack (`.blend` zdroj, hand-modeled faceted lowpoly) — vizuální reference, ne přímý asset import.
+- Sez. 39 user volby: A1=a (faceted lowpoly) / A2=a (5 KIND minimum) / A3=c (Claude přímo, ne aréna) / A4=jen DD kotva / A5=a (generická DECOR) / A6=b (biome-aware) / A7=b (shared geom cache) / A8=a (DD-49 kotva před impl) / A9=ok (spruce/oak/bush/rock/grass_tuft). Kontext v `docs/diary/2026-05-13.md` Sezení 39.
+

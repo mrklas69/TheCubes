@@ -8,7 +8,7 @@
 
 - [ ] **`.glb`/glTF asset import pipeline** — `GLTFLoader` + AssetCache + shadow setup pro načítané meshe. Otevírá: (a) hezčí lampu z user-poskytnutého PBR Street Props balíčku, (b) Stickman integraci (varianta A níže), (c) dekorativní obyvatele scény. Vyžaduje nový DD (asset pipeline = strukturální), sez. 29 F3 smazala stará MagicaVoxel pipeline (OBJ/MTL Loader) — pattern obnovit, ale na glTF stack.
 - [ ] **Integrace externího Stickmana** — TBD způsob: `[A]` `.glb` import (závislé na asset pipeline výš), `[B]` sibling ES module `../Stickman/src/...`, `[C]` jiné. Otevře novou DD při rozhodnutí.
-- [ ] **Náhradní obyvatel scény** — bez humanoidů je scéna vizuálně chudší. Možnosti: rozšířit COMPOSITES (BIRD na obloze, BUSH/FLOWER na louce), nebo nechat dokud není integrace Stickmana.
+- [~] **Náhradní obyvatel scény** — *plánováno DD-49 (sez. 39 kotva, bez impl)*. Procedurální COMPOSITES landscape decoration (stromy/keře/kameny/tráva) přes generickou `DECOR` třídu + biome-aware density driver. Viz DD-49 + sekce „Krajinné COMPOSITES (DD-49)" níže.
 
 ## DAY-cycle (WORLD DD-38 follow-up)
 
@@ -42,9 +42,61 @@
 
 ## M8+ otevřené (parkováno)
 
-- [ ] **Biome populate** *(IDEAS — částečně překryto biome map v `generateTerrain`, terra-specific dekorace zůstává)*.
+- [ ] **Biome populate** *(IDEAS — částečně překryto biome map v `generateTerrain`, terra-specific dekorace nyní řeší DD-49)*.
 - [ ] **BUILDING třída** *(IDEAS — budoucí dekorativní/factory entity nad generovaným terénem)*.
 - [ ] **TRACK třída** *(IDEAS — sourozenec PATH, vlaky odloženy)*.
+
+## Krajinné COMPOSITES (DD-49)
+
+DD-49 kotvící (sez. 39, bez impl). Implementační fáze pro budoucí sezení:
+
+### Fáze 1 — toolkit (`src/composites/toolkit.js`)
+
+- [ ] **`src/composites/` adresář** + `toolkit.js` modul (nový).
+- [ ] **`lowpolyMat(color)`** per-color singleton cache (`Map<number, MeshLambertMaterial>` s `flatShading: true`).
+- [ ] **`getGeomCache(kind, partKey)`** per-(KIND × part) singleton geometry cache. Volá factory dle partKey (`trunk` → CylinderGeometry, `leafCluster` → IcosahedronGeometry(0), atd.).
+- [ ] **`mulberry32(seed)`** — buď re-export z `terrain.js`, nebo nový `src/random.js` shared.
+- [ ] **Paleta konstanty** — 6 spectra: `BARK_BROWN`, `LEAF_GREEN`, `LEAF_AUTUMN`, `ROCK_GRAY`, `GRASS_GREEN`, `BUSH_GREEN`.
+
+### Fáze 2 — 5 buildery
+
+- [ ] **`buildSpruce(group, opts)`** — CylinderGeometry kmen + 3-5 ConeGeometry korunních pater (top tapering).
+- [ ] **`buildOak(group, opts)`** — CylinderGeometry kmen + 2-4 IcosahedronGeometry(0) listových clusterů.
+- [ ] **`buildBush(group, opts)`** — 3-5 IcosahedronGeometry(0)/SphereGeometry low cluster nízko.
+- [ ] **`buildRock(group, opts)`** — 1-3 IcosahedronGeometry(0) chunks s random scale/rotation.
+- [ ] **`buildGrassTuft(group, opts)`** — 3-5 tenkých ConeGeometry/BoxGeometry shards rozkládajících se z bodu.
+- [ ] **`DECOR_BUILDERS` lookup** export.
+
+### Fáze 3 — model + dispatch
+
+- [ ] **`DECOR extends COMPOSITES`** v `model.js`. Atributy: `KIND`, `SEED`, `SCALE`. Default `KIND = null`, `SEED = 0`, `SCALE = 1.0`.
+- [ ] **`createDecor(instance)`** v `main.js` — volá `DECOR_BUILDERS[instance.KIND]` s `{ seed: instance.SEED, scale: instance.SCALE }`. Apply `userData.{terrain: true, instanceId, hoverable}`, `castShadow=true`, `receiveShadow=false`.
+- [ ] **Dispatch v `createMeshFor`** — `if (instance instanceof DECOR) return createDecor(instance)`.
+
+### Fáze 4 — biome-aware density + scatter
+
+- [ ] **`DECOR_DENSITY[latitude][humidity]`** lookup v `terrain.js`. Per (LATITUDE × HUMIDITY) → `{ kind: weight, ... }`. Viz DD-49 rozhodnutí 5 pro kalibraci.
+- [ ] **`decorate(blocks, biome, latitude, humidity, seed)`** funkce → `decorations[]` = `[{ kind, x, y, z, seed }, ...]`. Iteruje top voxely, per cell `rng() < sum(weights)` rozhodne spawn. Vážený výběr KIND-u. `_snow` cells × 0.5 density. Voda / stone (kromě rock) skip.
+- [ ] **`generateTerrain` Krok 7** — volá `decorate`, vrací `{ blocks, water, ramps, decorations }`.
+- [ ] **`spawnTerrain` v `main.js`** — iteruje `decorations[]`, `scene.add(createMeshFor(new DECOR(...)))`.
+
+### Fáze 5 — test + tweak
+
+- [ ] **Smoke test 30×30** — všech 12 biomů (LATITUDE × HUMIDITY), screenshot porovnání density / variant rozumný.
+- [ ] **Stress test 100×100** — FPS / draw calls / scenetree size. Pokud pokles, sub-prah mesh merge per KIND.
+- [ ] **Hover infotip** — `DECOR` instance s `KIND="spruce"`, `SEED=…` viditelný v infotipu (generický přes Object.entries OK).
+
+### Fáze 6 — follow-up sub-prah (after MVP)
+
+- [ ] **Pařezy + kmeny** — `stump`, `log`. Nízké válce / hranol s anuli.
+- [ ] **`palm` KIND** — `tropical.wet` palmy (CylinderGeom kmen + 5-7 long ConeGeom listy z apex).
+- [ ] **`cactus` KIND** — `subtropical.dry` (CylinderGeom svislé sloupce, 1-3 paže).
+- [ ] **`flower` KIND** — `temperate.wet` louka kvítky (small SphereGeom + thin stem).
+- [ ] **Sezónní varianty** — `_autumn` postfix (LEAF_AUTUMN paleta), `_dead` postfix (no leaves, dark bark).
+- [ ] **`_snow` post-fix DECOR varianty** — sníh na korunách (white IcosahedronGeometry cap).
+- [ ] **Density UI control** — slider v `#terrainctrl` „Decoration density" (multiplikátor 0..2× nad DECOR_DENSITY).
+- [ ] **InstancedMesh refactor pro DECOR** — pokud Fáze 5 perf test selže (= scenetree overhead pro >5k Object3D).
+
 
 ## Audit cadence
 
