@@ -151,13 +151,41 @@ export function generateTerrain({ size, relief, surfaces, seed = 42 }) {
   // podílu mezi relief 4 (0%) a relief 8 (100%):
   //   - relief 0-4 (Flat..Hilly):           pure fBm = organické kulaté kopce
   //   - relief 5 (Uneven):                  25% ridge, 75% fBm = mírná hřebenovitost
-  //   - relief 6 (Rugged):                  50% blend = výrazné hřebeny
-  //   - relief 7-8 (Craggy/Mountainous):    75-100% ridge = ostré horské hřebeny
+  //   - relief 6+ (Rugged+):                přepnuto na DD-46 bimodální režim
+  //
+  // === DD-46 (sez. 37) — smoothstep bimodální heightmap (G5) ===
+  // Po DD-45 user feedback (sez. 37): "lepší, ale ještě posílit hřebeny+údolí".
+  // Diagnóza: ridge³ blend je single-peak distribuce (right-skew), ne bimodal.
+  // User wish "hřebeny + údolí" je definičně bimodální = dvě hladiny (peaks,
+  // valleys) s plynulým přechodem.
+  //
+  // Algoritmus pro **relief ≥ 6**:
+  //   t = smoothstep(SMOOTHSTEP_LO, SMOOTHSTEP_HI, fbmVal)  // [0,1]
+  //   blended = lerp(VALLEY_AMP, PEAK_AMP, t)              // konkrétní voxel
+  //   h = round(blended)
+  //
+  // Smoothstep `3x² - 2x³` na range (0.4, 0.6) → 60 % cells skončí v plné
+  // extremitě (t=0 nebo t=1), 40 % v přechodu. Bimodální distribuce.
+  //
+  // VALLEY_AMP=−1 (jeden voxel pod sea level) → reálná depression, voda se
+  // při wet biome nalije do údolí (= max kontrast hřebeny vs. údolí).
+  // PEAK_AMP = `amplitude` tabulka (RELIEF_AMPLITUDE[idx]) → peaks dosáhnou
+  // plné maxim. výšky pro daný relief.
+  //
+  // Pro relief 0-5 zůstává DD-45 ridge³ blend beze změny (rolling/hilly look).
+  // Hard switch při r=6 (= jasná hranice mezi "rolling" a "horský" režimem).
   const FBM_OCTAVES = 3;
   const FBM_LACUNARITY = 2.0;
   const FBM_PERSISTENCE = 0.5;
   const FBM_TOTAL_AMP = 1 + 0.5 + 0.25;  // = 1.75 = sum persistence^i pro i=0..2
   const ridgeWeight = Math.max(0, (reliefClamped - 4) / 4);
+
+  // DD-46 konstanty bimodálního režimu.
+  const BIMODAL_RELIEF_THRESHOLD = 6;
+  const VALLEY_AMP = -1;
+  const SMOOTHSTEP_LO = 0.4;
+  const SMOOTHSTEP_HI = 0.6;
+  const useBimodal = reliefClamped >= BIMODAL_RELIEF_THRESHOLD;
 
   // fBm sample. `noiseFn` = volání `makeValueNoise(...)` instance. Cena O(octaves)
   // = 3 noise lookupy per cell. Pro 50×50 = 2500 cells × 3 = 7500 noise lookupů
@@ -189,6 +217,14 @@ export function generateTerrain({ size, relief, surfaces, seed = 42 }) {
     return r * r * r;
   }
 
+  // DD-46 smoothstep: `3x² - 2x³` mapuje vstup z range (lo, hi) plynule na
+  // [0, 1] s C¹-spojitými okraji (derivace = 0 na 0 i 1). Mimo range klampuje.
+  // Stejný idiom jako `makeValueNoise` bilineární interpolace výš (DRY).
+  function smoothstep(lo, hi, v) {
+    const t = Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+    return t * t * (3 - 2 * t);
+  }
+
   // === Krok 1: heightmap + biome noise ===
   // Heightmap noise seed +0, biome noise seed +1 — nezávislé samply.
   // Biome má polovinu frequency = větší klastry biomů (regionální podání).
@@ -205,12 +241,20 @@ export function generateTerrain({ size, relief, surfaces, seed = 42 }) {
     for (let dx = 0; dx < sx; dx++) {
       const x = x0 + dx;
       const z = z0 + dz;
-      // DD-45: fBm + ridge blend. fbmVal ∈ [0,1], ridgeVal ∈ [0,1], blend váží
-      // dle relief slideru.
-      const fbmVal   = fbmSample(heightNoise, x, z);
-      const ridgeVal = ridge(fbmVal);
-      const blended  = (1 - ridgeWeight) * fbmVal + ridgeWeight * ridgeVal;
-      const h = Math.round(blended * amplitude);
+      const fbmVal = fbmSample(heightNoise, x, z);
+      let h;
+      if (useBimodal) {
+        // DD-46: smoothstep bimodální. t ∈ [0,1] mapa fbmVal přes přechod
+        // (0.4, 0.6). lerp mezi VALLEY_AMP a peakem dle amplitude tabulky.
+        const t = smoothstep(SMOOTHSTEP_LO, SMOOTHSTEP_HI, fbmVal);
+        const blended = VALLEY_AMP + (amplitude - VALLEY_AMP) * t;
+        h = Math.round(blended);
+      } else {
+        // DD-45: fBm + ridge³ blend pro low/mid relief (r0-5).
+        const ridgeVal = ridge(fbmVal);
+        const blended = (1 - ridgeWeight) * fbmVal + ridgeWeight * ridgeVal;
+        h = Math.round(blended * amplitude);
+      }
       cells.push({ x, z, h, biome_value: biomeNoise(x, z) });
     }
   }

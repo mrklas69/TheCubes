@@ -23,6 +23,7 @@
 - [x] **G1 Volba max Y** *(sez. 35, žádný DD)* — `maxReliefForSize(sx,sz)` export z `terrain.js`, `relief.max` clamp dynamicky dle MIN(sx,sz). KISS quick win. 10×10 → 0..3 (Rolling), 30×30 → 0..5 (Uneven), 60+ → 0..10 (Alpine). Viz DONE.md.
 - [x] **G2 Severní šířka / podnební pásmo** *(sez. 35, DD-42 + DD-43)* — `world.LATITUDE` (4 enum) + `world.HUMIDITY` (3 enum) atributy, `SUN_TILT_BY_LATITUDE` lookup nahrazuje DD-38 fixed `SUN_TILT`, `BIOME_NAMES` 4×3 tabulka, UI Climate sekce v `#terrainctrl`. MVP konzument: sun tilt + UI biome readout. Pre-G2 fix: DD-43 DAY mapping 0.5=poledne. Viz DONE.md + DD-42 + DD-43.
 - [x] **G3 SURFACES driver-derived per biome** *(sez. 36, DD-44)* — `BIOME_SURFACES` 4×3 lookup v `terrain.js` (12 buněk × 4 koef.), `surfacesForBiome(lat, hum)` helper. Hard override v UI: surface slidery smazány, Climate slidery `change` triggerují regen. `polar.wet` = alias `polar.mid` + rename `BIOME_NAMES.polar.wet` na "Polární tundra". Viz DONE.md + DD-44.
+- [x] **G5 Smoothstep bimodální heightmap pro high relief** *(sez. 37, DD-46)* — pro `relief ≥ 6` přepne na `t = smoothstep(0.4, 0.6, fbmVal); blended = lerp(VALLEY_AMP=-1, PEAK_AMP=amplitude, t)`. Bimodální distribuce (dva mody: údolí + peaks, úzký transition). Pro r ≤ 5 DD-45 ridge³ beze změny. USER case 46×47 r6 verdikt „Super!". Viz DONE.md + DD-46.
 
 ### Otevřené body / kandidáti DD
 
@@ -46,16 +47,21 @@
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — 7/8 sezení od sez. 29. Další doporučený sez. 37 *(prah dosažen)*. Velký nový kód: DD-44 G3 driver + DD-45 fBm/ridge heightmap (terrain.js +60 ř., main.js wire) = připraven materiál.
-- **`%AUDIT:DOCS`** — 7/10 sezení od sez. 29. Další doporučený sez. 39+.
-- **IDEAS/TODO pruning** — 3/12 (sez. 36: close G3, close polar/wet sub-prah, add snow surface G4 + bimodální heightmap G5 + Math.floor experiment sub-prahy).
+- **`%AUDIT:CODE`** — **8/8 sezení od sez. 29 (prah překročen!)**. Sez. 37 šel přes audit ve prospěch DD-46 (user vizuální feedback eskalace). **Sez. 38 silně doporučený** — neudělaný audit z DD-44+DD-45+DD-46 sekvence je významný (3 algoritmické změny v heightmap pipeline). Pokud sez. 38 jde znovu přes audit (9/8), eskalace.
+- **`%AUDIT:DOCS`** — 8/10 sezení od sez. 29. Další doporučený sez. 39+.
+- **IDEAS/TODO pruning** — 5/12 (sez. 37: close G5 sub-prah, add 2 DD-46 follow-up sub-prahy, add „voda ve všech skupenstvích" IDEAS entry).
 - **`%CALIBRATE`** — sub-prah „CLAUDE.md +50 %" stále resetnut.
+
+## Sub-prah (DD-46 follow-up, sez. 37)
+
+- [ ] **Symmetric VALLEY_AMP = −amplitude varianta** — DD-46 dnes asymetrický (VALLEY=−1, PEAK=amplitude). Peak side rozprostřená přes víc úrovní (Y=2,3,4) než valley side (Y=−1 dominantní). Pro skutečně symetrický bimodal (= stejné peaks i valleys distribuce) by VALLEY=−amplitude dalo range [-amp, +amp]. Pro r6 by to znamenalo -4..4. Wait pro user feedback typu „valley je moc dominantní" / „peaks rozcucnatý".
+- [ ] **Plynulý morph r5↔r6** — DD-46 hard switch při r=6 (ridge³ → smoothstep bimodal). Pokud user pocítí „přechod mezi rolling a horami je trhanej", parametrizovat `bimodalWeight = clamp((relief-5)/3, 0, 1)` a lerp mezi ridge³ output a smoothstep output. Wait pro user feedback.
 
 ## Sub-prah (G3 + DD-45 follow-up, sez. 36)
 
-- [ ] **Snow surface (G4 kandidát)** — dnes `polar.*` v `BIOME_SURFACES` používá `sand` jako proxy pro sníh. Vizuálně to vypadá jako poušť, ne sníh. G4: přidat `snow` surface kind do `SURFACE_Y_OFFSET` v terrain.js + atlas paleta (klon `grass-top` s bílou). Migrate `polar.*` z `sand` na `snow`. Drobný DD scope.
-- [ ] **Bimodální heightmap — threshold step / dual noise (G5 kandidát)** — DD-45 fBm+ridge³ zlepšilo high relief variabilitu, ale výstup je single-peak distribuce (kolem mean), ne bimodální "hřebeny + údolí". Pro skutečné horské hřebeny s ostrými údolími by bylo nutné: (a) **threshold step** (`fbm < 0.5 ? valley_Y : peak_Y`) — explicit bimodál, smooth-stepped přechod; nebo (b) **dual noise** (continent mask z low-freq fBm + ridge detail z high-freq, additive: `height = continent + mountain * (continent > threshold ? 1 : 0)`) — peaks lokalizované do regionů. Vyžaduje vlastní DD a vizuální user feedback po DD-45 testu. Wait pro user.
-- [ ] **Math.floor experiment pro low relief plateau** — DD-45 `Math.round(blended * amp)` clusteruje fBm distribuci kolem mean (relief 5 amp 3 → 55 % na top voxel). Experiment: nahradit `floor` (lower bias) pro relief ≤ 5. Cena: ztratí 1 voxel max výšky pro pure fBm. Wait pro user feedback ze sez. 36 testu DD-45.
+- [ ] **Snow surface (G4 kandidát)** — dnes `polar.*` v `BIOME_SURFACES` používá `sand` jako proxy pro sníh. Vizuálně to vypadá jako poušť, ne sníh. G4: přidat `snow` surface kind do `SURFACE_Y_OFFSET` v terrain.js + atlas paleta (klon `grass-top` s bílou). Migrate `polar.*` z `sand` na `snow`. Drobný DD scope. *(Pozn. sez. 37: po user nápadu „voda ve všech skupenstvích" se G4 spojuje s LIQUID/ICE/STEAM rozšíření — viz IDEAS.)*
+- [x] **Bimodální heightmap (G5 kandidát)** *(sez. 37, DD-46)* — vyřešeno smoothstep bimodální variantou pro relief ≥ 6. Viz DONE.md.
+- [ ] **Math.floor experiment pro low relief plateau** — DD-45 `Math.round(blended * amp)` clusteruje fBm distribuci kolem mean (relief 5 amp 3 → 55 % na top voxel). Experiment: nahradit `floor` (lower bias) pro relief ≤ 5. Cena: ztratí 1 voxel max výšky pro pure fBm. Wait pro user feedback ze sez. 37 testu DD-46 (relevantní jen pro r ≤ 5, DD-46 řeší r ≥ 6 ortogonálně).
 
 ## Sub-prah (G2 follow-up, sez. 35)
 

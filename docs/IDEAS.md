@@ -2,6 +2,24 @@
 
 Raw nápady. Když dozraje, přesuň do `TODO.md`.
 
+## Voda ve všech skupenstvích *(sez. 37 user nápad)*
+
+Aktuálně `water` žije jako jeden surface kind v `SURFACE_Y_OFFSET` + 1×1 plane na cell (DD-32 MVP). User nápad: **systematická voda jako entita s skupenstvími**. Rozšíření modelu:
+
+- **LIQUID** *(DD-25 vrstva 4 — již otevřený TODO kandidát)* — voda jako 1. třída entity, ne surface. Atributy: `LEVEL` (hladina), `TEMPERATURE`, `FLOW_DIRECTION`. Klastrování spojitých water cells do bounding boxů (TODO bod) je MVP. Pokročilá fáze: tok přes height gradient.
+- **ICE** — pevné skupenství. Možnosti:
+  - (a) Surface kind v `SURFACE_Y_OFFSET` (paralelně se `snow` G4 kandidátem) — vizuálně led, mechanicky shodné s grass/stone.
+  - (b) Vlastní třída pod BLOCKS (`ICUBES`?) s reflective material + slip mechanika (až přijde pohyblivá entita).
+  - (c) State `LIQUID.STATE = "frozen"` — jeden objekt, několik vizualizací. **Izomorfní s `ANIMATE` mode slot DD-18.** Doporučeno.
+- **STEAM / FOG** — plynné skupenství. Volumetrický efekt? Sprite particle? Three.js `Fog` / `FogExp2` má vlastní globální fog (sez. 31 BokehPass), ale to je atmosféra, ne lokální entita. Lokální steam by mohl být CCUBES s `OPACITY` + `ANIMATE = drift` (sez. 7 helper). Cheap.
+- **SNOW** — pevné krystalické. Už existující G4 kandidát (DD-44 sub-prah, `polar.*` proxy `sand`). Pod LIQUID hierarchií = ledové krystalky, ne kapalina.
+
+**Driver: `WORLD.TEMPERATURE` ?** Klimatický atribut, který přepíná water ↔ ice ↔ steam dle aktuálního stavu. Korelace s LATITUDE (DD-42) je očekávaná: polar → ice/snow, tropical → steam/water, temperate → water. Mohlo by ale být i nezávislé (sopečné jezero v Antarktidě = lokální anomálie).
+
+**Cyklus skupenství v čase:** pokud `WORLD.TEMPERATURE` osciluje s `DAY` (DD-38/DD-43 noc chladnější → ráno mlha, poledne taje sníh), vznikne **emergentní dynamika** = preferovaný vzorec (CLAUDE.md `%THINK` 5. bod). Kandidát na samostatný DD po terénu.
+
+**Co aktivovat první?** Pravděpodobně ICE jako stavový atribut LIQID, plus SNOW G4 (pevné skupenství už čeká v sub-prahu). STEAM až bude particle/sprite engine.
+
 ## Rozšíření modelu
 - **SPRITES** — potomek CUBES s 2D billboard vizualizací (dialog bubble, 2D postava, label). Atribut `ASSET`. → DONE (sez. 4, M5): třída + canvas-generovaná dialogová bublina + instance `dialog_0001` nad stromem. Dynamický 3D ocásek → DONE (sez. 8, DD-16).
 - **COMPOSITES** — potomek CUBES s 3D mesh z více částí. → DONE (sez. 3): základní třída + `TREE` (M3). *(Sez. 15 DD-23: COMPOSITES složky jsou nyní výhradně voxely — žádné Cylinder/Cone/Sphere primitivy. Smazány: BALLOON, HOUSE, CLOUD, ROCK, TUNNEL_ARCH, WAREHOUSE, TRAIN. CHARACTER/NOODLE/STICKMAN přesunuty sez. 14 do sibling projektu `./source/Stickman`.)* Aktuální COMPOSITES potomci (sez. 17–18): **TREE** (pixel-voxel s 10 KIND sub-buildery), **GRASS_TUFT** (micro/short/fern), **ROCK_PIXEL** (micro/small/medium/mossy), **LOG** (stump/birch/pine), **VOXEL_MODEL** (z MagicaVoxelu, DD-21; aktuálně bez instance v scéně). Plus **PATH** pod CUBES přímo (DD-27, vrstva 3 LINES).
