@@ -103,17 +103,19 @@ TheCubes scéna se buduje ze tří vizuálních zdrojů:
 - **Dekorativní cesty** → **PATH** strip mesh (Catmull-Rom + procedural texture).
 - **Dialog / štítek / UI** → **SPRITES**.
 
-### Atlas pipeline (DD-36, sez. 28 + sez. 30)
+### Lowpoly vertex-color pipeline (DD-41, sez. 34)
 
-**Princip:** sdílená atlas geom (UVs přemapnuté na 1/N-tici U-axis = jeden výsek atlas textury per face) + per-(typ, varianta) atlas material (N facelet textur slepených horizontálně do CanvasTexture). Single material per mesh místo `material[N]` pole → 1 draw call per instance místo N.
+**Princip (po DD-41, supersede DD-36 atlas):** per-face barvy zapsané přímo do `geometry.attributes.color` (24/12/18/24 floats per geom dle typu × 3 RGB kanály), shader čte vertex colors přímo z attribute. Jeden sdílený `_lowpolyMat = new THREE.MeshLambertMaterial({ vertexColors: true })` napříč všemi terrain batchi (TCUBES + rampy). Per-kind / per (typ, surface) BoxGeometry / BufferGeometry drží barvy v `color` attribute.
 
-**Sez. 28 — TCUBES (4 atlas materials):** Shared `BoxGeometry`, atlas 96×16 px (6 facelets × 16 px tile), per kind ∈ `BLOCK_TEXTURES` = `grass`/`dirt`/`stone`/`sand`. Důsledek 30×30: 25k calls @ 15 FPS → ~5k calls @ 92 FPS (6× zrychlení).
+**TCUBES (`getTcubesKindGeom(kind)`):** `BLOCK_COLORS` 3-key paleta (TOP/BOTTOM/SIDE × 4 kindy `grass`/`dirt`/`stone`/`sand`). Per kind sdílená `BoxGeometry(1,1,1)` se color attribute zapsanou v pořadí faces (+X/−X/+Y/−Y/+Z/−Z): SIDE/SIDE/TOP/BOTTOM/SIDE/SIDE. sRGB hex → linear convert per kanál (renderer výstup je sRGB, vertex colors v linear).
 
-**Sez. 30 — rampy (3 typy × 3 surfaces = 9 atlas materials):** Per ramp typ TRRAMPS/TTRAMPS/TDRAMP vlastní sdílená geom (UV remap na 1/5-tici / 1/4-tici / 1/5-tici), per surface ∈ {`grass`, `stone`, `sand`} samostatný atlas material (canvas N×16 × 16 px). Generický `getRampAtlasMaterial(type, surface)` DRY factory napříč 3 typy, klíč `${type}_${surface}` v `_rampsAtlasMatCache`. **TDRAMP zvláštnost:** 7 geom faces sdílejí 5 atlas slotů (WALL_FULL E+S sdílí slot 3, WALL_TRI N+W sdílí slot 4). Důsledek 30×30: ~5050 → 4290 calls (−14 %), FPS 92 → 123. **TTUNELS** zůstává na slow path `faceMaterialFor` (0 instancí v scéně, refactor odložen).
+**Rampy (`getRampGeom(type, surface)`):** Per (typ, surface) klonuje atlas IIFE raw geom (TRRAMP/TTRAMP/TDRAMP_GEOM_CACHE — zachované jako raw geom source), drop `uv` attribute, inject `color` attribute. `RAMP_FACE_VERT_COUNTS` per typ (`[4,4,4,3,3]` / `[3,3,3,3]` / `[3,3,4,8,6]`), `RAMP_FACE_PALETTE_KEYS` mapuje faceIdx na `BLOCK_COLORS[surface]` klíč (TOP/BOTTOM/SIDE). TDRAMP SLOPE+TOP sdílí `.TOP` (lomený povrch).
 
-**Slow path** (`_faceMaterialCache` Map v `faceMaterialFor`): non-terrain TCUBES (emoji demo boxy bez instancí ve scéně) + TTUNELS. Tři paralelní cache (`_faceMaterialCache` + `_tcubesAtlasMatCache` + `_rampsAtlasMatCache`) měřeny souhrnně v perf HUD `mat` (F9 fix sez. 30). Hover sez. 16 pattern (`Array.isArray(orig) ? orig.map(...) : orig.clone()`) přepíná pole↔single dispatch automaticky.
+**flatShading: false (důležitý fix).** BoxGeometry + ramp BufferGeometries už mají per-face normály v `geometry.attributes.normal` (vertices nesdílené přes faces) → flat look vzniká z geometrie. `flatShading: true` na materiálu by nutilo shader spočítat normálu z `dFdx/dFdy` derivatives → u **InstancedMesh** cross-instance precision drift = tenké šedé/černé seam linky mezi sousedy (DD-41 known fix sez. 34).
 
-**Draw-call ceiling (sez. 30 stress test 100×100):** atlas exhauste — 47k calls @ FPS 7. Atlas merger materials, ne instances; pro další skok je potřeba `InstancedMesh` (per atlas material → 1 batch celkem ~13). DD-37 kandidát.
+**Slow path** (`_faceMaterialCache` Map v `faceMaterialFor`): non-terrain TCUBES (CCUBES default šachovnice DD-07, PATH, water plane, COMPOSITES) + TTUNELS. Jediná zachovaná cache po DD-41 — terrain TCUBES/rampy jdou batch path (DD-37) s jedním sdíleným `_lowpolyMat`, žádná per-kind cache potřeba. Perf HUD `mat` čítač = `_faceMaterialCache.size` jen.
+
+**Historické (DD-36 atlas, supersededDD-41):** Sez. 28 zavedla TCUBES atlas (`_tcubesAtlasMatCache`, 4 atlas materials = 6 facelets × 16 px do CanvasTexture 96×16 per kind), sez. 30 ramp atlas (`_rampsAtlasMatCache`, 9 atlas materials). DD-41 smazala obě cache + atlas builders + texture tabulky (`BLOCK_TEXTURES`, `RAMP_*_TEXTURES`, `RAMP_ATLAS_SPECS`, `RAMP_SURFACE_FROM_KIND`, `ATLAS_*` konstanty, `createTRRampFor`/`createTTRampFor`/`createTDRampFor` slow-path funkce). Důvod: atlas vyřešil draw call count (DD-37 InstancedMesh batche pak srazila na ~13 calls), ale tile pattern uvnitř kindu zůstal jako vizuální dluh. DD-41 lowpoly = solid color flat look, eliminuje dluh + simplifikuje pipeline (~−250 ř.) + připravuje G3 (climate-driven barvy = data, ne textury).
 
 ### Procedurální canvas textury (`:named-texture`)
 
@@ -147,7 +149,7 @@ Pravidlo BLOCKS rodiny: **vrch `:grass-top`, jinak `:dirt`** napříč grass blo
 
 ## Pojmy
 
-- **Texture** — 2D obraz aplikovaný na **plochu** meshe. Použití: per-face TCUBES, atlas TCUBES (DD-36), šachovnice na mateřské CUBES.
+- **Texture** — 2D obraz aplikovaný na **plochu** meshe. Použití: PATH strip (Catmull-Rom texturovaný proužek), SPRITES billboardy (dialogy/štítky), šachovnice na mateřské CUBES (DD-07 placeholder pro neznámý kind), procedurální `:named-texture` slow path (CCUBES/COMPOSITES/TTUNELS). Terrain TCUBES + rampy textury **nepoužívají** od DD-41 (sez. 34, lowpoly vertex-color pipeline).
 - **Sprite** — 2D obraz vždy otočený **ke kameře** (billboard). Použití: SPRITES třída.
 - **Voxel** — krychlová jednotka. 1 TC voxel = 1 m (= 1 instance CCUBES/TCUBES).
 - **Pixel-art** — vizuální styl s viditelnými „pixely". Dosahujeme přes `NearestFilter` na `CanvasTexture` (nezablurovaná interpolace) + nízké rozlišení (16×16 typicky). Sdílí se mezi procedurálními texturami (`:dirt`/`:grass-top`/…) a atlas pipeline (DD-36).
@@ -199,3 +201,5 @@ Pravidlo BLOCKS rodiny: **vrch `:grass-top`, jinak `:dirt`** napříč grass blo
   - *Sez. 30:* Rampy atlas refactor + size 100×100 unlock — atlas pipeline vyčerpaná (FPS 7 @ 100×100, draw calls 47k).
   - *Sez. 31:* **InstancedMesh refactor** (DD-37) — FPS 7 → **104** @ 100×100 (15×), draw calls 47k → **1k** (47×). Plus sun mesh + post-process (fog + DOF/BokehPass) + settings panel.
   - *Sez. 32:* **WORLD re-introduce** (DD-38) s DAY/DAY_SPEED — sun mesh + DirectionalLight reactive (intensity lerp = noc tmavá, 30° náklon dráhy). UI slidery v `#settings`. Plus audit follow-up F5/F6/F10/F11/F14.
+  - *Sez. 33:* **DD-39 atmospheric lerping** (sky/fog/ambient reactive na DAY) + **DD-40 LAMP/SpotLight** (Victorian-style pouliční lampa, pattern `userData.noShadow` na mesh okolo světla).
+  - *Sez. 34:* **DD-41 Lowpoly vertex-color pipeline** (supersede DD-36 atlas) — `BLOCK_COLORS` paleta, sdílený `MeshLambertMaterial({ vertexColors: true })`, per-kind / per (typ, surface) geometry s color attribute. Smazána atlas pipeline. Inspirace `jasonkneen/tiny-world-builder`. Plus 4 TODO follow-up (drop-in anim, tilt-shift, ExtrudeGeom, adjacency-aware re-render).

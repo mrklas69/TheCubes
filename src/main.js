@@ -552,29 +552,15 @@ function getNamedTexture(name) {
 // `null` má vlastní bucket (`"__null__"`), aby šel rozlišit od stringu `"null"`.
 //
 // === 3 paralelní material cache (F6 doc komentář) ===========================
-// V projektu žijí tři material cache vedle sebe, **každá s jinou sémantikou**:
+// V projektu žije **`_faceMaterialCache`** — slow path, klíč = stringifikace
+// `val` (per-face atribut: barva / `:name` / emoji). 1 materiál = 1 strana
+// voxelu, mesh dostane `material[6]` array. Fallback pro non-terrain TCUBES,
+// PATH, water plane, COMPOSITES boxy, CCUBES default šachovnice (DD-07).
 //
-//   1. `_faceMaterialCache`         — **slow path**, klíč = stringifikace `val`
-//      (per-face atribut: barva / `:name` / emoji). 1 materiál = 1 strana voxelu,
-//      mesh dostane `material[6]` array. Fallback pro non-terrain TCUBES, PATH,
-//      water plane, COMPOSITES boxy.
-//
-//   2. `_tcubesAtlasMatCache`       — **TCUBES atlas (DD-36)**, klíč = kind
-//      (`grass`/`dirt`/`stone`/`sand`). 1 materiál = celá kostka (6 facelet
-//      slepených do canvasu 96×16). Fast path pro terrain TCUBES — sloučí
-//      `material[6]` na 1, ušetří 5× draw call per box.
-//
-//   3. `_rampsAtlasMatCache`        — **ramp atlas (DD-36, sez. 30)**, klíč
-//      = `${type}_${surface}` (`trramps_grass`, `ttramps_stone`, `tdramp_sand`…).
-//      Per-ramp-typ varianta atlasu: 5/4/5 facelet na N×16 canvas.
-//
-// Proč nejsou sjednocené? **3 různé klíče a 3 různé fáze pipeline.**
-// Slow path bere libovolný `val`; TCUBES atlas vyžaduje pre-existující
-// `BLOCK_TEXTURES[kind]` 6-řádkový recept; ramp atlas vyžaduje pre-existující
-// `RAMP_*_TEXTURES[surface]` N-řádkový recept. Sjednocení by stačila discriminated
-// union `materialFor({ kind: 'face'|'tcubes-atlas'|'ramps-atlas', … })`, ale
-// přínos je čistě stylistický (≤ 50 řádků konsolidace), refactor by ohrozil
-// hover/raycast cestu doladěnou v sez. 31. **Záměrně oddělené** — sez. 32 F6.
+// Historicky paralelně existovaly i `_tcubesAtlasMatCache` (DD-36 TCUBES atlas)
+// a `_rampsAtlasMatCache` (DD-36 ramp atlas) — obě smazány v DD-41 (sez. 34,
+// lowpoly vertex-color refactor). Lowpoly pipeline drží 1 sdílený `_lowpolyMat`
+// napříč všemi terrain batchi, žádná per-kind cache potřeba.
 const _faceMaterialCache = new Map();
 
 function faceMaterialFor(val) {
@@ -1108,17 +1094,10 @@ function createMeshFor(instance) {
     // pozice float bez snap-to-grid.
     object3d = createSpriteFor(instance);
   } else if (instance instanceof TCUBES) {
-    // Voxel s per-face texturami (6 různých materiálů). Snap-to-grid.
+    // Voxel s lowpoly vertex-color paletou (DD-41). Snap-to-grid.
+    // Pozn.: Terrain TCUBES jdou batch path (DD-37 InstancedMesh), createMeshFor
+    // slouží pro single-spawn mimo terrain (dev/test).
     object3d = createTCubeFor(instance);
-  } else if (instance instanceof TRRAMPS) {
-    // Trojboký hranol (klín) s 5 per-face texturami. Snap-to-grid + rotace Y.
-    object3d = createTRRampFor(instance);
-  } else if (instance instanceof TTRAMPS) {
-    // Trojboký jehlan (trirectangular tetrahedron) se 4 per-face texturami.
-    object3d = createTTRampFor(instance);
-  } else if (instance instanceof TDRAMP) {
-    // Diagonální rampa (1C blok bez 1 horního rohu) — 7 vrcholů, 5 materials.
-    object3d = createTDRampFor(instance);
   } else if (instance instanceof TTUNELS) {
     // Tunel skrz 1C blok (4 vnitřní stěny, 2 osy průchozí).
     object3d = createTTunnelFor(instance);
@@ -1193,36 +1172,17 @@ function snapToGrid(mesh, instance) {
 // atributu vrátí barvený nebo textúrovaný materiál, případně fallback
 // šachovnici (DD-07).
 function createTCubeFor(instance) {
-  // === Fast path (sez. 28 atlas, `feat/terrain-perf`) ===
-  // Pokud `instance.NAME` je známý terrain kind (`BLOCK_TEXTURES[kind]`
-  // existuje), použij **shared BoxGeometry + per-kind atlas material** —
-  // místo 6× material array = 6 draw calls per box jedeme 1× draw call.
-  // Při 30×30 terrainu (~4000 TCUBES) redukuje calls z ~25k na ~4k =
-  // přes 60 FPS místo 15 FPS.
-  //
-  // Atlas = 6 facelets (E,W,T,B,S,N) slepené horizontálně do 1 CanvasTexture
-  // 96×16 px (16 px per face); BoxGeometry UVs přepsané na 1/6-tice viz
-  // `makeAtlasBoxGeometry`. Visualní parita s array verzí beze změny.
-  const atlasMat = getTcubesKindMaterial(instance.NAME);
-  if (atlasMat) {
-    const mesh = new THREE.Mesh(getSharedAtlasBoxGeom(), atlasMat);
+  // G0 (sez. 34, DD-41): lowpoly vertex-color pipeline. Pokud `instance.NAME`
+  // je známý terrain kind (`BLOCK_COLORS[kind]`), použij sdílený per-kind
+  // lowpoly geom + `_lowpolyMat`. Jinak fallback šachovnice (DD-07, „neznámý kind").
+  const lowpolyGeom = getTcubesKindGeom(instance.NAME);
+  if (lowpolyGeom) {
+    const mesh = new THREE.Mesh(lowpolyGeom, _lowpolyMat);
     snapToGrid(mesh, instance);
     return mesh;
   }
-
-  // === Slow path ===
-  // Non-terrain TCUBES (např. emoji demo boxy v sez. 4 testu) — nemají
-  // matching kind, per-face material array zůstává. Cache v `faceMaterialFor`
-  // sdílí materials napříč instancemi.
-  const materials = [
-    faceMaterialFor(instance.TEXTURE_EAST),    // +X
-    faceMaterialFor(instance.TEXTURE_WEST),    // −X
-    faceMaterialFor(instance.TEXTURE_TOP),     // +Y
-    faceMaterialFor(instance.TEXTURE_BOTTOM),  // −Y
-    faceMaterialFor(instance.TEXTURE_SOUTH),   // +Z
-    faceMaterialFor(instance.TEXTURE_NORTH),   // −Z
-  ];
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), materials);
+  // Fallback — sdílený šachovnicový materiál z `_faceMaterialCache` (null key).
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), faceMaterialFor(null));
   snapToGrid(mesh, instance);
   return mesh;
 }
@@ -1251,8 +1211,9 @@ function createTCubeFor(instance) {
 // Per-face vertices (non-shared) → flat shading bez `computeVertexNormals`
 // (každá face má vlastní normály = ostré hrany mezi facey, pixel-art look).
 // Celkem 18 vertices, 8 trojúhelníků, **1 atlas material** (DD-36 pattern):
-// per-face UV remapped na 1/5-tici v U-axis → 1 texture lookup místo 5 draw
-// calls per instance. Texturu dodává `getRampAtlasMaterial("trramps", surface)`.
+// per-face vertices non-shared = lowpoly flat look. UV attribute zachován
+// pro historickou kompatibilitu, `getRampGeom` (DD-41) ho stripuje v clone
+// a doplňuje per-face vertex colors z `BLOCK_COLORS` palety.
 
 const TRRAMP_FACE_COUNT = 5;
 const TRRAMP_GEOM_CACHE = (() => {
@@ -1298,7 +1259,8 @@ const TRRAMP_GEOM_CACHE = (() => {
     indices.push(startVert, startVert + 1, startVert + 2);
   }
 
-  // Pořadí faceIdx (musí ladit s `RAMP_ATLAS_SPECS.trramps.keys`):
+  // Pořadí faceIdx (musí ladit s `RAMP_FACE_VERT_COUNTS.trramps` v G0b
+  // lowpoly builderu pro per-face vertex color mapping):
   // 0 = SLOPE, 1 = BOTTOM, 2 = BACK, 3 = LEFT, 4 = RIGHT.
 
   // CCW order pro každý face = vertices v takovém pořadí, aby cross product
@@ -1363,20 +1325,6 @@ const TRRAMP_GEOM_CACHE = (() => {
   return geom;
 })();
 
-// Sestaví trojboký hranol pro TRRAMPS instanci. Single-material atlas (DD-36
-// izomorfně s TCUBES) — `getRampAtlasMaterial("trramps", surface)` zkomponuje
-// 5 facelet textur do 80×16 atlasu, UV v geometrii jsou remapnuté na 1/5-tici.
-// Geometrie sdílená přes cache; instance se liší pozicí, rotací a (přes
-// surface lookup) volbou atlas materiálu.
-function createTRRampFor(instance) {
-  const surface = RAMP_SURFACE_FROM_KIND[instance.KIND] ?? "grass";
-  const mat = getRampAtlasMaterial("trramps", surface);
-  const mesh = new THREE.Mesh(TRRAMP_GEOM_CACHE, mat);
-  snapToGrid(mesh, instance);
-  mesh.rotation.y = instance.ORIENTATION * (Math.PI / 180);
-  return mesh;
-}
-
 // === TTRAMPS — Trojboký jehlan (trirectangular tetrahedron) =================
 //
 // 1C blok s 4 vrcholy: roh `C` v lokálním (-0.5, -0.5, -0.5) + 3 axiální body
@@ -1386,7 +1334,8 @@ function createTRRampFor(instance) {
 // se sdíleným pravým úhlem v rohu C.
 //
 // 4 faces × 3 vertices (per-face non-shared) = 12 vertices, 4 trojúhelníky.
-// Single-material atlas (DD-36, viz `getRampAtlasMaterial("ttramps", surface)`).
+// Vertex colors per face řízeny `BLOCK_COLORS` + `RAMP_FACE_PALETTE_KEYS`
+// v G0b lowpoly builderu (`getRampGeom("ttramps", surface)`).
 
 const TTRAMP_FACE_COUNT = 4;
 const TTRAMP_GEOM_CACHE = (() => {
@@ -1415,7 +1364,8 @@ const TTRAMP_GEOM_CACHE = (() => {
     indices.push(startVert, startVert + 1, startVert + 2);
   }
 
-  // Pořadí faceIdx (musí ladit s `RAMP_ATLAS_SPECS.ttramps.keys`):
+  // Pořadí faceIdx (musí ladit s `RAMP_FACE_VERT_COUNTS.ttramps` v G0b
+  // lowpoly builderu pro per-face vertex color mapping):
   // 0 = SLOPE, 1 = BOTTOM, 2 = BACK, 3 = LEFT.
 
   // SLOPE — triangle (X, Y, Z), rovnostranný, normála (1, 1, 1)/√3.
@@ -1465,18 +1415,6 @@ const TTRAMP_GEOM_CACHE = (() => {
   geom.setIndex(indices);
   return geom;
 })();
-
-// Sestaví trojboký jehlan pro TTRAMPS instanci. Single-material atlas (DD-36)
-// — `getRampAtlasMaterial("ttramps", surface)` zkomponuje 4 facelety do 64×16
-// atlasu, UV v geometrii jsou remapnuté na 1/4-tici.
-function createTTRampFor(instance) {
-  const surface = RAMP_SURFACE_FROM_KIND[instance.KIND] ?? "grass";
-  const mat = getRampAtlasMaterial("ttramps", surface);
-  const mesh = new THREE.Mesh(TTRAMP_GEOM_CACHE, mat);
-  snapToGrid(mesh, instance);
-  mesh.rotation.y = instance.ORIENTATION * (Math.PI / 180);
-  return mesh;
-}
 
 // === TDRAMP — Diagonální rampa (1C blok bez jednoho horního rohu) ===========
 //
@@ -1620,18 +1558,6 @@ const TDRAMP_GEOM_CACHE = (() => {
   geom.setIndex(indices);
   return geom;
 })();
-
-// Sestaví TDRAMP instanci. Single-material atlas (DD-36) — atlas má 5 slotů
-// (SLOPE/TOP/BOTTOM/WALL_FULL/WALL_TRI), WALL_FULL i WALL_TRI sdílejí svůj
-// slot mezi 2 facey. ORIENTATION rotuje kolem Y.
-function createTDRampFor(instance) {
-  const surface = RAMP_SURFACE_FROM_KIND[instance.KIND] ?? "grass";
-  const mat = getRampAtlasMaterial("tdramp", surface);
-  const mesh = new THREE.Mesh(TDRAMP_GEOM_CACHE, mat);
-  snapToGrid(mesh, instance);
-  mesh.rotation.y = instance.ORIENTATION * (Math.PI / 180);
-  return mesh;
-}
 
 // === TTUNELS — 1C blok s klenutým tunelem ===================================
 //
@@ -2094,97 +2020,161 @@ function createPathFor(instance) {
   return group;
 }
 
-// === Terrain builder (DD-32, sez. 24) ===
-// `generateTerrain` (src/terrain.js) vrátí { blocks, water }; `buildScene`
-// spawne TCUBES (per-face textury dle kind) + water planes do scény.
+// === Terrain builder (DD-32, sez. 24; DD-41 lowpoly pipeline sez. 34) =======
+// `generateTerrain` (src/terrain.js) vrátí { blocks, water, ramps }; `buildScene`
+// spawne TCUBES + rampy + water planes do scény přes batch path (DD-37
+// InstancedMesh). Lowpoly pipeline (DD-41) nahradila DD-36 atlas — barvy v
+// `BLOCK_COLORS` mapě, vertex-color geometry, jeden sdílený `_lowpolyMat`.
+//
+// Důvod oproti atlasu (DD-36):
+//   - Eliminuje tile pattern uvnitř kindu (DD-36 známé omezení) — solid color.
+//   - Drop CanvasTexture + texture sampling overhead (Lambert vertex colors
+//     = pure gouraud lookup z attribute).
+//   - Lambert (no PBR) = lepší "tiny-world" estetika, žádný plast highlight.
+//   - Připravuje G3 (climate-driven barvy) — barvy jsou data, ne textury.
 
-// Per-surface texture sety pro TCUBES. „Boky/spodek = vždy `:dirt`" je
-// pravidlo z severské diorámy (sez. 17) — drží rodinu BLOCKS jednotnou.
-// Stone/sand top jdou bez gradientu (terén je tvořen většinou plochou paletou).
-const BLOCK_TEXTURES = {
-  grass: { TOP: ":grass-top", BOTTOM: ":dirt", NORTH: ":dirt",  SOUTH: ":dirt",  EAST: ":dirt",  WEST: ":dirt"  },
-  dirt:  { TOP: ":dirt",      BOTTOM: ":dirt", NORTH: ":dirt",  SOUTH: ":dirt",  EAST: ":dirt",  WEST: ":dirt"  },
-  stone: { TOP: ":stone",     BOTTOM: ":stone",NORTH: ":stone", SOUTH: ":stone", EAST: ":stone", WEST: ":stone" },
-  sand:  { TOP: ":sand",      BOTTOM: ":sand", NORTH: ":sand",  SOUTH: ":sand",  EAST: ":sand",  WEST: ":sand"  },
+// Per-kind 3-key paleta (TOP / BOTTOM / SIDE). Severská konvence (sez. 17):
+// grass má jen vrch zelený, stěny a spodek = hnědá zem. Stone/sand/dirt jsou
+// homogenní (BOTTOM/SIDE marginálně tmavší pro mikroshade rozdíl mezi sousedy).
+const BLOCK_COLORS = {
+  grass: { TOP: 0x6aaa3a, BOTTOM: 0x6b4423, SIDE: 0x6b4423 },
+  dirt:  { TOP: 0x6b4423, BOTTOM: 0x6b4423, SIDE: 0x6b4423 },
+  stone: { TOP: 0x9a9a9a, BOTTOM: 0x8a8a8a, SIDE: 0x8a8a8a },
+  sand:  { TOP: 0xe8d97a, BOTTOM: 0xd9c66a, SIDE: 0xd9c66a },
 };
 
-// === TCUBES atlas pipeline (sez. 28, `feat/terrain-perf`) ===========
-// Místo `mesh.material = [m0..m5]` pole (= 6 draw calls per box) generujeme
-// atlas: 6 facelets (East/West/Top/Bottom/South/North) slepené horizontálně
-// do 1 CanvasTexture 96×16 px; sdílená BoxGeometry s UVs přepsanými na
-// 1/6-tice atlasu; 1 MeshStandardMaterial per kind. → 1 draw call per box.
+// Sdílený material pro VŠECHNY terrain batche (TCUBES + rampy po G0b).
+// `vertexColors: true` říká shaderu, ať čte barvy z `geometry.attributes.color`
+// místo z `material.color`. MeshLambertMaterial = diffuse-only, bez PBR
+// specular (lepší fit pro neotexturované voxely než MeshStandardMaterial).
 //
-// Pořadí dlaždic v atlas matchuje Three.js BoxGeometry face order
-// (+X, −X, +Y, −Y, +Z, −Z) — žádné UV transformace per-face navíc.
-const ATLAS_TILE_PX  = 16;                                       // 1 dlaždice = 16×16 px (shoda s :named-texture)
-const ATLAS_FACE_KEYS = ["EAST", "WEST", "TOP", "BOTTOM", "SOUTH", "NORTH"];
+// **`flatShading: false`** (= default) — záměrně NE flat shading. BoxGeometry
+// i ramp BufferGeometries už mají per-face normály v `geometry.attributes.normal`
+// (vertices nesdílené napříč faces), takže flat look vzniká z geom samotné.
+// `flatShading: true` by nutilo shader spočítat per-face normálu z `dFdx/dFdy`
+// derivatives v fragment shaderu — u **InstancedMesh** může na hraně mezi
+// 2 sousedními instancemi normála drifovat (precision artifact), což generuje
+// **tenké šedé/černé seam linky mezi sousedními voxely** (sez. 34 user nález).
+// Při nižší intenzitě světla (DD-39 night) je kontrast seam vs. lit face větší,
+// artifact je výraznější.
+const _lowpolyMat = new THREE.MeshLambertMaterial({
+  vertexColors: true,
+});
 
-// Lazy singleton — sdílená geometrie pro všechny atlas TCUBES (všechny kindy
-// mají stejný UV layout, jen jinou texturu).
-let _sharedAtlasBoxGeom = null;
-function getSharedAtlasBoxGeom() {
-  if (_sharedAtlasBoxGeom) return _sharedAtlasBoxGeom;
-  const geom = new THREE.BoxGeometry(1, 1, 1);
-  // BoxGeometry default UVs per face: TL=(0,1) TR=(1,1) BL=(0,0) BR=(1,0).
-  // Přepíšeme každou face na 1/6-tici v X: face N gets u ∈ [N/6, (N+1)/6].
-  const uv = geom.attributes.uv;
-  for (let face = 0; face < 6; face++) {
-    const u0 = face / 6;
-    const u1 = (face + 1) / 6;
-    const base = face * 4;
-    uv.setXY(base + 0, u0, 1);  // TL
-    uv.setXY(base + 1, u1, 1);  // TR
-    uv.setXY(base + 2, u0, 0);  // BL
-    uv.setXY(base + 3, u1, 0);  // BR
+// Per-kind BoxGeometry s pre-baked vertex colors. `BoxGeometry` má 24 vertices
+// (4 per face × 6 faces) v pořadí faces: +X, −X, +Y, −Y, +Z, −Z (Three.js
+// default). Per face všechny 4 vertices dostanou stejnou barvu = solid face.
+// Cache klíč = kind, hodnota = sdílená geometrie (DD-37 InstancedMesh batch
+// shareuje 1 geom per kind napříč všemi instancemi).
+const _lowpolyBoxGeomCache = new Map();
+const _tmpColor = new THREE.Color();  // scratch (no per-call alokace)
+function getTcubesKindGeom(kind) {
+  let cached = _lowpolyBoxGeomCache.get(kind);
+  if (cached !== undefined) return cached;  // může být i `null` cached miss
+  const palette = BLOCK_COLORS[kind];
+  if (!palette) {
+    _lowpolyBoxGeomCache.set(kind, null);
+    return null;
   }
-  uv.needsUpdate = true;
-  _sharedAtlasBoxGeom = geom;
+  const geom = new THREE.BoxGeometry(1, 1, 1);
+  // BoxGeometry face order: 0=+X (E), 1=−X (W), 2=+Y (TOP), 3=−Y (BOTTOM),
+  // 4=+Z (S), 5=−Z (N). SIDE je 4× stejná (E/W/N/S) — severská konvence.
+  const faceHex = [
+    palette.SIDE,   // +X
+    palette.SIDE,   // −X
+    palette.TOP,    // +Y
+    palette.BOTTOM, // −Y
+    palette.SIDE,   // +Z
+    palette.SIDE,   // −Z
+  ];
+  // 24 verts × 3 channels = 72 floats. Vertex colors interpretované v linear
+  // space (renderer výstup je sRGB), proto sRGB hex → linear convert per kanál.
+  const colorArr = new Float32Array(24 * 3);
+  for (let face = 0; face < 6; face++) {
+    _tmpColor.setHex(faceHex[face]);
+    _tmpColor.convertSRGBToLinear();
+    for (let v = 0; v < 4; v++) {
+      const idx = (face * 4 + v) * 3;
+      colorArr[idx + 0] = _tmpColor.r;
+      colorArr[idx + 1] = _tmpColor.g;
+      colorArr[idx + 2] = _tmpColor.b;
+    }
+  }
+  geom.setAttribute("color", new THREE.Float32BufferAttribute(colorArr, 3));
+  _lowpolyBoxGeomCache.set(kind, geom);
   return geom;
 }
 
-// Per-kind atlas material cache. Klíč = kind ("grass"/"dirt"/"stone"/"sand"),
-// hodnota = MeshStandardMaterial s 96×16 atlas texturou. Build je idempotentní.
-// Druhá ze tří paralelních cache — viz komentář u `_faceMaterialCache` výše.
-const _tcubesAtlasMatCache = new Map();
-function getTcubesKindMaterial(kind) {
-  let cached = _tcubesAtlasMatCache.get(kind);
-  if (cached !== undefined) return cached;  // může být i `null` cached miss
-  const faces = BLOCK_TEXTURES[kind];
-  if (!faces) {
-    _tcubesAtlasMatCache.set(kind, null);   // negative cache — non-terrain kindy
+// === G0b Ramp vertex-color pipeline (sez. 34) ===============================
+// Izomorfně s `getTcubesKindGeom`: per (typ, surface) clone existující ramp
+// atlas geom (TRRAMP/TTRAMP/TDRAMP_GEOM_CACHE), strip UV, inject color
+// attribute. Atlas IIFE-cache zůstává jako "raw geom source" — cleanup
+// fáze G0 smaže jen atlas **materiály + texture tabulky**, geom IIFE může
+// zůstat (raw positions/normals/indices stále potřeba). Cleanup nice-to-have:
+// strip UV at source + rename na `_RAMP_RAW_GEOM_*` (delegováno na cleanup commit).
+//
+// Per-typ vertex count per **logical face group** (matching faceIdx v IIFE
+// `addTri/addQuad`). TDRAMP má 7 fyzických faces ve 5 color groups (WALL_FULL =
+// 2 quads × 4v = 8, WALL_TRI = 2 tris × 3v = 6).
+const RAMP_FACE_VERT_COUNTS = {
+  trramps: [4, 4, 4, 3, 3],   // [SLOPE, BOTTOM, BACK, LEFT, RIGHT]
+  ttramps: [3, 3, 3, 3],      // [SLOPE, BOTTOM, BACK, LEFT]
+  tdramp:  [3, 3, 4, 8, 6],   // [SLOPE, TOP, BOTTOM, WALL_FULL, WALL_TRI]
+};
+
+// Per faceIdx mapuje na klíč v `BLOCK_COLORS[surface]` paletě. SLOPE/TOP =
+// `.TOP` (vrchní barva kindu — grass zelená, ostatní matching kind), BOTTOM =
+// `.BOTTOM`, ostatní stěny = `.SIDE`. TDRAMP SLOPE+TOP sdílí `.TOP` (vizuálně
+// 1 lomený povrch — DD-35 sez. 26).
+const RAMP_FACE_PALETTE_KEYS = {
+  trramps: ["TOP", "BOTTOM", "SIDE", "SIDE", "SIDE"],
+  ttramps: ["TOP", "BOTTOM", "SIDE", "SIDE"],
+  tdramp:  ["TOP", "TOP",    "BOTTOM", "SIDE", "SIDE"],
+};
+
+// Cache `${type}:${surface}` → BufferGeometry. 3 typy × 3 surfaces = max 9 entries.
+const _lowpolyRampGeomCache = new Map();
+function getRampGeom(type, surface) {
+  const cacheKey = `${type}:${surface}`;
+  let cached = _lowpolyRampGeomCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const palette     = BLOCK_COLORS[surface];
+  const vertCounts  = RAMP_FACE_VERT_COUNTS[type];
+  const paletteKeys = RAMP_FACE_PALETTE_KEYS[type];
+  const atlasGeom   = type === "trramps" ? TRRAMP_GEOM_CACHE
+                    : type === "ttramps" ? TTRAMP_GEOM_CACHE
+                    : type === "tdramp"  ? TDRAMP_GEOM_CACHE
+                    : null;
+  if (!palette || !vertCounts || !paletteKeys || !atlasGeom) {
+    _lowpolyRampGeomCache.set(cacheKey, null);
     return null;
   }
-  // Slep 6 facelet do jednoho canvasu 96×16. Každý facelet vytaha ze sdílené
-  // `:named-texture` přes `getNamedTexture` (F5 fix — atlas a slow path teď
-  // čerpají ze stejné cached instance, takže random patches matchnou).
-  const canvas = document.createElement("canvas");
-  canvas.width  = ATLAS_TILE_PX * 6;
-  canvas.height = ATLAS_TILE_PX;
-  const ctx = canvas.getContext("2d");
-  ctx.imageSmoothingEnabled = false;  // pixel-art look (žádný blur)
-  for (let i = 0; i < 6; i++) {
-    const texName = faces[ATLAS_FACE_KEYS[i]];
-    if (typeof texName !== "string" || !texName.startsWith(":")) continue;
-    const subTex = getNamedTexture(texName);
-    if (subTex?.image) {
-      ctx.drawImage(subTex.image, i * ATLAS_TILE_PX, 0, ATLAS_TILE_PX, ATLAS_TILE_PX);
+  const geom = atlasGeom.clone();
+  geom.deleteAttribute("uv");  // vertex colors nahrazují atlas texturu
+  const totalVerts = vertCounts.reduce((a, b) => a + b, 0);
+  const colorArr = new Float32Array(totalVerts * 3);
+  let vertOffset = 0;
+  for (let face = 0; face < vertCounts.length; face++) {
+    _tmpColor.setHex(palette[paletteKeys[face]]);
+    _tmpColor.convertSRGBToLinear();  // sRGB → linear (parita s getTcubesKindGeom)
+    for (let v = 0; v < vertCounts[face]; v++) {
+      const idx = (vertOffset + v) * 3;
+      colorArr[idx + 0] = _tmpColor.r;
+      colorArr[idx + 1] = _tmpColor.g;
+      colorArr[idx + 2] = _tmpColor.b;
     }
+    vertOffset += vertCounts[face];
   }
-  const atlasTex = new THREE.CanvasTexture(canvas);
-  atlasTex.magFilter = THREE.NearestFilter;
-  atlasTex.minFilter = THREE.NearestFilter;
-  atlasTex.colorSpace = THREE.SRGBColorSpace;  // shoda s :named-texture barvami
-  const mat = new THREE.MeshStandardMaterial({ map: atlasTex });
-  _tcubesAtlasMatCache.set(kind, mat);
-  return mat;
+  geom.setAttribute("color", new THREE.Float32BufferAttribute(colorArr, 3));
+  _lowpolyRampGeomCache.set(cacheKey, geom);
+  return geom;
 }
 
 function createBlock(kind, x, y, z) {
-  const tex = BLOCK_TEXTURES[kind] ?? BLOCK_TEXTURES.dirt;
   return new TCUBES(
     `terrain_${kind}_${x}_${y}_${z}`,
     kind,
-    x, y, z, tex,
+    x, y, z,
     `TCUBES — terrain ${kind} blok (generateTerrain).`,
   );
 }
@@ -2211,7 +2201,7 @@ function createWaterPlane(w) {
   return mesh;
 }
 
-// === Ramp builders (DD-34 kandidát, sez. 26) ================================
+// === Ramp dispatch (DD-34 kandidát, sez. 26; DD-41 lowpoly sez. 34) =========
 // `generateTerrain` krok 5 vrací `ramps[]` se 2 kindy:
 //   - "edge"   → TRRAMPS (klín) — primární přístupový ramp; volba směru
 //                greedy s criticality, compatibility check proti sousedním
@@ -2220,85 +2210,12 @@ function createWaterPlane(w) {
 //                diag peak (A má 0 direct vyšších, ale diag corner vyšší
 //                + oba direct sousedi rohu jsou na úrovni A). Vyhladí ostrý
 //                rohový voxel; **není accessibility**, jen vyhlazení hrany.
-// SLOPE textura matchuje povrch vyššího cellu; boční stěny `:dirt` pro grass
-// (severská konvence „vrch grass, jinak dirt" sez. 17), jednotná pro stone/sand.
-const RAMP_EDGE_TEXTURES = {
-  grass: { SLOPE: ":grass-top", BOTTOM: ":dirt",  BACK: ":dirt",  LEFT: ":dirt",  RIGHT: ":dirt"  },
-  stone: { SLOPE: ":stone",     BOTTOM: ":stone", BACK: ":stone", LEFT: ":stone", RIGHT: ":stone" },
-  sand:  { SLOPE: ":sand",      BOTTOM: ":sand",  BACK: ":sand",  LEFT: ":sand",  RIGHT: ":sand"  },
-};
-const RAMP_CORNER_TEXTURES = {
-  grass: { SLOPE: ":grass-top", BOTTOM: ":dirt",  BACK: ":dirt",  LEFT: ":dirt"  },
-  stone: { SLOPE: ":stone",     BOTTOM: ":stone", BACK: ":stone", LEFT: ":stone" },
-  sand:  { SLOPE: ":sand",      BOTTOM: ":sand",  BACK: ":sand",  LEFT: ":sand"  },
-};
-// TDRAMP texture sety — severská konvence (vrch grass-top, ostatní dirt).
-// SLOPE + TOP sdílí texturu (vizuálně 1 lomený povrch).
-const RAMP_DIAGONAL_TEXTURES = {
-  grass: { SLOPE: ":grass-top", TOP: ":grass-top", BOTTOM: ":dirt",  WALL_FULL: ":dirt",  WALL_TRI: ":dirt"  },
-  stone: { SLOPE: ":stone",     TOP: ":stone",     BOTTOM: ":stone", WALL_FULL: ":stone", WALL_TRI: ":stone" },
-  sand:  { SLOPE: ":sand",      TOP: ":sand",      BOTTOM: ":sand",  WALL_FULL: ":sand",  WALL_TRI: ":sand"  },
-};
+//   - "diagonal" → TDRAMP — 1C blok bez 1 horního rohu pro 3-cell convex peak.
+// Barvy SLOPE/TOP/sides řízeny `BLOCK_COLORS` + `RAMP_FACE_PALETTE_KEYS` v
+// G0b lowpoly pipeline (viz `getRampGeom` výše). Sez. 17 severská konvence:
+// vrch grass-top, jinak dirt — vyjádřeno přes `palette.TOP` vs. `palette.SIDE`.
 
-// === Ramp atlas pipeline (DD-36) ============================================
-// Izomorfně s TCUBES atlas pipeline (`getTcubesKindMaterial`): per (typ, surface)
-// jeden atlas material — N facelet textur slepených do canvasu N×16 × 16 px,
-// UV v geometrii každého ramp typu jsou remapnuté na 1/N-tici v U-axis.
-// Cíl: 5/4/5 draw calls per ramp instance → 1 draw call. Pro default seed 42
-// (30×30) = ~34 ramp instancí × průměr 4.7 calls = ~160 calls → ~34 calls.
-
-// `instance.KIND` má tvar `ramp_<surface>` (z `createRampEdge/Corner/Diagonal`).
-const RAMP_SURFACE_FROM_KIND = {
-  ramp_grass: "grass",
-  ramp_stone: "stone",
-  ramp_sand:  "sand",
-};
-
-// Per ramp typ: pořadí klíčů v texSet musí ladit s `faceIdx` v IIFE geometrie.
-const RAMP_ATLAS_SPECS = {
-  trramps: { keys: ["SLOPE", "BOTTOM", "BACK", "LEFT", "RIGHT"],            texTable: RAMP_EDGE_TEXTURES     },
-  ttramps: { keys: ["SLOPE", "BOTTOM", "BACK", "LEFT"],                     texTable: RAMP_CORNER_TEXTURES   },
-  tdramp:  { keys: ["SLOPE", "TOP", "BOTTOM", "WALL_FULL", "WALL_TRI"],     texTable: RAMP_DIAGONAL_TEXTURES },
-};
-
-// Lazy cache: klíč `${type}_${surface}` → MeshStandardMaterial. Build je
-// idempotentní (factory volaná opakovaně vrací stejný materiál z cache).
-// Třetí ze tří paralelních cache — viz komentář u `_faceMaterialCache` výše.
-const _rampsAtlasMatCache = new Map();
-function getRampAtlasMaterial(type, surface) {
-  const key = `${type}_${surface}`;
-  const cached = _rampsAtlasMatCache.get(key);
-  if (cached !== undefined) return cached;  // může být i `null` cached miss
-  const spec = RAMP_ATLAS_SPECS[type];
-  const texSet = spec?.texTable[surface];
-  if (!spec || !texSet) {
-    _rampsAtlasMatCache.set(key, null);
-    return null;
-  }
-  const N = spec.keys.length;
-  const canvas = document.createElement("canvas");
-  canvas.width  = ATLAS_TILE_PX * N;
-  canvas.height = ATLAS_TILE_PX;
-  const ctx = canvas.getContext("2d");
-  ctx.imageSmoothingEnabled = false;  // pixel-art look (žádný blur při downscale)
-  for (let i = 0; i < N; i++) {
-    const texName = texSet[spec.keys[i]];
-    if (typeof texName !== "string" || !texName.startsWith(":")) continue;
-    const subTex = getNamedTexture(texName);  // sdílená cached instance (F5)
-    if (subTex?.image) {
-      ctx.drawImage(subTex.image, i * ATLAS_TILE_PX, 0, ATLAS_TILE_PX, ATLAS_TILE_PX);
-    }
-  }
-  const atlasTex = new THREE.CanvasTexture(canvas);
-  atlasTex.magFilter = THREE.NearestFilter;
-  atlasTex.minFilter = THREE.NearestFilter;
-  atlasTex.colorSpace = THREE.SRGBColorSpace;  // shoda s :named-texture barvami
-  const mat = new THREE.MeshStandardMaterial({ map: atlasTex });
-  _rampsAtlasMatCache.set(key, mat);
-  return mat;
-}
-
-// === Terrain InstancedMesh batches (sez. 31, DD-37 kandidát) ================
+// === Terrain InstancedMesh batches (sez. 31, DD-37) =========================
 // Sez. 30 stress test 100×100: 47k draw calls @ FPS 7 (CPU bound). Atlas
 // pipeline (DD-36) sjednotila geom + materiály, ale 1 `THREE.Mesh` = 1 draw
 // call → strop. Tady mergujeme N instancí stejného (geom, atlas mat) páru do
@@ -2373,31 +2290,28 @@ function pushInstanceToBatch(batch, instance, x, y, z, rotY) {
 }
 
 function createRampEdge(r) {
-  const tex = RAMP_EDGE_TEXTURES[r.surface] ?? RAMP_EDGE_TEXTURES.grass;
   return new TRRAMPS(
     `ramp_edge_${r.surface}_${r.x}_${r.y}_${r.z}`,
     `ramp_${r.surface}`,
-    r.x, r.y, r.z, tex, r.orientation,
+    r.x, r.y, r.z, r.orientation,
     `TRRAMPS — edge ramp (${r.surface}) na step generovaného terénu.`,
   );
 }
 
 function createRampCorner(r) {
-  const tex = RAMP_CORNER_TEXTURES[r.surface] ?? RAMP_CORNER_TEXTURES.grass;
   return new TTRAMPS(
     `ramp_corner_${r.surface}_${r.x}_${r.y}_${r.z}`,
     `ramp_${r.surface}`,
-    r.x, r.y, r.z, tex, r.orientation,
+    r.x, r.y, r.z, r.orientation,
     `TTRAMPS — corner ramp (${r.surface}) pro isolated diag peak.`,
   );
 }
 
 function createRampDiagonal(r) {
-  const tex = RAMP_DIAGONAL_TEXTURES[r.surface] ?? RAMP_DIAGONAL_TEXTURES.grass;
   return new TDRAMP(
     `ramp_diagonal_${r.surface}_${r.x}_${r.y}_${r.z}`,
     `ramp_${r.surface}`,
-    r.x, r.y, r.z, tex, r.orientation,
+    r.x, r.y, r.z, r.orientation,
     `TDRAMP — diagonální rampa (${r.surface}) pro 3-cell convex peak.`,
   );
 }
@@ -2417,9 +2331,8 @@ const TERRAIN_DEFAULTS = {
 //
 // 3-pass:
 //   1) Pre-count instancí per batch klíč (pro alokaci kapacity).
-//   2) Alokuj batchy (`createTerrainBatch` přes `getSharedAtlasBoxGeom` +
-//      `getTcubesKindMaterial` pro TCUBES, ramp geom cache + `getRampAtlasMaterial`
-//      pro rampy).
+//   2) Alokuj batchy — všechny terrain batche sdílí `_lowpolyMat`, geom je
+//      per-kind (`getTcubesKindGeom`) nebo per (typ, surface) (`getRampGeom`).
 //   3) Spawn instancí (`pushInstanceToBatch` plní matrix + barvu + map).
 function spawnTerrain(params) {
   const terrain = generateTerrain(params);
@@ -2427,7 +2340,7 @@ function spawnTerrain(params) {
   // 1) Pre-count.
   const counts = new Map();  // batchKey → int
   for (const [kind] of terrain.blocks) {
-    if (!BLOCK_TEXTURES[kind]) continue;  // unknown kind skip (slow path neexistuje pro terrain)
+    if (!BLOCK_COLORS[kind]) continue;  // unknown kind skip (slow path neexistuje pro terrain)
     const key = `tcubes:${kind}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
@@ -2445,17 +2358,15 @@ function spawnTerrain(params) {
     const [type, surface] = key.split(":");
     let geom, mat;
     if (type === "tcubes") {
-      geom = getSharedAtlasBoxGeom();
-      mat  = getTcubesKindMaterial(surface);  // surface tady = kind (grass/dirt/stone/sand)
-    } else if (type === "trramps") {
-      geom = TRRAMP_GEOM_CACHE;
-      mat  = getRampAtlasMaterial("trramps", surface);
-    } else if (type === "ttramps") {
-      geom = TTRAMP_GEOM_CACHE;
-      mat  = getRampAtlasMaterial("ttramps", surface);
-    } else if (type === "tdramp") {
-      geom = TDRAMP_GEOM_CACHE;
-      mat  = getRampAtlasMaterial("tdramp", surface);
+      // G0a (sez. 34): vertex-color pipeline — per-kind geom drží barvy v
+      // color attribute, mat shared napříč všemi terrain batchi.
+      geom = getTcubesKindGeom(surface);  // surface tady = kind (grass/dirt/stone/sand)
+      mat  = _lowpolyMat;
+    } else if (type === "trramps" || type === "ttramps" || type === "tdramp") {
+      // G0b (sez. 34): per (type, surface) lowpoly ramp geom s vertex colors,
+      // shared `_lowpolyMat` napříč všemi 9 (type×surface) batchi.
+      geom = getRampGeom(type, surface);
+      mat  = _lowpolyMat;
     }
     if (!geom || !mat) continue;
     createTerrainBatch(key, geom, mat, capacity);
@@ -2899,9 +2810,11 @@ function animate() {
 
   // Perf HUD report 1×/s — `renderer.info.render.*` reflektuje *poslední*
   // render() (právě výš), takže čteme po něm. `info.memory.*` jsou kumulativní
-  // counts napříč scénou (geometries+textures alive). `mat` = součet všech
-  // material cache (slow path `_faceMaterialCache` + atlas pipeline TCUBES
-  // + atlas pipeline rampy — Three.js nemá native material count).
+  // counts napříč scénou (geometries+textures alive). `mat` = součet
+  // material cache (slow path `_faceMaterialCache` — Three.js nemá native
+  // material count). Po DD-41 (sez. 34) lowpoly pipeline drží jen 1 sdílený
+  // `_lowpolyMat` napříč všemi terrain batchi, nejde do žádné cache → není
+  // počítán; `mat` reflektuje jen non-terrain materiály.
   _perfHud.frameCount++;
   if (now - _perfHud.lastReport >= 1.0) {
     const fps = _perfHud.frameCount / (now - _perfHud.lastReport);
@@ -2909,9 +2822,7 @@ function animate() {
     _perfHud.el.calls.textContent = renderer.info.render.calls;
     _perfHud.el.tri.textContent   = renderer.info.render.triangles.toLocaleString("cs-CZ");
     _perfHud.el.geom.textContent  = renderer.info.memory.geometries;
-    _perfHud.el.mat.textContent   = _faceMaterialCache.size
-                                  + _tcubesAtlasMatCache.size
-                                  + _rampsAtlasMatCache.size;
+    _perfHud.el.mat.textContent   = _faceMaterialCache.size;
     _perfHud.frameCount = 0;
     _perfHud.lastReport = now;
   }

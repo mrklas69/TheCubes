@@ -19,13 +19,17 @@
 
 ### Roadmap kapitoly (sez. 34+ kandidáti)
 
-- [ ] **G0 Totální předělávka zobrazení bloků a ramp** — od atlas textur k lowpoly barevným objektům (no texture, plné barvy per face nebo per voxel). Důvod: pixel-art atlas má vizuální dluh (tile pattern uvnitř kindu, atlas/slow-path texture-source divergence — F5 sez. 32 fix částečný). Lowpoly + flat shading by simplifikoval pipeline + uvolnil draw call rozpočet (1 material per kind). DD-scale.
+- [x] **G0 Lowpoly vertex-color pipeline** *(sez. 34, DD-41 supersede DD-36 atlas)* — atlas textury → vertex colors per face na sdíleném `MeshLambertMaterial({ vertexColors: true })`. G0a TCUBES + G0b rampy + cleanup atlas builders. Viz DONE.md + DD-41.
 - [ ] **G1 Volba max Y** (výška kopců) — UI slider pro `RELIEF_AMPLITUDE` clamp, případně závislý na `MIN(sizeX, sizeZ)` (na 10×10 mapě nemá smysl alpine 6 voxelů — proporce).
 - [ ] **G2 Severní šířka / podnební pásmo** — `WORLD.LATITUDE` nebo `world.CLIMATE` atribut (gated po DD-29 politice). Konzument: sun tilt (přidá k DD-38 fixed `SUN_TILT = π/6`), sezónní paleta, surface mix.
 - [ ] **G3 SURFACES závislé na G2** — biome map z `generateTerrain` (sand u rovníku, grass mírné pásmo, snow polar). Refactor `surfaces: { grass, stone, sand, water }` z UI prop na driver-derived per `world.CLIMATE`.
 
 ### Otevřené body / kandidáti DD
 
+- [ ] **Drop-in animace tiles při `regenerateScene`** *(z `tiny-world-builder` `dropAnims` queue)* — staggered ease-out fade-in nových instancí po spawn (~120 ms per cell). Vizuálně oživuje regen místo "instant pop". Per-batch `instanceMatrix` interpolace nebo `userData.dropTime` čítač v animators.
+- [ ] **Tilt-shift post-process** *(z `tiny-world-builder` estetika)* — gradient blur podle screen Y (přední/zadní rozmazání = "miniaturní svět" feel). Rozšíření / replace BokehPass (sez. 31 dnes distance-based DOF). DD-kandidát po vyladění.
+- [ ] **`ExtrudeGeometry` pro rampy** *(lazy refactor po G0b)* — `tiny-world-builder` pattern nahrazuje custom BufferGeometry buildery (3 typy ramp) ExtrudeGeometry shape + depth. Diminishing returns po G0 (vertex colors už řeší dluh), nice-to-have simplifikace.
+- [ ] **Adjacency-aware re-render pattern** *(z `tiny-world-builder` `setCell`)* — pro budoucí PATH/FENCE/WALL třídy: změna v cellu re-renderuje sousedy (cesty se spojí, ploty zdi). Mimo terrain batched dispatch, samostatný layer.
 - [ ] **BatchedMesh refactor** — sez. 31 InstancedMesh (DD-37) srazila 100×100 na ~13 draw calls. Three.js `BatchedMesh` (r167+) by mohl sloučit TCUBES + rampy do ~3 calls (per-instance geom). Projekt na r160 — vyžaduje bump + nové API porozumění. Diminishing returns (13 → 3 = velmi marginální FPS), low prio.
 - [ ] **`LIQUID` třída** (DD-25 vrstva 4) pro vodní plane(y) — momentálně mimo OOP model (DD-33 kandidát).
 - [ ] **Klastrování spojitých water cells** do bounding boxů (flood-fill, jeden plane na celé jezero) místo 1×1 per cell.
@@ -42,7 +46,12 @@
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — 3/8 sezení od sez. 29. Další doporučený sez. 37+.
-- **`%AUDIT:DOCS`** — 3/10 sezení od sez. 29. Další doporučený sez. 39+.
-- **IDEAS/TODO pruning** — 0/12 (reset sez. 33).
+- **`%AUDIT:CODE`** — 5/8 sezení od sez. 29. Další doporučený sez. 37+.
+- **`%AUDIT:DOCS`** — 5/10 sezení od sez. 29. Další doporučený sez. 39+.
+- **IDEAS/TODO pruning** — 1/12 (sez. 34: close G0, add 4 follow-up tiny-world-builder + 2 G0 sub-prah).
 - **`%CALIBRATE`** — sub-prah „CLAUDE.md +50 %" stále resetnut.
+
+## Sub-prah (G0 follow-up)
+
+- [ ] **Atlas IIFE raw geom strip UV at source** + rename na `_RAMP_RAW_GEOM_*` — IIFE pořád builduje UV + `remapU` (~50 ř. zbytečný compute), `getRampGeom` to stripuje v clone. KISS dluh.
+- [ ] **TTUNELS migrate na lowpoly** — TTUNELS si zachovává `TEXTURE_*` fields + atlas pipeline (mimo G0 scope). Buď migrate na vertex colors nebo drop dead třída (žádný producer ji nespawne).

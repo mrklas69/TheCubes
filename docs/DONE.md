@@ -519,3 +519,22 @@ Reload `:8000`, posun DAY slideru 0.25 → 0.75 (poledne → půlnoc), test lamp
 ### Diff celkem
 
 `src/main.js` ~+90/−50 (atmospheric konstanty + `updateAtmosphere` + LAMP import + `buildLamp` + dispatch + render loop; cleanup GridHelper/AxesHelper/groundPlane/lamp instance), `src/model.js` +11 (LAMP třída), `index.html` ~−10 (CSS + DOM `<div>` + JS reliefName + `title=` add), `docs/DESIGN_DECISIONS.md` ~+135 (DD-39 + DD-40), `docs/*` ~+200 ř. (TODO update G0-G3 + DAY-cycle + audit cadence; DIARY index + sez. 33; GLOSSARY LAMP + atmospheric; IDEAS pruning Voidspan/Performance/SEASON).
+
+## Sezení 34 (2026-05-13) — G0 Lowpoly vertex-color pipeline (DD-41 supersede DD-36)
+
+- [x] **G0a TCUBES → vertex colors.** `BLOCK_COLORS` 3-key paleta (TOP/BOTTOM/SIDE × 4 kindy grass/dirt/stone/sand), sdílený `_lowpolyMat = MeshLambertMaterial({ vertexColors: true })`. `getTcubesKindGeom(kind)` cache `BoxGeometry` s color attribute (24 verts × 3 floats, sRGB→linear convert). `spawnTerrain` Pass 1 whitelist `BLOCK_COLORS` + Pass 2 TCUBES dispatch `geom = getTcubesKindGeom(surface)`, `mat = _lowpolyMat`. DD-37 InstancedMesh batche unchanged.
+- [x] **G0b Rampy → vertex colors.** `RAMP_FACE_VERT_COUNTS` per typ (trramps `[4,4,4,3,3]` / ttramps `[3,3,3,3]` / tdramp `[3,3,4,8,6]`), `RAMP_FACE_PALETTE_KEYS` mapuje faceIdx na BLOCK_COLORS klíč. `_lowpolyRampGeomCache: Map<"trramps:grass", BufferGeometry>` + `getRampGeom(type, surface)` klonuje atlas IIFE raw geom (TRRAMP/TTRAMP/TDRAMP_GEOM_CACHE) + drop UV + inject color attribute. `spawnTerrain` Pass 2 ramp dispatch sloučen do 1 větve (3 typů → shared mat).
+- [x] **flatShading: true → drop (user nález seam).** Při slabém světle viditelné šedé/černé linky mezi sousedními voxely. Diagnóza: `flatShading: true` nutí shader spočítat normálu z `dFdx/dFdy` derivatives → InstancedMesh cross-instance precision artifact. Fix: drop `flatShading: true` (default false), shader vezme per-face normály z `geometry.attributes.normal` (BoxGeometry už má per-face normály z vertices nesdílené přes faces).
+- [x] **Palette tweak (user).** Sand více žlutá (`0xe8d97a` TOP / `0xd9c66a` sides), stone světlejší šedá (`0x9a9a9a` / `0x8a8a8a`).
+- [x] **Cleanup atlas garbage.** Smazáno: `BLOCK_TEXTURES`, `ATLAS_TILE_PX`, `ATLAS_FACE_KEYS`, `_sharedAtlasBoxGeom` + `getSharedAtlasBoxGeom()`, `_tcubesAtlasMatCache` + `getTcubesKindMaterial()`, `RAMP_EDGE_TEXTURES`, `RAMP_CORNER_TEXTURES`, `RAMP_DIAGONAL_TEXTURES`, `RAMP_SURFACE_FROM_KIND`, `RAMP_ATLAS_SPECS`, `_rampsAtlasMatCache` + `getRampAtlasMaterial()`, `createTRRampFor`, `createTTRampFor`, `createTDRampFor` slow-path funkce, `createMeshFor` ramp dispatch case, `createTCubeFor` atlas fast-path + slow-path material[6] array (nahrazeno lowpoly + šachovnice fallback DD-07). Perf HUD `mat` čítač: drop atlas cache součty.
+- [x] **Model.js drop tex args.** TCUBES/TRRAMPS/TTRAMPS/TDRAMP constructory: drop `textures` arg + `TEXTURE_*` fields. JSDoc updated (face geometry zachována, drop per-face `TEXTURE_*` atribut prefix; nové wording odkazuje na `BLOCK_COLORS` + `RAMP_FACE_PALETTE_KEYS`). TTUNELS si zachovává `TEXTURE_*` (mimo G0 scope, sub-prah TODO).
+- [x] **TODO follow-up z `tiny-world-builder` inspirace** (4 body): drop-in animace tiles při `regenerateScene` (z `dropAnims` queue), tilt-shift post-process (gradient blur podle screen Y), `ExtrudeGeometry` pro rampy (lazy refactor), adjacency-aware re-render pattern pro PATH/FENCE/WALL.
+- [x] **DD-41 zápis** (immutable log, supersede DD-36 atlas pipeline).
+
+### Test (user)
+
+100×100: FPS **101** (parita sez. 31 baseline 104, statisticky stejné), 15 geomů, 13 batchů zachovaných (DD-37 stable). Hover overbright (DD-37 `instanceColor` × vertex colors multiplikativně) funguje. DD-39 atmospheric lerp (day↔night) funguje. 30×30 seam fix verifikován při slabém světle.
+
+### Diff celkem
+
+`src/main.js` ~+150/−250 (G0a/G0b lowpoly pipeline ~+150 ř., atlas builders/tabulky ~−200 ř., cleanup `createTCubeFor`/`createMeshFor` dispatch ~−50 ř., net ~−120 ř.), `src/model.js` ~−25 ř. (drop `textures` args + `TEXTURE_*` fields z 4 BLOCKS tříd, JSDoc rewrite), `docs/DESIGN_DECISIONS.md` ~+90 (DD-41), `docs/*` ~+200 ř. (TODO close G0 + 4 follow-up + 2 sub-prah; DIARY index + sez. 34 sekce; GLOSSARY DD-41 termíny).
