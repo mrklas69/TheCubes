@@ -129,6 +129,16 @@
       font-size: 13px;
       font-variant-numeric: tabular-nums;
     }
+    /* Climate sekce (G2, sez. 35) — širší val column pro slovní enum hodnoty
+       (Tropický/Subtropický/...). Biome readout = derivovaný atribut, tyrkysový
+       akcent symbolizuje read-only (= odvozeno z LATITUDE × HUMIDITY). */
+    #terrainctrl .climate-row { grid-template-columns: 56px 1fr 88px; }
+    #terrainctrl .tc-biome {
+      margin-top: 6px;
+      font-size: 12px;
+      opacity: 0.85;
+      color: #66ccdd;
+    }
 
     /* Settings panel — levý dolní roh. Izomorfně s `#terrainctrl` (stejný
        transparent black, coral akcent header, tyrkysový accent input). */
@@ -269,6 +279,24 @@
         <input type="number" id="tc-seed" value="42" step="1">
       </div>
     </div>
+
+    <!-- Climate sekce (G2, sez. 35) — WORLD atributy LATITUDE × HUMIDITY (4×3
+         biome matice). MVP konzument: sun tilt fce LATITUDE (per-frame v
+         updateSun()) + biome name readout (display-only). G3: surface mix driver. -->
+    <div class="tc-section">
+      <div class="tc-label">Climate</div>
+      <div class="tc-row climate-row">
+        <span class="tc-key">pásmo</span>
+        <input type="range" id="tc-latitude" min="0" max="3" step="1" value="2">
+        <span class="tc-val" id="tc-latitude-val">Mírný</span>
+      </div>
+      <div class="tc-row climate-row">
+        <span class="tc-key">vlhkost</span>
+        <input type="range" id="tc-humidity" min="0" max="2" step="1" value="1">
+        <span class="tc-val" id="tc-humidity-val">Středně</span>
+      </div>
+      <div class="tc-biome">► biome: <span id="tc-biome-val">Step / Prérie</span></div>
+    </div>
   </div>
 
   <!-- Settings panel (sez. 31, rozšířen sez. 32) — vizuální toggle + WORLD
@@ -280,8 +308,8 @@
     <label><input type="checkbox" id="set-fog" checked> Fog (mlha)</label>
     <label><input type="checkbox" id="set-sun" checked> Slunce</label>
     <div class="slider-row">
-      <label for="set-day">DAY <span id="set-day-val">0.25</span></label>
-      <input type="range" id="set-day" min="0" max="0.999" step="0.01" value="0.25">
+      <label for="set-day">DAY <span id="set-day-val">0.50</span></label>
+      <input type="range" id="set-day" min="0" max="0.999" step="0.01" value="0.5">
     </div>
     <div class="slider-row">
       <label for="set-day-speed">DAY_SPEED <span id="set-day-speed-val">0.000</span></label>
@@ -321,9 +349,17 @@
       );
 
       // Sestaví aktuální parametry z UI stavu. Volaný z `change` handleru.
+      // Sez. 35 fix: divide-by-sum normalize finální surfaces — eliminuje rounding
+      // drift z `toFixed(2)` v `normalizeSurfaces()` (worst case ±0.02 po sekvenci
+      // multi-slider pohybů). Generátor má tolerance jen ±0.001 → drift = throw =
+      // tichá failure regen. Sum-based divide garantuje sum=1.0 přesně.
       function readParams() {
         const surfaces = {};
         SURFACE_KINDS.forEach((k) => { surfaces[k] = parseFloat(surfInputs[k].value); });
+        const sum = Object.values(surfaces).reduce((a, b) => a + b, 0);
+        if (sum > 0) {
+          SURFACE_KINDS.forEach((k) => { surfaces[k] /= sum; });
+        }
         return {
           size:     [parseInt(sizeX.value, 10), parseInt(sizeZ.value, 10)],
           relief:   parseInt(relief.value, 10),
@@ -361,9 +397,27 @@
         });
       }
 
+      // G1 (sez. 35) — dynamický clamp `#tc-relief` slider `max` dle MIN(sx, sz).
+      // Mapa 10×10 nedává proporční smysl pro alpine reliéf (vertikální stěny
+      // dominují celé šířce). Helper `window.maxReliefForSize` (exposed v main.js
+      // z `src/terrain.js`) vrací max reliefIdx, který má pro daný size smysl.
+      // Pokud aktuální `relief.value` přesahuje nový max, sníží ji + sync readout.
+      // Programmatic value set `change` event NEemituje — žádný regen feedback loop.
+      function updateReliefSliderMax() {
+        const sx = parseInt(sizeX.value, 10);
+        const sz = parseInt(sizeZ.value, 10);
+        const newMax = window.maxReliefForSize?.(sx, sz) ?? 10;
+        relief.max = String(newMax);
+        if (parseInt(relief.value, 10) > newMax) {
+          relief.value = String(newMax);
+          reliefVal.textContent = relief.value;
+          relief.title = RELIEF_NAMES[newMax];
+        }
+      }
+
       // `input` (live při dragu) — jen readout + auto-normalize. NEspouští regen.
-      sizeX.addEventListener("input",  () => { sizeXVal.textContent  = sizeX.value; });
-      sizeZ.addEventListener("input",  () => { sizeZVal.textContent  = sizeZ.value; });
+      sizeX.addEventListener("input",  () => { sizeXVal.textContent  = sizeX.value; updateReliefSliderMax(); });
+      sizeZ.addEventListener("input",  () => { sizeZVal.textContent  = sizeZ.value; updateReliefSliderMax(); });
       relief.addEventListener("input", () => {
         reliefVal.textContent = relief.value;
         // RELIEF_NAMES popisek je v `title` atributu — browser ho ukáže jako
@@ -387,6 +441,48 @@
       };
       [sizeX, sizeZ, relief, seed].forEach((el) => el.addEventListener("change", onChange));
       SURFACE_KINDS.forEach((k) => surfInputs[k].addEventListener("change", onChange));
+
+      // Init — sync `relief.max` s defaultním size 10×10 (= relief 0..3).
+      // `defer` na `<script type="module">` (main.js) garantuje, že
+      // `window.maxReliefForSize` je v okamžiku tohoto IIFE běhu definován.
+      updateReliefSliderMax();
+
+      // === Climate (G2, sez. 35) — LATITUDE × HUMIDITY slidery + biome readout. ===
+      // Ne-regenerace pattern: changes mutují jen `world.LATITUDE`/`world.HUMIDITY`
+      // přes `window.settings`. Sun tilt změny jsou viditelné per-frame v updateSun()
+      // (žádný terrain rebuild). G3 přidá `change` event regen pro surface mix.
+      const LATITUDE_KEYS  = ["tropical", "subtropical", "temperate", "polar"];
+      const LATITUDE_NAMES = ["Tropický", "Subtropický", "Mírný", "Polární"];
+      const HUMIDITY_KEYS  = ["wet", "mid", "dry"];
+      const HUMIDITY_NAMES = ["Vlhko", "Středně", "Sucho"];
+      const lat      = $("tc-latitude"), latVal   = $("tc-latitude-val");
+      const hum      = $("tc-humidity"), humVal   = $("tc-humidity-val");
+      const biomeVal = $("tc-biome-val");
+
+      // Biome name readout = derivovaný z aktuální LATITUDE × HUMIDITY combo.
+      // BIOME_NAMES tabulka v `src/terrain.js`, exposed jako `window.BIOME_NAMES`.
+      function updateBiomeReadout() {
+        const latKey = LATITUDE_KEYS[parseInt(lat.value, 10)];
+        const humKey = HUMIDITY_KEYS[parseInt(hum.value, 10)];
+        biomeVal.textContent = window.BIOME_NAMES?.[latKey]?.[humKey] ?? "—";
+      }
+
+      lat.addEventListener("input", () => {
+        const idx = parseInt(lat.value, 10);
+        latVal.textContent = LATITUDE_NAMES[idx];
+        window.settings.setLatitude(LATITUDE_KEYS[idx]);
+        updateBiomeReadout();
+      });
+      hum.addEventListener("input", () => {
+        const idx = parseInt(hum.value, 10);
+        humVal.textContent = HUMIDITY_NAMES[idx];
+        window.settings.setHumidity(HUMIDITY_KEYS[idx]);
+        updateBiomeReadout();
+      });
+
+      // Init readout (default LATITUDE=temperate idx 2, HUMIDITY=mid idx 1 →
+      // biome = "Step / Prérie"). Sync HTML default `value` s WORLD constructor.
+      updateBiomeReadout();
     })();
   </script>
 

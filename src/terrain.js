@@ -409,3 +409,36 @@ export function generateTerrain({ size, relief, surfaces, seed = 42 }) {
 
   return { blocks, water, ramps };
 }
+
+// === G2 (sez. 35) — biome matice 4×3 (LATITUDE × HUMIDITY). ===
+// `world.LATITUDE` enum × `world.HUMIDITY` enum → display jméno biomu pro UI
+// readout v `#terrainctrl` Climate sekci. G3 konzument: surface mix lookup
+// (driver `surfaces` z biomu místo UI props). Polární vlhko geografi vzácné →
+// "—" placeholder, UI to zobrazí jako prázdný biome (žádný downstream selhán).
+export const BIOME_NAMES = {
+  tropical:    { wet: "Tropický deštný prales", mid: "Savana",        dry: "Horká poušť" },
+  subtropical: { wet: "Vlhké subtropy",         mid: "Mediteránní",   dry: "Subtropická step" },
+  temperate:   { wet: "Listnatý les",           mid: "Step / Prérie", dry: "Chladná poušť" },
+  polar:       { wet: "—",                      mid: "Tundra",        dry: "Ledová poušť" },
+};
+
+// === G1 (sez. 35) — UI slider clamp dle MIN(sx, sz). ===
+// Mapa 10×10 nedává proporční smysl pro alpine 6 voxelů Y (ostré vertikální
+// stěny dominují celé šířce). Helper vrací max relief index (0..10), který má
+// smysl pro daný size — UI panel `#terrainctrl` jím dynamicky nastaví
+// `<input id="tc-relief">` `max` attribute. Generátor (`generateTerrain`)
+// samotný zůstává unconstrained — clamp je čistě UX gate (KISS).
+//
+// Vzorec: max amplitude = floor(MIN(sx, sz) / 10), tj. 1 voxel max-Y per
+// 10 voxelů strany. Reverse lookup do `RELIEF_AMPLITUDE` → poslední `reliefIdx`,
+// jehož amplitude se vejde. Index 8 (= cap amplitude 6) povýšíme na 10, protože
+// relief 9..10 generátor stejně graceful clampuje na 8 (zachová celé 11-jmenné
+// spektrum názvů od Flat po Alpine na velkých mapách).
+export function maxReliefForSize(sx, sz) {
+  const maxAmp = Math.floor(Math.min(sx, sz) / 10);
+  let last = 0;
+  for (let i = 0; i < RELIEF_AMPLITUDE.length; i++) {
+    if (RELIEF_AMPLITUDE[i] <= maxAmp) last = i;
+  }
+  return last === 8 ? 10 : last;
+}

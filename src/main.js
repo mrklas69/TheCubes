@@ -12,7 +12,7 @@ import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, TTUNELS, SPRITES, COMPOSITES, LAMP, PATH, TIMER, COUNTER, WORLD } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
-import { generateTerrain } from "./terrain.js";
+import { generateTerrain, maxReliefForSize, BIOME_NAMES } from "./terrain.js";
 
 // === Renderer ===
 // WebGLRenderer = Three.js komponenta, která překládá scénu na GPU volání.
@@ -36,8 +36,11 @@ renderer.shadowMap.type = THREE.PCFShadowMap;
 const scene = new THREE.Scene();
 // Sky/ambient paleta — keypointy pro day/night cyklus. Driver: `world.DAY`
 // (DD-38). `updateAtmosphere()` per-frame lerpuje `scene.background` + `sceneFog.
-// color` + `ambientLight.intensity` mezi NIGHT a DAY podle `max(0, sin(2π·DAY))`
+// color` + `ambientLight.intensity` mezi NIGHT a DAY podle `max(0, -cos(2π·DAY))`
 // — stejná křivka jako sun intensity (DRY s `updateSun()`).
+// Posun křivky `sin` → `-cos` (sez. 35): DAY=0.5 = poledne (intuitivní 24h cyklus
+// 0=půlnoc, 0.25=východ, 0.5=poledne, 0.75=západ), nahrazuje původní DD-38 mapping
+// kde 0.25=poledne (matematicky úsporné, prakticky matoucí pro user-facing slider).
 const _skyDay = new THREE.Color(0x1a1a2e);   // tmavě modrofialová (poledne)
 const _skyNight = new THREE.Color(0x000000); // úplná čerň (půlnoc bez Měsíce)
 const AMBIENT_DAY = 0.15;
@@ -92,8 +95,15 @@ const sun = new THREE.DirectionalLight(0xffffff, SUN_BASE_INTENSITY);
 const SUN_DISTANCE = Math.sqrt(10 * 10 + 8 * 8 + 10 * 10);
 // Sklon dráhy slunce od svislice (rad). 0 = slunce v poledne přesně v zenitu
 // (stíny nulové = nevizuální), π/6 = 30° náklon (stíny v poledne mírné, na
-// úsvitu/západu dlouhé). Roadmap: SEASON atribut na WORLD → dynamický sklon.
-const SUN_TILT = Math.PI / 6;
+// úsvitu/západu dlouhé). G2 (sez. 35) — driver `world.LATITUDE` (DD-29 atribut):
+// rovník = vyšší slunce (~zenith), póly = nižší (sun blízko horizontu). Lookup
+// per LATITUDE enum, čte se v `updateSun()` per-frame.
+const SUN_TILT_BY_LATITUDE = {
+  tropical:    0,             // sun přímo overhead (no-shadow trade-off, ale fyzikálně OK)
+  subtropical: Math.PI / 12,  // 15° náklon
+  temperate:   Math.PI / 6,   // 30° náklon (DD-38 původní default)
+  polar:       Math.PI / 3,   // 60° náklon (slunce nízko nad horizontem)
+};
 sun.position.set(-10, 8, 10);
 // Slunce vrhá stíny. DirectionalLight používá **ortografickou** stínovou
 // kameru — je jako slunce v nekonečnu, paprsky jsou rovnoběžné. Frustum
@@ -159,23 +169,30 @@ function updateWorldTime(dt) {
 
 // Derivuje sun.position + intensity + sunMesh z `world.DAY`. Volat v render loopu
 // po `updateWorldTime` a před `composer.render()`. Math: úhel α = DAY · 2π,
-// dráha v rovině nakloněné `SUN_TILT` od svislice. Při DAY=0 slunce na východě
-// (X=+SUN_DISTANCE, Y=0), při DAY=0.25 v "poledni" (X=0, Y=cos(tilt)·dist,
-// Z=sin(tilt)·dist), atd. V noci (sin(α) < 0) intensity → 0 a sun mesh hidden.
+// dráha v rovině nakloněné `SUN_TILT` od svislice. 24h cyklus mapping (sez. 35):
+//   DAY=0.0  (půlnoc)  → -cos=-1, sin=0    → sun pod horizontem (Y<0), intensity=0
+//   DAY=0.25 (východ)  → -cos=0,  sin=+1   → sun na +X horizontu (Y=0)
+//   DAY=0.5  (poledne) → -cos=+1, sin=0    → sun v zenithu (Y=+cos(tilt)·dist)
+//   DAY=0.75 (západ)   → -cos=0,  sin=-1   → sun na -X horizontu (Y=0)
+// Y výška = SUN_DISTANCE · (-cos α) · cos(tilt). V noci (-cos < 0) intensity → 0
+// a sun mesh hidden.
 function updateSun() {
   const angle = world.DAY * TAU;
   const sinA = Math.sin(angle);
-  const cosA = Math.cos(angle);
+  const negCosA = -Math.cos(angle);
+  // G2 (sez. 35) — sun tilt fce LATITUDE. Fallback na temperate při neznámém klíči
+  // (defensive, world.LATITUDE je controlled enum přes UI; nemělo by nastat).
+  const tilt = SUN_TILT_BY_LATITUDE[world.LATITUDE] ?? SUN_TILT_BY_LATITUDE.temperate;
   sun.position.set(
-    SUN_DISTANCE * cosA,
-    SUN_DISTANCE * sinA * Math.cos(SUN_TILT),
-    SUN_DISTANCE * sinA * Math.sin(SUN_TILT),
+    SUN_DISTANCE * sinA,
+    SUN_DISTANCE * negCosA * Math.cos(tilt),
+    SUN_DISTANCE * negCosA * Math.sin(tilt),
   );
-  // Intensity lerp: max 0 v noci (sin záporný), plné 0.8 v poledne (sin=1).
-  // `max(0, sin)` = pásmo "noc bez DirectionalLight". `updateAtmosphere()` stmívá
+  // Intensity lerp: max 0 v noci (-cos záporný), plné 0.8 v poledne (-cos=1).
+  // `max(0, -cos)` = pásmo "noc bez DirectionalLight". `updateAtmosphere()` stmívá
   // ambient + sky podle stejné křivky → v noci scéna spoléhá jen na zbytkový
   // AMBIENT_NIGHT (0.04) + tmavé pozadí, vizuálně temná silueta.
-  sun.intensity = SUN_BASE_INTENSITY * Math.max(0, sinA);
+  sun.intensity = SUN_BASE_INTENSITY * Math.max(0, negCosA);
   // Sun mesh follow + skip render v noci (Y<0 = pod scénou = stejně neviditelné).
   // AND s `_sunUserVisible` — pokud user vypne toggle v settings panelu, hide
   // se zachová i v poledne (toggle = user override, ne overflow flag).
@@ -190,7 +207,7 @@ function updateSun() {
 //   - ambientLight.intensity (lerp AMBIENT_NIGHT ↔ AMBIENT_DAY) — fill light
 // `lerpColors(c1, c2, alpha)` zapisuje do `this` instance, žádná alokace per-frame.
 function updateAtmosphere() {
-  const daylight = Math.max(0, Math.sin(world.DAY * TAU));
+  const daylight = Math.max(0, -Math.cos(world.DAY * TAU));
   scene.background.lerpColors(_skyNight, _skyDay, daylight);
   sceneFog.color.copy(scene.background);
   ambientLight.intensity = AMBIENT_NIGHT + (AMBIENT_DAY - AMBIENT_NIGHT) * daylight;
@@ -240,6 +257,10 @@ window.settings = {
   setSun(on)      { _sunUserVisible = on; },
   setDay(v)       { world.DAY = v; },
   setDaySpeed(v)  { world.DAY_SPEED = v; },
+  // G2 (sez. 35) — climate enum mutátory. Validace klíče: silent skip neznámých
+  // hodnot (UI controller posílá jen z LATITUDE_KEYS / HUMIDITY_KEYS).
+  setLatitude(v)  { if (v in SUN_TILT_BY_LATITUDE) world.LATITUDE = v; },
+  setHumidity(v)  { world.HUMIDITY = v; },
 };
 
 // F12 (sez. 29) — fix: shadow frustum reaktivně dle aktuální velikosti terrain.
@@ -2467,6 +2488,10 @@ function disposeHoverClones(root) {
 }
 // Globální expose pro HTML panel `#terrainctrl` (inline script v index.html).
 window.regenerateScene = regenerateScene;
+// G1 (sez. 35) — helper pro dynamický clamp `#tc-relief` slideru dle MIN(sx,sz).
+window.maxReliefForSize = maxReliefForSize;
+// G2 (sez. 35) — biome matice 4×3 pro UI Climate sekci (display readout).
+window.BIOME_NAMES = BIOME_NAMES;
 
 function buildScene(scene) {
   spawnTerrain(TERRAIN_DEFAULTS);

@@ -418,21 +418,35 @@ export class TIMER extends OBJECTS {
  *   - `DAY_SPEED` ↔ render loop auto-advance DAY
  *
  * Bez X/Y/Z (DD-01: model entita bez vizuální prostorové pozice). Atributy:
- *   - `DAY ∈ [0, 1)` — fáze 24h cyklu. 0=východ, 0.25=poledne, 0.5=západ, 0.75=půlnoc.
- *     Default 0.25 (poledne, scéna při bootu plně osvětlená).
+ *   - `DAY ∈ [0, 1)` — fáze 24h cyklu. 0=půlnoc, 0.25=východ, 0.5=poledne, 0.75=západ.
+ *     Default 0.5 (poledne, scéna při bootu plně osvětlená). Mapping fix sez. 35
+ *     (původní DD-38 měl 0=východ, 0.25=poledne — matematicky úsporné, ale prakticky
+ *     matoucí pro user-facing slider).
  *   - `DAY_SPEED ∈ ℝ⁺` — kolik cyklů za sekundu. 0 = pauza. Default 0 (KISS,
  *     user explicit zapne přes #settings slider nebo `window.world.DAY_SPEED = 0.05`).
+ *   - `LATITUDE ∈ {tropical, subtropical, temperate, polar}` — geografické pásmo
+ *     (G2, sez. 35). Konzument: `SUN_TILT_BY_LATITUDE` v main.js (úhel slunce
+ *     od svislice — rovník = vyšší slunce, póly = nižší). Default `temperate`.
+ *   - `HUMIDITY ∈ {wet, mid, dry}` — vlhkostní pásmo (G2). Druhá osa biome matice
+ *     4×3 (LATITUDE × HUMIDITY = 12 biomů). G2 MVP konzument: UI biome readout
+ *     (display-only). G3 konzument: `surfaces` mix z biome lookup. Default `mid`.
  *
  * Politika DD-29 stále platí: nové atributy přibudou jen s živým konzumentem.
  */
 export class WORLD extends OBJECTS {
   constructor(id, name, description = "") {
     super(id, name, description);
-    // DAY = fáze 24h cyklu, normalizovaná na [0, 1). Default poledne.
-    this.DAY = 0.25;
+    // DAY = fáze 24h cyklu, normalizovaná na [0, 1). Default poledne (sez. 35 fix).
+    this.DAY = 0.5;
     // DAY_SPEED = cykly/s. 0 = paused (default). Engine v main.js inkrementuje
     // DAY v render loopu (`world.DAY = (world.DAY + dt * world.DAY_SPEED) % 1`).
     this.DAY_SPEED = 0;
+    // LATITUDE = geografické pásmo (G2, sez. 35). 4 enum hodnoty. Konzument:
+    // `SUN_TILT_BY_LATITUDE` v main.js → výška slunce v poledni.
+    this.LATITUDE = "temperate";
+    // HUMIDITY = vlhkostní pásmo (G2). 3 enum hodnoty. Spolu s LATITUDE = 4×3
+    // matice biomů (12 typů). G2 MVP: UI display-only. G3: driver `surfaces` mix.
+    this.HUMIDITY = "mid";
   }
 }
 

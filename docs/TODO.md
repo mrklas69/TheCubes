@@ -20,9 +20,9 @@
 ### Roadmap kapitoly (sez. 34+ kandidáti)
 
 - [x] **G0 Lowpoly vertex-color pipeline** *(sez. 34, DD-41 supersede DD-36 atlas)* — atlas textury → vertex colors per face na sdíleném `MeshLambertMaterial({ vertexColors: true })`. G0a TCUBES + G0b rampy + cleanup atlas builders. Viz DONE.md + DD-41.
-- [ ] **G1 Volba max Y** (výška kopců) — UI slider pro `RELIEF_AMPLITUDE` clamp, případně závislý na `MIN(sizeX, sizeZ)` (na 10×10 mapě nemá smysl alpine 6 voxelů — proporce).
-- [ ] **G2 Severní šířka / podnební pásmo** — `WORLD.LATITUDE` nebo `world.CLIMATE` atribut (gated po DD-29 politice). Konzument: sun tilt (přidá k DD-38 fixed `SUN_TILT = π/6`), sezónní paleta, surface mix.
-- [ ] **G3 SURFACES závislé na G2** — biome map z `generateTerrain` (sand u rovníku, grass mírné pásmo, snow polar). Refactor `surfaces: { grass, stone, sand, water }` z UI prop na driver-derived per `world.CLIMATE`.
+- [x] **G1 Volba max Y** *(sez. 35, žádný DD)* — `maxReliefForSize(sx,sz)` export z `terrain.js`, `relief.max` clamp dynamicky dle MIN(sx,sz). KISS quick win. 10×10 → 0..3 (Rolling), 30×30 → 0..5 (Uneven), 60+ → 0..10 (Alpine). Viz DONE.md.
+- [x] **G2 Severní šířka / podnební pásmo** *(sez. 35, DD-42 + DD-43)* — `world.LATITUDE` (4 enum) + `world.HUMIDITY` (3 enum) atributy, `SUN_TILT_BY_LATITUDE` lookup nahrazuje DD-38 fixed `SUN_TILT`, `BIOME_NAMES` 4×3 tabulka, UI Climate sekce v `#terrainctrl`. MVP konzument: sun tilt + UI biome readout. Pre-G2 fix: DD-43 DAY mapping 0.5=poledne. Viz DONE.md + DD-42 + DD-43.
+- [ ] **G3 SURFACES driver-derived per biome** — biome map z `generateTerrain` (Tundra → snow+stone, Sahara → sand+stone, Tropický deštný prales → grass+water, ...). Refactor `surfaces: { grass, stone, sand, water }` z UI prop na driver-derived per `BIOME_SURFACES[LATITUDE][HUMIDITY]` lookup. Polar/wet fallback rozhodnutí (Tundra default vs. validation error). UI: skrýt 4 surface slidery v Climate-driven módu, případně toggle "Manual surfaces".
 
 ### Otevřené body / kandidáti DD
 
@@ -46,10 +46,15 @@
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — 5/8 sezení od sez. 29. Další doporučený sez. 37+.
-- **`%AUDIT:DOCS`** — 5/10 sezení od sez. 29. Další doporučený sez. 39+.
-- **IDEAS/TODO pruning** — 1/12 (sez. 34: close G0, add 4 follow-up tiny-world-builder + 2 G0 sub-prah).
+- **`%AUDIT:CODE`** — 6/8 sezení od sez. 29. Další doporučený sez. 37+.
+- **`%AUDIT:DOCS`** — 6/10 sezení od sez. 29. Další doporučený sez. 39+.
+- **IDEAS/TODO pruning** — 2/12 (sez. 35: close G1+G2, add 2 G2 sub-prah follow-up).
 - **`%CALIBRATE`** — sub-prah „CLAUDE.md +50 %" stále resetnut.
+
+## Sub-prah (G2 follow-up, sez. 35)
+
+- [ ] **Polar/wet biome fallback** — dnes `BIOME_NAMES.polar.wet = "—"`, UI zobrazí prázdné. Rozhodnutí v G3: Tundra fallback (geograficky nejbližší) vs. validation error (force user volbu). Závislé na G3 surface mix design.
+- [ ] **`SUN_TILT_BY_LATITUDE.tropical` tweak** — dnes 0° = sun přímo overhead = žádné stíny v poledne, objekty ploché (degenerate shadow plane). Kandidát `π/24` (~7.5°) zachová stínovou viditelnost. Wait pro user feedback (ne každý uvidí jako problém).
 
 ## Sub-prah (G0 follow-up)
 
