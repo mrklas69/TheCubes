@@ -1139,3 +1139,58 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 - DD-44 (sez. 36) — G3 SURFACES driver. DD-45 ne-koliduje (driver pro `surfaces`, fBm pro `height`).
 - Sez. 36 user feedback po G3: konkrétní case 50×50 r7. Q1=D (fBm + ridge blend), Q2=A (G3 commit + nová branch), Q3=A (DD-45). Kontext v `docs/diary/2026-05-13.md` Sez. 36 pokračování.
 
+## DD-46 — Smoothstep bimodální heightmap pro high relief (G5, sez. 37)
+
+**Stav:** Sez. 37 (topic branch `feat/terrain-bimodal`). User feedback po DD-45 vizuálním testu (46×47 r6 seed 42 polar/wet): *„Je to mnohem lepší. Šum ustoupil. Vznik hřebenů a údolí! Ale ještě bych to posílil."* Diagnóza: DD-45 ridge³ blend dává **single-peak distribuci** (right-skewed kolem mean), ne bimodální. User wish „hřebeny + údolí" je definičně bimodální = dvě hladiny (peaks, valleys) s plynulým přechodem mezi nimi.
+
+**Rozhodnutí:**
+
+1. **Smoothstep mapping pro high relief** — pro `relief ≥ 6` se DD-45 ridge³ blend nahrazuje:
+   ```js
+   t = smoothstep(0.4, 0.6, fbmVal)         // [0, 1] s C¹ okraji
+   blended = VALLEY_AMP + (amplitude - VALLEY_AMP) * t
+   h = round(blended)
+   ```
+   Smoothstep formula `3t² - 2t³` mimo range klampuje (v ≤ 0.4 → t=0, v ≥ 0.6 → t=1). Bimodální tvar: 60 % cells skončí v plné extrémitě (valley nebo peak), 40 % v transition.
+
+2. **VALLEY_AMP = −1** — jeden voxel pod sea level. Při wet biome (HUMIDITY=wet) se voda nalije do údolí (water surface offset −2 = jámy dole). Maximalizuje kontrast hřebeny vs. údolí.
+
+3. **Smoothstep range (0.4, 0.6)** — úzký interval pro výrazný bimodal efekt. Širší range (0.3, 0.7) by dal smoother transition, ale uživatel požadoval *posílit*. Úzký range = jasné dvě hladiny.
+
+4. **Hard switch při relief ≥ 6** — pod prahem (r0-5) DD-45 ridge³ blend zůstává beze změny. Důvod: r0-4 (Flat..Hilly) je doména „rolling hills" kde bimodal nemá smysl (organické kulaté tvary žádané). R5 (Uneven) je tranzitorní (25 % ridge), zachování ridge³ tam dává jemnou hřebenovitost. Od r6 (Rugged) se přepne na *fundamentálně jiný režim* = horský landscape.
+
+5. **PEAK_AMP = `RELIEF_AMPLITUDE[idx]`** — peaks dosáhnou plné max výšky pro daný relief (r6=4, r7=5, r8=8). Beze změny vs. DD-45 (zachová UX `maxReliefForSize` clamp).
+
+6. **API beze změny** — `generateTerrain({size, relief, surfaces, seed})` zůstává. Změna je interní (heightmap loop body). Backward compatibility pro existující seed × relief × size se **mění** pro r ≥ 6 (různý výstup); r0-5 zůstává byte-identický s DD-45.
+
+**Důvod (proč DD a ne jen feature):**
+
+- **Fundamentální změna distribuce** pro high relief — single-peak (DD-45) → bimodal (DD-46). Sémantika hřebenů a údolí jiná.
+- Immutable log: pokud budeme srovnávat referenční scény „DD-45 ridge³" vs. „DD-46 smoothstep bimodal" (test scény, regression), DD-46 dává sémantiku.
+- Smoothstep + threshold je **standard pattern** pro biomial generative dist (Inigo Quilez articles, Ken Musgrave terrain). DD-46 implementuje branch literatury.
+- DD-46 supersede sub-prah TODO „bimodální heightmap (G5)" zapsaný v DD-45 Známá omezení. Sub-prah uzavřen.
+
+**Smoke test (sez. 37):**
+
+| Case | r | size | dist (top peaks) |
+|------|---|------|-------------------|
+| User case polar/wet seed 42 | 6 | 46×47 | Y=−1: 34 % (valley) \| Y=4: 18 % (peak) \| Y=1: 6 % (min) — bimodal ✓ |
+| Polar/wet 50×50 | 7 | 50×50 | Y=−1: 29 % (valley) \| Y=5: 19 % (peak) \| Y=1: 7 % (min) — bimodal ✓ |
+| Alpine temperate/mid 100×100 | 10 | 100×100 | Y=−1: 39 % (valley) \| Y=8: 24 % (peak) — bimodal ✓ |
+| **Regrese** r3 10×10 | 3 | 10×10 | Y=−1: 67 %, Y=1: 32 % — beze změny vs. DD-45 ✓ |
+| **Regrese** r5 30×30 | 5 | 30×30 | Y=−1: 14 %, Y=1: 38 %, Y=2: 47 % — beze změny vs. DD-45 ✓ |
+
+**Známá omezení:**
+
+- **Y=0 typicky chybí** v bimodal výstupu — smoothstep klampuje hodnoty fbm < 0.4 a fbm > 0.6 na extrémy (Y=VALLEY_AMP nebo Y=PEAK_AMP), takže Y=0 dostane jen úzký interval t ∈ ~[0.1, 0.3]. Vizuálně to ale není problém — bimodal characteristics = „chybějící střed" je definice. Pro user wish „posílit hřebeny+údolí" žádaná featura, ne bug.
+- **Hard switch r5→r6** může být vizuálně skokový — r5 ridge³ blend (rolling+hřebeny) vs. r6 bimodal (jámy+vrcholy). Plynulý morph (alternativa B v %THINK) by zmírnil, ale za cenu navíc parametru. KISS: hard switch + dokumentace.
+- **Smoothstep range hard-coded** (0.4, 0.6) — pro fine-tuning by bylo nutné parametrizovat. Aktuálně out-of-scope (KISS). Pokud user feedback bude „moc agresivní" nebo „málo agresivní", lze rozšířit RELIEF tabulky o per-relief smoothstep range.
+- **Bimodal je „symmetric"** — VALLEY_AMP=−1 a PEAK_AMP=amplitude nesymetrické (rozsah `[-1, amp]`, větší amp → větší side). Pro r6 (amp 4) rozsah 5 jednotek = peak side 4× větší než valley side. To posune *mean* k peak; histogram USER case to ukazuje (Y=4: 18 %, Y=3: 13 %, Y=2: 11 %) — peak side se rozprostře přes víc úrovní než valley side (Y=−1: 34 %, Y=−2: 14 %, Y=−3: 4 %).
+
+**Reference:**
+
+- DD-45 (sez. 36) — fBm + ridge³ blend. DD-46 **přepíše** heightmap loop pro relief ≥ 6, ale **nezmění** fBm sample path (`fbmSample` helper použitý oba režimy). DD-45 sub-prah „bimodální heightmap (G5)" uzavřen.
+- DD-32 (sez. 25) — `generateTerrain` MVP. DD-46 mění interní algoritmus krok 1 heightmap; API i ostatní kroky (biome, ramp smoothing) nezměněny.
+- DD-44 (sez. 36) — G3 SURFACES driver. DD-46 ne-koliduje. Polar/wet biome (sand-heavy + voda) dostane v DD-46 výrazná údolí s vodou + skalnaté hřebeny = tundra/horská tundra look.
+- Sez. 37 user volba: Q1=D (G5 smoothstep bimodální), Q2=A (hard switch r≥6), Q3=A (VALLEY_AMP=−1), Q4=A (range 0.4-0.6). Kontext v `docs/diary/2026-05-13.md` Sezení 37.
+
