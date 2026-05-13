@@ -17,17 +17,16 @@ Projektová `%BEGIN`, `%END` — definice v `docs/PROMPTS.md`. `%BEGIN` vždy ko
 
 | Soubor | Obsah |
 |--------|-------|
-| `index.html` | HTML shell, import map pro Three.js, HUD (infotip + terrain control panel) |
-| `src/model.js` | OOP třídy (OBJECTS → CUBES → BLOCKS/COMPOSITES/SPRITES/PATH, TIMER/COUNTER/WORLD) |
-| `src/main.js` | Three.js scéna + builders dispatch (`createMeshFor`, BLOCKS geometry cache, `createPathFor`) + animators + hover + render loop + `buildScene` (volá `generateTerrain` + spawn) |
-| `src/terrain.js` | `generateTerrain({ size, relief, surfaces, seed })` — value-noise heightmap, biome map, sloupcové vyplnění, vodní plane(y) |
+| `index.html` | HTML shell, import map pro Three.js, HUD (infotip + terrain control panel `#terrainctrl` + perf HUD `#perf-hud`) |
+| `src/model.js` | OOP třídy (OBJECTS → CUBES → BLOCKS/COMPOSITES/SPRITES/PATH, TIMER, COUNTER) |
+| `src/main.js` | Three.js scéna + builders dispatch (`createMeshFor`, BLOCKS geometry cache, `createPathFor`) + TCUBES atlas pipeline (DD-36, fast/slow path) + animators + hover + render loop + `buildScene`/`regenerateScene` (volá `generateTerrain` + spawn) |
+| `src/terrain.js` | `generateTerrain({ size, relief, surfaces, seed })` — value-noise heightmap, biome map, sloupcové vyplnění, vodní plane(y), ramp smoothing layer (DD-33/34/35) |
 | `src/time.js` | Globální `TIME` singleton, `advanceTime()` |
-| `tools/export-*.mjs` | MagicaVoxel reverse pipeline (DD-21+22+24) |
 
 ## Project context — kde najít co
 
 - **Identita, status, hierarchie modelu, scéna, milníky, plán fází** → `README.md`
 - **Chronologie sezení (changelog)** → `docs/DIARY.md` + `docs/diary/YYYY-MM-DD.md`
-- **Schválená rozhodnutí (DD-01..DD-32)** → `docs/DESIGN_DECISIONS.md`
+- **Schválená rozhodnutí (DD-01..DD-36)** → `docs/DESIGN_DECISIONS.md`
 - **Terminologie** → `docs/GLOSSARY.md`
 - **Aktivní úkoly / hotové / nápady** → `docs/TODO.md` / `docs/DONE.md` / `docs/IDEAS.md`

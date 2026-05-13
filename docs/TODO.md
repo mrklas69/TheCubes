@@ -12,28 +12,11 @@
 - [ ] **Náhradní obyvatel scény** — bez humanoidů je scéna vizuálně chudší. Možnosti: rozšířit COMPOSITES (BIRD na obloze, BUSH/FLOWER na louce), nebo nechat dokud není integrace Stickmana.
 - [ ] **CCUBES typizace** (ICE/GRASS/SAND) *(možná, ale překryto DD-24 shape × surface — surface je obecnější)*.
 
-## Terrain generator (`generateTerrain`) — `feat/terrain` větev
-
-**Cíl**: procedurální terrain sandbox jako náhrada hardcoded `SCENE_LAYOUT` (DD-32 sez. 25). `generateTerrain` v `src/terrain.js` produkuje 3D scénu z parametrického popisu (size + relief + surfaces + seed); UI panel v `index.html` umožní user-driven tuning live.
-
-### Hotovo (sez. 25 + sez. 26)
-
-- [x] **DD-32 kotva** + README/CLAUDE.md identitní update.
-- [x] **Wipe** factory toy + severská dioráma + tree_sway + HUD prvků (−1602 ř.).
-- [x] **Value-noise engine** (mulberry32 + grid sampling + bilineární smoothstep + wrap-around).
-- [x] **`generateTerrain({ size, relief, surfaces, seed })`** v `src/terrain.js` (heightmap + biome map + sloupcové vyplnění + water planes).
-- [x] **Fáze 3 — UI panel `#terrainctrl`** (sez. 26): HTML/CSS pravý dolní roh, slidery size sx/sz (3..30), relief (0..10) s názvem stupně, 4 surface slidery (auto-normalize), seed input. Trigger `change` event (rozhodnutí sez. 26 — ne `input`/debounce/button).
-- [x] **`regenerateScene(params)`** v `main.js` — filter `userData.terrain` flag, remove + spawn, sdílené geometrie/materials nedispose.
-- [x] **Ramp smoothing layer (DD-34 + DD-35 sez. 26)** — 3 ramp typy:
-  - TRRAMPS edge greedy criticality (1 direct vyšší → klín).
-  - TTRAMPS isolated diag peak (0 direct + 1 diag vyšší → jehlan).
-  - TDRAMP 2-stage (3-cell convex peak + L-shape, dvouosa criterion 2 přístupů + zakrytí 2 stěn) — **DD-35** + nová třída `TDRAMP extends BLOCKS`.
-- [x] **Compatibility filter** — TRRAMPS A drop pokud B má TRRAMPS s jinou orient (= narazí do boku).
+## Terrain generator (`generateTerrain`)
 
 ### Otevřené body / kandidáti DD
 
-- [ ] **Rampy atlas refactor** (TRRAMPS / TTRAMPS / TDRAMP / TTUNELS) — sez. 28 atlas pattern pro TCUBES dodal 6× redukci draw calls. Rampy mají per-instance `material[N]` array (5/4/5/4 faces) = ~1 200 calls @ 30×30 (24 % celkem). Atlas pro rampy by ušetřil ~17 % incremental. 4× repeat patternu (per-(type, surface) atlas, ~9 unique combos, shared geom s UV remap na 1/N-tice). *(Sez. 29 follow-up, diminishing return ale stejně přímočaré.)*
-- [ ] **Vizuální parita TCUBES atlas** — sez. 28 pre-flight check. User nepotvrdil explicitně, že grass/dirt/stone/sand bloky vypadají identicky po refactoru. Sez. 29 by ověřit screenshotem před dalšími changes.
+- [ ] **Rampy atlas refactor** (TRRAMPS / TTRAMPS / TDRAMP / TTUNELS) — sez. 28 atlas pattern pro TCUBES dodal 6× redukci draw calls. Rampy mají per-instance `material[N]` array (5/4/5/4 faces) = ~1 200 calls @ 30×30 (24 % celkem). Atlas pro rampy by ušetřil ~17 % incremental. 4× repeat patternu (per-(type, surface) atlas, ~9 unique combos, shared geom s UV remap na 1/N-tice). *(Sez. 30+ follow-up, diminishing return ale přímočaré.)*
 - [ ] **`LIQUID` třída** (DD-25 vrstva 4) pro vodní plane(y) — momentálně mimo OOP model (DD-33 kandidát).
 - [ ] **Klastrování spojitých water cells** do bounding boxů (flood-fill, jeden plane na celé jezero) místo 1×1 per cell.
 - [ ] **Roadmap relief 9..10**: valley carving / ridge noise algoritmus (heavily dissected / alpine plně).
@@ -46,15 +29,29 @@
 - [ ] **Biome populate** *(IDEAS — částečně překryto biome map v `generateTerrain`, terra-specific dekorace zůstává)*.
 - [ ] **BUILDING třída** *(IDEAS — budoucí dekorativní/factory entity nad generovaným terénem)*.
 - [ ] **TRACK třída** *(IDEAS — sourozenec PATH, vlaky odloženy)*.
-- [ ] **`mtllib` reference fix** *(drobnost)*.
 
-## Governance (po sez. 27)
+## Governance
 
-- [!] **PROMPTS.md `%END` aktualizovat o topic-branch workflow** — současný text *„Commit na větev `main`"* je zastaralý od sez. 21 (DD-30 zavedl `feat/factory`, dále `feat/terrain`). Doplnit explicitní krok: rozhodnutí merge teď vs. pokračovat na topic branch + návrh `git merge --no-ff`. Censure ze sez. 27.
+- [!] **PROMPTS.md `%END` aktualizovat o topic-branch workflow** — současný text *„Commit na větev `main`"* je zastaralý od sez. 21 (DD-30 zavedl `feat/factory`, dále `feat/terrain`, `feat/terrain-perf`, `feat/audit-29-cleanup`). Doplnit explicitní krok: rozhodnutí merge teď vs. pokračovat na topic branch + návrh `git merge --no-ff`. Censure ze sez. 27 + 28.
 
-## Audit cadence (po sez. 28)
+## Audit follow-up (sez. 29 nálezy mimo F1-F4 batch)
 
-- **`%AUDIT:CODE`** — 10/8 sezení od sez. 18 (**práh překročen o 2**, sez. 29 priorita — `feat/terrain-perf` přepsal `createTCubeFor` + přidal atlas pipeline, audit by zachytil případné dluhy).
-- **`%AUDIT:DOCS`** — 12/10 sezení od sez. 16 (**práh překročen o 2**, sez. 29).
-- **IDEAS/TODO pruning** — 9/12.
-- **`%CALIBRATE`** — sub-prah „CLAUDE.md +50 %" resetnut sez. 23 slimem.
+Doporučené, neuděláno v sez. 29 audit batch:
+
+- [ ] **F5 — Atlas/slow-path texture-source divergence**: atlas `getTcubesKindMaterial` volá `factory()` přímo, slow path přes `_faceMaterialCache` — pro stejný `:named-texture` vznikají 2 různé textury s různými random patches. Fix: shared registry `texturePerNamedKey`. User sez. 29 pre-flight check *parita OK*, takže low prio.
+- [ ] **F6 — `_faceMaterialCache` + `_tcubesAtlasMatCache` paralelní cache**: dvě API, dvě sémantiky, stejná konceptuální věc (material per kind). Refactor na `materialFor(spec)` s discriminated union, nebo komentář dokumentující rozdíl.
+- [ ] **F9 — `_perfHud.el.mat` zavádějící metrika**: měří jen `_faceMaterialCache.size`, ne atlas cache + path cache. Po atlas refactoru má prakticky konstantní hodnotu. Fix: součet všech cache.
+- [ ] **F10 — Hover-clone material leak při `regenerateScene`**: `setHoverHighlight(true)` klonuje materials, regen nedispose. Při častém regen accumulate. Fix: `mesh.userData.hoverHotMat?.dispose?.()` před `scene.remove`.
+
+Kosmetické:
+
+- [ ] **F11 — Mrtvé importy + scratch vars**: `_b` scratch vector v main.js:455 (0 read-sitů, pozůstatek `balloon_bob` smazaného sez. 15). Komentář `_dir` na :773 zmiňuje smazaný balloon animátor.
+- [ ] **F12 — Shadow frustum hardcoded ±8**: `sun.shadow.camera.left = -8` (main.js:76), komentář *„grid 10×10, bezpečný 16×16"*. Po DD-32 generátor podporuje 30×30 → stíny ostříhnou. Buď konstanta `SHADOW_FRUSTUM = 30` nebo dle `TERRAIN_DEFAULTS.size`.
+- [ ] **F14 — RELIEF_AMPLITUDE/FREQUENCY indexy 9/10 duplikují 8 + clamp**: `terrain.js:75-76`. Dva mechanismy pro stejnou věc (SSoT). Buď clamp, nebo pole, ne obojí.
+
+## Audit cadence (reset po sez. 29)
+
+- **`%AUDIT:CODE`** — 0/8 sezení (reset po sez. 29 audit). Další doporučený sez. 37+.
+- **`%AUDIT:DOCS`** — 0/10 sezení (reset po sez. 29 GLOSSARY rewrite). Další doporučený sez. 39+.
+- **IDEAS/TODO pruning** — 10/12.
+- **`%CALIBRATE`** — sub-prah „CLAUDE.md +50 %" stále resetnut.
