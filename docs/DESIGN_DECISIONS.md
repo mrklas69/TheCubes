@@ -969,3 +969,88 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 - DD-07 (sez. 3) — CCUBES default šachovnice. Po DD-41 fallback pro unknown TCUBES kind (jinak lowpoly geom).
 - Sez. 34 user feedback `tiny-world-builder` GitHub inspirace + flat-shading seam fix. Kontext v `docs/diary/2026-05-13.md` Sez. 34 (B) %THINK G0 + (F) seam fix.
 
+## DD-42 — WORLD Climate atributy (LATITUDE × HUMIDITY) + sun tilt driver (sez. 35)
+
+**Stav:** Sez. 35. Roadmap kapitoly Terrain generator G2 "Severní šířka / podnební pásmo". Aktivuje DD-29 odložený `CLIMATE` atribut, ale rozšiřuje na **2 atributy** (matice 4×3 = 12 biomů, inspirace skutečnou geografií Země: pásmo × vlhkost). User návrh sez. 35 `A1` matice biomů (Tropický deštný prales / Savana / Sahara / ... / Tundra / Ledová poušť).
+
+**Rozhodnutí:**
+
+1. **`world.LATITUDE` enum string** — 4 hodnoty: `tropical`, `subtropical`, `temperate`, `polar`. Default `temperate` (parita s DD-38 původním fixed `SUN_TILT = π/6` = 30° = mírné pásmo). Atribut na `WORLD` instanci, ploché pojmenování (DD-29 izomorfismus s `WIND_STRENGTH`/`DAY`).
+
+2. **`world.HUMIDITY` enum string** — 3 hodnoty: `wet`, `mid`, `dry`. Default `mid`. Druhá osa biome matice. G2 MVP konzument: jen UI biome readout (display-only). G3 plánovaný konzument: `surfaces` mix lookup (driver-derived místo UI prop).
+
+3. **`SUN_TILT_BY_LATITUDE` lookup map v `src/main.js`.** Replace DD-38 fixed `SUN_TILT = π/6`:
+   - `tropical: 0` (sun přímo overhead v poledne; trade-off — žádné stíny v poledne)
+   - `subtropical: π/12` (15°)
+   - `temperate: π/6` (30°, parita DD-38)
+   - `polar: π/3` (60°, sun nízko nad horizontem celý den)
+   `updateSun()` per-frame čte `SUN_TILT_BY_LATITUDE[world.LATITUDE]` (fallback temperate při neznámém klíči — defensive proti console mutaci).
+
+4. **`BIOME_NAMES` tabulka 4×3 v `src/terrain.js`.** Display jména biomů pro UI readout (12 buněk, plus polar/wet = "—" placeholder, geo edge case bez downstream selhání). Export přes `window.BIOME_NAMES` pro inline UI controller v `index.html`. Refactor pro G3: přidat surface mix vrstvu nad biome jména.
+
+5. **UI Climate sekce v `#terrainctrl`** — 2 slidery diskrétní (LATITUDE 0..3, HUMIDITY 0..2, step 1) + biome readout (tyrkysový akcent — derivovaný atribut, read-only). Mutuje WORLD atributy přes `window.settings.setLatitude/setHumidity` na `input` event (live, no regen — sun tilt změny viditelné per-frame v `updateSun()`). G3 přidá `change` event regen pro surface mix.
+
+**Důvod (proč DD a ne jen feature):**
+
+- Aktivuje DD-29 odložený slot `CLIMATE` (politika: atribut s živým konzumentem). G2 splňuje 2 konzumenty: sun tilt (LATITUDE) + UI biome readout (LATITUDE×HUMIDITY).
+- Mění semantic kontrakt `SUN_TILT` z fixed konstanty na driver-derived lookup (DD-38 supersede pro tilt math, DAY math zachován až do DD-43).
+- Připravuje G3 surface mix refactor — `BIOME_NAMES` tabulka je SSoT pro biomy, G3 přidá `BIOME_SURFACES` paralelní tabulku (driver `surfaces` z biomu místo UI prop).
+- Conceptual Integrity (CLAUDE.md): WORLD atributy gated by konzument (DD-29) — G2 dodržuje politiku, žádné YAGNI sloty.
+
+**Známá omezení:**
+
+- Polar/Wet biome je geograficky vzácný (málo srážek na pólech) — UI zobrazí `"—"`. G3 musí rozhodnout fallback (Tundra? Validation error?). Sub-prah TODO.
+- `tropical: 0` tilt = žádné stíny v poledne. Vizuálně 3D objekty vypadají ploše (light from above, plane shadow degenerate). User-driven kompromis (fyzikálně OK pro rovník, vizuálně suboptimal).
+- HUMIDITY zatím bez konzumenta nad UI readout (G2 MVP). Reálný terraineffect (vlhkost = více vodních cell, sucho = více sand) přijde až v G3.
+- Climate slidery v `#terrainctrl` panelu — **nereagují na `change` event regen** (G2 jen mutuje WORLD). Architectural choice: Climate je WORLD atribut (jako DAY/DAY_SPEED), patří semantically spíš do `#settings` panelu, ale geographic význam (terrain config) ho přitahuje k terrainctrl. G3 z toho udělá terrain regen prop, takže umístění retroaktivně dává smysl.
+
+**Reference:**
+
+- DD-29 (sez. 20) — WORLD singleton politika "atribut s živým konzumentem". G2 aktivuje `CLIMATE` slot (rozšířeno na 2 atributy LATITUDE+HUMIDITY).
+- DD-38 (sez. 32) — WORLD DAY/DAY_SPEED + fixed `SUN_TILT = π/6`. G2 supersede tilt math (DAY math řeší DD-43).
+- DD-41 (sez. 34) — Lowpoly vertex-color pipeline. G3 plánovaný refactor `BLOCK_COLORS` na driver-derived per biome.
+- Roadmap kapitoly Terrain generator (sez. 30+ TODO) — G1 (sez. 35 quick win), G2 (sez. 35 tato DD), G3 (driver-derived `surfaces` per biome, future).
+
+## DD-43 — DAY mapping standardizace 0.5 = poledne (supersede DD-38 sun position math, sez. 35)
+
+**Stav:** Sez. 35. User feedback při G2 návrhu: *„Výška Slunce bude závislá na A1. Jinak DAY=0.5 by mělo být poledne, ne?"* — DD-38 původní mapping `0=východ, 0.25=poledne, 0.5=západ, 0.75=půlnoc` (matematicky úsporné — `sin(2π·DAY)` přímo dává intensity křivku) byl prakticky matoucí pro user-facing slider (intuice 24h cyklu = 0:00 půlnoc, 12:00 = poledne = uprostřed cyklu).
+
+**Rozhodnutí:**
+
+1. **Nové DAY mapping konvence:** `0=půlnoc, 0.25=východ, 0.5=poledne, 0.75=západ`. Default `world.DAY = 0.5` (poledne, scéna při bootu plně osvětlená — parita s DD-38 use case).
+
+2. **`updateSun()` math fix.** Sun position parametrizace:
+   - X (horizont E-W): `SUN_DISTANCE * sin(α)` *(původně `cos(α)`)*
+   - Y (výška): `SUN_DISTANCE * (-cos(α)) * cos(tilt)` *(původně `sin(α) * cos(tilt)`)*
+   - Z (hloubka N-S, polar tilt): `SUN_DISTANCE * (-cos(α)) * sin(tilt)` *(původně `sin(α) * sin(tilt)`)*
+
+   Mapping verifikace:
+   - DAY=0.0 (půlnoc): `sin=0, -cos=-1` → sun pod horizontem, intensity=0 ✓
+   - DAY=0.25 (východ): `sin=+1, -cos=0` → sun na +X horizontu (Y=0) ✓
+   - DAY=0.5 (poledne): `sin=0, -cos=+1` → sun v zenithu (Y=cos(tilt)·dist) ✓
+   - DAY=0.75 (západ): `sin=-1, -cos=0` → sun na −X horizontu (Y=0) ✓
+
+3. **`updateAtmosphere()` daylight křivka.** `Math.max(0, Math.sin(world.DAY * TAU))` → `Math.max(0, -Math.cos(world.DAY * TAU))`. Stejný posun jako `updateSun()` (DRY — sun intensity i daylight sdílejí křivku).
+
+4. **HTML default sync.** `<input id="set-day" value="0.25">` → `value="0.5"`. Span readout `0.25` → `0.50`.
+
+5. **WORLD constructor default sync.** `this.DAY = 0.25` → `this.DAY = 0.5`. JSDoc updated s novou konvencí.
+
+**Důvod (proč DD a ne jen bug fix):**
+
+- Mění **user-facing semantiku** WORLD atributu. DD-38 explicitně dokumentoval `0=východ, 0.25=poledne, ...` — DD-43 to mění. Immutable log politika: nové DD pro change, staré DD-38 zachováno jako historický kontext.
+- DD-38 mělo "matematicky úsporné" mapping (`sin(2π·DAY)` přímo bez fázového posunu) — KISS sice, ale **proti intuici** uživatele. KISS pro engine ≠ KISS pro user-facing slider. DD-43 prioritizuje user-facing intuici nad code economy (1 minus znaménko = trivial cena).
+- Připravuje konzistentní bázi pro G2 LATITUDE-driven sun tilt (DD-42) — sun math by se měla měnit jen kvůli LATITUDE, ne kvůli phase mapping.
+
+**Známá omezení:**
+
+- Drift z DD-38 base: pokud někdo měl bookmarknutý URL parameter / save state s `DAY=0.25` (sez. 32-34), po DD-43 to znamená "východ" místo "poledne" (4× tmavší). Žádný persistence layer aktuálně neexistuje (settings panel default sync = pouze HTML inline `value`).
+- Historický kontext DD-38 sun position math (původní `sin/cos` parametrizace) zachován jen v immutable diary (sez. 32) + DD-38 textu — kód v `updateSun()` ho už neukazuje.
+
+**Reference:**
+
+- DD-38 (sez. 32) — WORLD DAY/DAY_SPEED + sun position math `sin(2π·DAY)`. **Supersedes** by DD-43 sun position math (atributy DAY/DAY_SPEED + driver pattern zachovány).
+- DD-39 (sez. 33) — atmospheric lerping. `daylight` křivka v `updateAtmosphere()` updated stejnou změnou (DRY s `updateSun()`).
+- DD-42 (sez. 35) — G2 Climate. DAY-mapping fix vznikl při G2 návrhu jako pre-G2 micro-fix (sun-related koherence před LATITUDE → sun tilt).
+- Sez. 35 user feedback A2. Kontext v `docs/diary/2026-05-13.md` Sez. 35.
+

@@ -538,3 +538,39 @@ Reload `:8000`, posun DAY slideru 0.25 → 0.75 (poledne → půlnoc), test lamp
 ### Diff celkem
 
 `src/main.js` ~+150/−250 (G0a/G0b lowpoly pipeline ~+150 ř., atlas builders/tabulky ~−200 ř., cleanup `createTCubeFor`/`createMeshFor` dispatch ~−50 ř., net ~−120 ř.), `src/model.js` ~−25 ř. (drop `textures` args + `TEXTURE_*` fields z 4 BLOCKS tříd, JSDoc rewrite), `docs/DESIGN_DECISIONS.md` ~+90 (DD-41), `docs/*` ~+200 ř. (TODO close G0 + 4 follow-up + 2 sub-prah; DIARY index + sez. 34 sekce; GLOSSARY DD-41 termíny).
+
+## Sezení 35 (2026-05-13) — G1 Volba max Y + G2 Climate (DD-42 + DD-43)
+
+- [x] **G1 quick win — UI clamp `relief.max` dle `MIN(sx, sz)`.** `src/terrain.js` export `maxReliefForSize(sx, sz)` (vzorec `floor(MIN/10)`, reverse lookup do `RELIEF_AMPLITUDE`, idx 8 cap → 10). `src/main.js` import + `window.maxReliefForSize` expose. `index.html` `updateReliefSliderMax()` v terrainctrl IIFE, wire na `sizeX/sizeZ.input` event (live), init call. Programmatic `relief.value` change neemituje `change` event → no regen feedback loop. Mapping: 3→1 / 10→3 / 30→5 / 50→7 / 60+→10. Žádný DD (UX feature, žádný architectural change).
+
+### G2 Climate (DD-42)
+
+- [x] **WORLD atributy LATITUDE × HUMIDITY.** `src/model.js`: `this.LATITUDE = "temperate"` (4 enum: tropical/subtropical/temperate/polar), `this.HUMIDITY = "mid"` (3 enum: wet/mid/dry). JSDoc rozšířen + DD-29 politika dodržena (2 živí konzumenti).
+- [x] **`SUN_TILT_BY_LATITUDE` lookup nahrazuje DD-38 fixed `SUN_TILT`.** `src/main.js`: `tropical=0` / `subtropical=π/12` / `temperate=π/6` (parita) / `polar=π/3`. `updateSun()` per-frame čte z lookup (fallback temperate). DD-37 InstancedMesh batche stable.
+- [x] **`BIOME_NAMES` 4×3 export.** `src/terrain.js`: 12 buněk (Tropický deštný prales / Savana / Horká poušť / Vlhké subtropy / Mediteránní / Subtropická step / Listnatý les / Step Prérie / Chladná poušť / "—" / Tundra / Ledová poušť). Polar/wet "—" placeholder (geo edge case). Window expose pro inline UI.
+- [x] **`window.settings` extend.** `setLatitude(v)` (validace klíče proti `SUN_TILT_BY_LATITUDE`), `setHumidity(v)`.
+- [x] **UI Climate sekce v `#terrainctrl`.** CSS `.climate-row` (88px val column pro slovní enum), `.tc-biome` (tyrkysový akcent — derivovaný read-only). HTML 2 slidery (`tc-latitude` 0..3, `tc-humidity` 0..2, step 1) + biome readout `tc-biome-val`. Wire-up v IIFE: `LATITUDE_KEYS/NAMES`, `HUMIDITY_KEYS/NAMES`, `updateBiomeReadout()`, `input` listenery (mutují WORLD přes `window.settings`, žádný `change` regen). Init readout match WORLD defaults (temperate+mid → "Step / Prérie").
+- [x] **DD-42 zápis** (immutable log, aktivace DD-29 odložený `CLIMATE` slot rozšířený na 2 atributy).
+
+### Pre-G2 micro-fix — DD-43 DAY mapping standardizace 0.5 = poledne
+
+- [x] **`updateSun()` math fix.** `sin(α)/cos(α)` → `sin(α)/(-cos(α))` parametrizace (X horizont = sin, Y výška = -cos · cos(tilt), Z polar = -cos · sin(tilt)). Verifikace: 0.0=půlnoc / 0.25=východ / 0.5=poledne / 0.75=západ.
+- [x] **`updateAtmosphere()` daylight křivka.** `Math.max(0, Math.sin(...))` → `Math.max(0, -Math.cos(...))`. DRY s sun intensity.
+- [x] **HTML default sync.** `<input id="set-day" value="0.25">` → `value="0.5"`, span readout `0.50`.
+- [x] **WORLD constructor default sync.** `this.DAY = 0.25` → `this.DAY = 0.5`. JSDoc nový mapping (0=půlnoc, 0.25=východ, 0.5=poledne, 0.75=západ).
+- [x] **Komentáře update** v `main.js` (sky/ambient header + `updateSun` doc block).
+- [x] **DD-43 zápis** (immutable log, supersede DD-38 sun position math; DAY/DAY_SPEED atributy + driver pattern zachovány).
+
+### Surface drift fix (bug fix, ne DD)
+
+- [x] **Pre-existing rounding drift v `normalizeSurfaces`.** Sez. 26 původ — `toFixed(2)` × 4 sliderů = ±0.02 sum worst-case drift, generátor tolerance ±0.001 → throw → tichá failure. Reproduce: sekvence ≥2 multi-slider pohybů.
+- [x] **Fix v `index.html` `readParams()`.** Divide-by-sum normalize (4 řádky). Single-point fix v UI (jediný caller generátoru). Generátor tolerance neměnit (KISS, defensive při unknown caller).
+- [x] **Test 3 user (po fix předpokládáno OK z `%END` triggeru).**
+
+### Test (user)
+
+TEST 1 OK (G1 — relief slider clamp na různých size). TEST 2 OK (DD-43 DAY 0.5=poledne / DD-42 Climate sun tilt + biome readout). TEST 3 — bug report → fix → assumed OK.
+
+### Diff celkem
+
+`src/terrain.js` +33/0 ř. (G1 `maxReliefForSize` + G2 `BIOME_NAMES`), `src/main.js` ~+55/−23 ř. (G1 import+expose + G2 SUN_TILT_BY_LATITUDE/updateSun-tilt-lookup/setLatitude+setHumidity/BIOME_NAMES expose, DD-43 updateSun+updateAtmosphere math posun + komentáře), `src/model.js` ~+22/−1 ř. (WORLD JSDoc rozšíření + DAY=0.5 + LATITUDE+HUMIDITY atributy), `index.html` ~+104/0 ř. (G1 updateReliefSliderMax + wire, G2 CSS .climate-row+.tc-biome + Climate sekce DOM + IIFE wire-up + biome readout, surface fix readParams divide-by-sum, set-day default 0.5), `docs/DESIGN_DECISIONS.md` ~+95 ř. (DD-42 + DD-43), `docs/*` ~+150 ř. (TODO close G1+G2 + 2 G2 sub-prah; DIARY index + sez. 35 sekce; GLOSSARY WORLD update).
