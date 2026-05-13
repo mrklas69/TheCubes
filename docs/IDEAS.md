@@ -2,7 +2,7 @@
 
 Raw nápady. Když dozraje, přesuň do `TODO.md`.
 
-## Vytunit reliéf generátor *(sez. 38 user nápad)*
+## Vytunit reliéf generátor *(sez. 38 user nápad, → TODO až bude apetit na dev panel)*
 
 Po DD-44/45/46 sequence (BIOME_SURFACES driver + fBm/ridge³ + smoothstep bimodal) má heightmap pipeline stálé chování, ale je hodně knobů k tunit:
 - **RELIEF_AMPLITUDE / RELIEF_FREQUENCY tabulky** — empiricky vyladěné, ale nejsou per-LATITUDE/BIOME. Tropical/temperate mají stejné amplitudy → polární scéna může vypadat jak alpine.
@@ -14,7 +14,7 @@ Po DD-44/45/46 sequence (BIOME_SURFACES driver + fBm/ridge³ + smoothstep bimoda
 
 Návrh: tunable parameters expose přes hidden dev panel (`#devctrl`?) — debug live tweak bez recompile. Default values držet jako DD-46 baseline, panel ovládá pro experimentování. Tvorba `params.tuning = { thresholdR6, valleyAmp, smoothLo, smoothHi, ... }` na `generateTerrain` API.
 
-## Mraky / srážky *(sez. 38 user nápad)*
+## Mraky / srážky *(sez. 38 user nápad, → blokováno particle/sprite engine infrastrukturou)*
 
 Atmosferický overlay nad terénem. Vizuální vrstva (= nemodifikuje terén, jen scénu).
 
@@ -29,23 +29,21 @@ Atmosferický overlay nad terénem. Vizuální vrstva (= nemodifikuje terén, je
 
 **Závislost:** vyžaduje particle system base infrastrukturu (Three.js `Points`/`Sprite` instance manager). Nebo deferovat až bude víc dynamic entit. Sub-prah pro pozdější sezení.
 
-## Voda ve všech skupenstvích *(sez. 37 user nápad)*
+## Voda ve všech skupenstvích *(sez. 37 user nápad, → DONE částečně sez. 38 DD-47/48)*
 
-Aktuálně `water` žije jako jeden surface kind v `SURFACE_Y_OFFSET` + 1×1 plane na cell (DD-32 MVP). User nápad: **systematická voda jako entita s skupenstvími**. Rozšíření modelu:
+User nápad: **systematická voda jako entita s skupenstvími**. Rozšíření modelu:
 
-- **LIQUID** *(DD-25 vrstva 4 — již otevřený TODO kandidát)* — voda jako 1. třída entity, ne surface. Atributy: `LEVEL` (hladina), `TEMPERATURE`, `FLOW_DIRECTION`. Klastrování spojitých water cells do bounding boxů (TODO bod) je MVP. Pokročilá fáze: tok přes height gradient.
+- **LIQUID** *(DD-25 vrstva 4 — již otevřený TODO kandidát)* — voda jako 1. třída entity, ne surface. Atributy: `LEVEL` (hladina), `TEMPERATURE`, `FLOW_DIRECTION`. → **DONE částečně (DD-47 sez. 38):** flood-fill priority (Wang & Liu) generuje vodu jako entity (1×1 plane per cell, `_waterMat`), boundary overflow drain, frozen flag per cell. Plně 1. třída entita (OOP class pod CUBES + `LEVEL/TEMPERATURE/FLOW_DIRECTION` atributy + klastry do bbox) zůstává sub-prah.
 - **ICE** — pevné skupenství. Možnosti:
-  - (a) Surface kind v `SURFACE_Y_OFFSET` (paralelně se `snow` G4 kandidátem) — vizuálně led, mechanicky shodné s grass/stone.
+  - (a) Surface kind v `SURFACE_Y_OFFSET` — vizuálně led, mechanicky shodné s grass/stone.
   - (b) Vlastní třída pod BLOCKS (`ICUBES`?) s reflective material + slip mechanika (až přijde pohyblivá entita).
-  - (c) State `LIQUID.STATE = "frozen"` — jeden objekt, několik vizualizací. **Izomorfní s `ANIMATE` mode slot DD-18.** Doporučeno.
-- **STEAM / FOG** — plynné skupenství. Volumetrický efekt? Sprite particle? Three.js `Fog` / `FogExp2` má vlastní globální fog (sez. 31 BokehPass), ale to je atmosféra, ne lokální entita. Lokální steam by mohl být CCUBES s `OPACITY` + `ANIMATE = drift` (sez. 7 helper). Cheap.
-- **SNOW** — pevné krystalické. Už existující G4 kandidát (DD-44 sub-prah, `polar.*` proxy `sand`). Pod LIQUID hierarchií = ledové krystalky, ne kapalina.
+  - (c) State `LIQUID.STATE = "frozen"` — jeden objekt, několik vizualizací. **Izomorfní s `ANIMATE` mode slot DD-18.** → **DONE (DD-47 sez. 38) varianta (c):** `frozen` flag per cell (boolean) přepíná `_waterMat` na `_iceMat`. `freezeRatio` per LATITUDE driver (polar 1.0, temperate 0.3, sub/tropical 0.0).
+- **STEAM / FOG** — plynné skupenství. Volumetrický efekt? Sprite particle? Three.js `Fog` / `FogExp2` má vlastní globální fog (sez. 31 BokehPass), ale to je atmosféra, ne lokální entita. Lokální steam by mohl být CCUBES s `OPACITY` + `ANIMATE = drift` (sez. 7 helper). Cheap. **Zůstává otevřené.**
+- **SNOW** — pevné krystalické. → **DONE (DD-47 sez. 38):** `BLOCK_COLORS` 4→8 `_snow` postfix varianty (TOP=`0xf5f5f5`), `snowSpecForLatitude` driver (polar all / temperate sort+rank top 30 % s altitude bias). Ramps dědí `_snow` ze source cell.
 
-**Driver: `WORLD.TEMPERATURE` ?** Klimatický atribut, který přepíná water ↔ ice ↔ steam dle aktuálního stavu. Korelace s LATITUDE (DD-42) je očekávaná: polar → ice/snow, tropical → steam/water, temperate → water. Mohlo by ale být i nezávislé (sopečné jezero v Antarktidě = lokální anomálie).
+**Driver: `WORLD.TEMPERATURE` nebo `WORLD.SEASON`?** *(DD-47 dnes používá hard-coded `freezeRatio` per LATITUDE.)* Klimatický atribut, který by přepínal water ↔ ice ↔ steam dynamicky. Sub-prah: WORLD.SEASON driver (zima víc led, léto méně) — DD-29 → DD-38 → DD-42 → DD-47 progresion: SEASON další konzument.
 
-**Cyklus skupenství v čase:** pokud `WORLD.TEMPERATURE` osciluje s `DAY` (DD-38/DD-43 noc chladnější → ráno mlha, poledne taje sníh), vznikne **emergentní dynamika** = preferovaný vzorec (CLAUDE.md `%THINK` 5. bod). Kandidát na samostatný DD po terénu.
-
-**Co aktivovat první?** Pravděpodobně ICE jako stavový atribut LIQID, plus SNOW G4 (pevné skupenství už čeká v sub-prahu). STEAM až bude particle/sprite engine.
+**Cyklus skupenství v čase:** pokud `WORLD.TEMPERATURE`/`SEASON` osciluje s `DAY` (DD-38/DD-43 noc chladnější → ráno mlha, poledne taje sníh), vznikne **emergentní dynamika** = preferovaný vzorec (CLAUDE.md `%THINK` 5. bod). Kandidát na samostatný DD po terénu.
 
 ## Rozšíření modelu
 - **SPRITES** — potomek CUBES s 2D billboard vizualizací (dialog bubble, 2D postava, label). Atribut `ASSET`. → DONE (sez. 4, M5): třída + canvas-generovaná dialogová bublina + instance `dialog_0001` nad stromem. Dynamický 3D ocásek → DONE (sez. 8, DD-16).

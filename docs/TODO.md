@@ -36,7 +36,7 @@
 - [ ] **`LIQUID` třída** (DD-25 vrstva 4) pro vodní plane(y) — DD-47 prototype dnes single-mesh per cell (= "prototype LIQUID"). Plná 1. třída entita = OOP třída pod CUBES, atribut LEVEL/TEMPERATURE/FLOW_DIRECTION, klastry s vlastními ANIMATE. Sub-prah po DD-47.
 - [ ] **Klastrování spojitých water cells** do bounding boxů (flood-fill connected components, jeden plane na celé jezero) místo 1×1 per cell. Pro polar mid 100×100 (~500 water cells) je dnes ~500 meshes. Bbox clustering by srazil na ~5-20 jezer = 5-20 meshes. Sub-prah DD-47 follow-up.
 - [ ] **Roadmap relief 9..10**: valley carving / ridge noise algoritmus (heavily dissected / alpine plně).
-- [ ] **Procedural paths + tunely** v generovaném terénu (pathfinding přes heightmap).
+- [ ] **Procedural paths + tunely** v generovaném terénu (pathfinding přes heightmap). Po sez. 38 TTUNELS class drop (audit D2) — třídu vrátit z git historie (`ccb9fe9^` na main), až bude tunely chtěné v procedurálním terénu.
 - [ ] **2-voxel stepy + 4-cell jámy** — současný ramp algoritmus pokrývá jen 1-voxel step + 3-cell/L-shape/diag peak. Schodišťové vzory + 4-stěnné jámy zůstávají hranaté. Mimo MVP.
 - [ ] **TDRAMP doplňující compatibility check** — aktuálně bez kontroly proti rampám u 2 horních sousedů (může narazit do boku). Empirický feedback ukáže, zda potřeba.
 
@@ -49,9 +49,8 @@
 ## Audit cadence
 
 - **`%AUDIT:CODE`** — **0/8 reset** *(sez. 38 audit běžel: K1/K2 docs drift fix, D1 BLOCKS+COMPOSITES import drop, D2 TTUNELS drop ~287 ř., D3 terrain.js komentář, D4 GLOSSARY engine-internal maps)*. Next: ~sez. 46.
-- **`%AUDIT:DOCS`** — 9/10 sezení od sez. 29. Sez. 39 doporučený.
+- **`%AUDIT:DOCS`** — **0/10 reset** *(sez. 39 audit běžel: K1-K4 + 9 D + 6 KK + 2 S nálezů)*. Next: ~sez. 49.
 - **IDEAS/TODO pruning** — 6/12 (sez. 38: close G4 snow + DD-39 dusk sub-prahy, add 3 DD-47 follow-up sub-prahy, add 2 DD-48 follow-up, add „Vytunit reliéf" + „Mraky/srážky" IDEAS entries).
-- **`%CALIBRATE`** — sub-prah „CLAUDE.md +50 %" stále resetnut.
 
 - [ ] **Symmetric VALLEY_AMP = −amplitude varianta** — DD-46 dnes asymetrický (VALLEY=−1, PEAK=amplitude). Peak side rozprostřená přes víc úrovní (Y=2,3,4) než valley side (Y=−1 dominantní). Pro skutečně symetrický bimodal (= stejné peaks i valleys distribuce) by VALLEY=−amplitude dalo range [-amp, +amp]. Pro r6 by to znamenalo -4..4. Wait pro user feedback typu „valley je moc dominantní" / „peaks rozcucnatý".
 - [ ] **Plynulý morph r5↔r6** — DD-46 hard switch při r=6 (ridge³ → smoothstep bimodal). Pokud user pocítí „přechod mezi rolling a horami je trhanej", parametrizovat `bimodalWeight = clamp((relief-5)/3, 0, 1)` a lerp mezi ridge³ output a smoothstep output. Wait pro user feedback.
@@ -67,6 +66,10 @@
 
 - [ ] **HSL hue shift pro sky/sun** — current lerp RGB-linear. Mezi `_skyDusk` (teplá) a `_skyDay` (tmavě modrá) RGB prochází přes desaturovanou hnědou. HSL lerp by dal hue rotation (orange → blue přes purple — fyzikálně realističtější Rayleigh).
 - [ ] **Per-cluster wave fáze** — současný water wave je global synchroní (všechny meshe stejná fáze). Pro realistic „každé jezero vlastní vlnka" by potřeboval per-cluster offset (seed-based).
+
+## Sub-prah (sez. 39 %AUDIT:DOCS follow-up)
+
+- [ ] **DIARY.md index retro cleanup** — od sez. 14 dál (multi-session days) index sazí 5-7 sezení do jednoho mega-řádku (sez. 38 řádek má 28k znaků). Per PROMPTS.md %END *„datum + shrnutí sezení"* — index má být stručný 1-2 věty per sezení, detail patří do `diary/YYYY-MM-DD.md`. Retro cleanup = velký úkol, pro budoucí sezení dodržovat stručný index automaticky.
 
 ## Sub-prah (DD-46 follow-up, sez. 37, zachovat)
 - [x] **Bimodální heightmap (G5 kandidát)** *(sez. 37, DD-46)* — vyřešeno smoothstep bimodální variantou pro relief ≥ 6. Viz DONE.md.

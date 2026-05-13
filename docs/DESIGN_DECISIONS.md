@@ -1239,7 +1239,7 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 
 **Reference:**
 
-- DD-32 (sez. 25) — `generateTerrain` MVP s water surface kind. DD-47 supersededvodu jako surface (drop).
+- DD-32 (sez. 25) — `generateTerrain` MVP s water surface kind. DD-47 nahrazuje vodu jako surface (drop).
 - DD-44 (sez. 36) — G3 surface driver. DD-47 follow-up: voda z BIOME_SURFACES odebrána, % přerozděleno.
 - DD-42 (sez. 35) — WORLD.LATITUDE × HUMIDITY climate matrix. DD-47 přidá `snowSpecForLatitude` + `waterSpecForClimate` konzumenty.
 - DD-25 (sez. 16) — 4-vrstvá taxonomie. DD-47 LIQUID prototype připravuje 4. vrstvu (= jezera jako entity, ne plane meshes — sub-prah).
@@ -1291,7 +1291,7 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 
 - **Sky/sun přechod bez hue shift** — current lerp je RGB-linear, ne HSL/HSV. Mezi `_skyDusk` (0x5f3433, teplá) a `_skyDay` (0x1a1a2e, tmavě modrá) RGB lerp prochází přes desaturovanou tmavě hnědou. HSL lerp by dal hue rotation (orange → blue přes purple). KISS: RGB stačí, sub-prah pro pozdější.
 - **Wave anim global** — všechna voda synchroně. Realistic by bylo per-cluster wave (každé jezero vlastní fáze). Sub-prah.
-- **Sun color shift 30 %** může být moc subtilní pro některé prefer. Tweakable via konstanty komentáře (`0.1 = subtle`, `0.3 = current`, `0.5 = halfway`, `1.0 = full ozhuje`).
+- **Sun color shift 30 %** může být moc subtilní pro některé prefer. Tweakable via konstanty komentáře (`0.1 = subtle`, `0.3 = current`, `0.5 = halfway`, `1.0 = full žhne`).
 - **Ice color shift bez snow texture** — `_iceMat.color` 0xd9e8ec je solid. Reálný „zasněžený led" by měl noise patches (= partially zasněžený, partially čistý led). Sub-prah pro canvas texture / vertex colors.
 
 **Reference:**

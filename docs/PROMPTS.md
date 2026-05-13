@@ -1,6 +1,6 @@
 # PROMPTS.md — Makra pro Claude (projekt TheCubes)
 
-Projektově specifická makra. Globální makra (`%THINK`, `%AUDIT:CODE`, `%AUDIT:DOCS`) jsou v `~/.claude/CLAUDE.md` a platí i zde.
+Projektově specifická makra. Globální makra (`%BEGIN`, `%END`, `%DOCS`, `%THINK`, `%AUDIT:CODE`, `%AUDIT:DOCS`) jsou v `~/.claude/PROMPTS.md` a platí i zde — projektový `%BEGIN`/`%END` níže je override globální kostry (přidává git sync detail + server spawn + audit cadence reporting).
 
 ---
 
@@ -43,7 +43,7 @@ netstat -ano | grep ':8000'
 
 - **Prázdný výstup** → spusť server v background:
   ```bash
-  cd C:/Users/mrkla/Source/TheCubes && python -m http.server 8000
+  cd C:/Users/mrkla/source/TheCubes && python -m http.server 8000
   ```
 - **Něco poslouchá** → OK, nic nedělej.
 
