@@ -786,3 +786,51 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 - DD-26 (ORIENTATION) — rampy rotace v batchi přes `setMatrixAt(idx, M4)` s `Euler(0, rotY, 0)`.
 - Sez. 30 stress test 100×100 — trigger (FPS 7, calls 47k).
 
+## DD-38 — WORLD re-introduce: DAY + DAY_SPEED atributy se sun mesh / DirectionalLight konzumenty (sez. 32)
+
+**Kontext:** Sez. 31 přidalo statický sun mesh a popisný komentář předjímal *„Až WORLD dostane TIME/SUN_ANGLE atribut..."*. DD-29 (sez. 20) zavedl WORLD jako *Light DO* s atributem `WIND_STRENGTH` (konzument `tree_sway`). DD-32 wipe v sez. 25 smazal `tree_sway`, čímž WORLD ztratil konzumenta; sez. 29 audit (F4) WORLD třídu úplně odebral jako prázdného singletona ("singleton bez konzumenta po DD-32 wipe"). DD-29 politika *"atribut přibude jen s živým konzumentem"* tedy donutila celé DO zaniknout, ne jen jeden atribut.
+
+**Rozhodnutí sez. 32:**
+
+1. **Re-introduce `WORLD extends OBJECTS`** v `model.js` se dvěma novými atributy:
+   - `DAY ∈ [0, 1)` — fáze 24h cyklu (0 = východ, 0.25 = poledne, 0.5 = západ, 0.75 = půlnoc). Default 0.25 (poledne, scéna při bootu plně osvětlená).
+   - `DAY_SPEED ∈ ℝ` — kolik cyklů za sekundu. Default **0** (paused). Engine v render loopu inkrementuje DAY o `dt * DAY_SPEED` s `% 1` modulo.
+
+2. **Bez X/Y/Z** (zachování DD-01 separace vizuální/modelová entita — WORLD je čistě data, nemá pozici).
+
+3. **Dva živí konzumenti:**
+   - `DAY` → `sun.position` (DirectionalLight, dráha v rovině nakloněné `SUN_TILT = π/6` od svislice), `sun.intensity` (lerp `SUN_BASE_INTENSITY * max(0, sin α)` = noc tmavá), `sunMesh.position` (5× scale), `sunMesh.visible` (skryt pod horizontem).
+   - `DAY_SPEED` → render loop auto-advance (`updateWorldTime(dt)`).
+
+4. **Math pozice slunce** — plane EAST-UP s 30° náklonem k +Z (severní polokoule v létě):
+   ```js
+   const angle = world.DAY * TAU;  // 0..2π
+   sun.position.set(
+     SUN_DISTANCE * cos(angle),                       // X (východ-západ)
+     SUN_DISTANCE * sin(angle) * cos(SUN_TILT),       // Y (výška)
+     SUN_DISTANCE * sin(angle) * sin(SUN_TILT),       // Z (sezonní offset)
+   );
+   ```
+   Důvod sklonu: bez něj je v poledne slunce v zenitu = stíny svislé = nevizuální. Sklon 30° drží stín i v poledne. Realistická sférická dráha s SEASON atributem = roadmap.
+
+5. **`window.world` dev exposure** — settings panel API i console test čtou/mutují přes `window.world`.
+
+6. **UI v `#settings` panelu** — 2 slidery (DAY 0..0.999 step 0.01, DAY_SPEED 0..0.1 step 0.001) + numerické labely. Wire skrz `window.settings.setDay(v) / setDaySpeed(v)`. `setSun(on)` z sez. 31 přepracován na `_sunUserVisible` flag, finální `sunMesh.visible = _sunUserVisible && sun.position.y > 0`.
+
+**Důvod (proč DD a ne jen feature):**
+- Re-introduce WORLD po cleanup je strukturální (DD-29 doktrína "minimum life") — politika zůstává platná, jen jí přibyly dva noví konzumenti.
+- DAY je první časový atribut v projektu mimo `TIME` singleton (`src/time.js`). DD definuje, kde se "čas dne" žije (WORLD), oproti diskrétnímu tikání (TIME).
+- Sun direction se přesune ze statického `sun.position.set(-10, 8, 10)` na render-loop derivaci — všechny ostatní efekty závislé na světle (stíny, post-process) přijdou na nový kontrakt "světlo se mění každý frame".
+
+**Známá omezení:**
+- **Sklon `SUN_TILT` fixed** — nelze měnit přes WORLD (žádný `SEASON` atribut). Realistická sférická dráha s ročními obdobími = roadmap (`SEASON` atribut s konzumentem `updateSun`).
+- **Sky/ambient barva konstantní** — `SKY_COLOR` + `sceneFog` se nemění s DAY. Sunset/úsvit nuance out of scope sez. 32.
+- **Slider DAY v UI vs. auto-advance** — když `DAY_SPEED > 0`, slider drží user-input value, ale `world.DAY` se hned přepíše. UX dělba: pauzuj (speed = 0) pro ladění DAY, pusť (speed > 0) pro auto. Bez sync sliderem z value (drahé per-frame DOM write).
+- **Shadow frustum reactive jen na size** (sez. 30) — při pohybu slunce může stín "uskočit" na okraji frustumu. Risk marginální, frustum je dostatečně široký.
+
+**Reference:**
+- DD-29 (sez. 20) — původní zavedení WORLD jako *Light DO*; politika "atribut přibude jen s živým konzumentem" zachována.
+- DD-01 (sez. 1) — separace vizuální/modelová entita; WORLD bez X/Y/Z je její demonstrace.
+- Sez. 29 (`feat/audit-29-cleanup` F4) — odstranění WORLD jako prázdného singletona. Tato DD ho vrací s 2 atributy + 2 konzumenty.
+- Sez. 31 — sun mesh + post-process (DOF/fog) — kontext, který tuto DD motivoval.
+

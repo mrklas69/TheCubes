@@ -67,13 +67,13 @@ function makeValueNoise(sizeX, sizeZ, freq, seed) {
   };
 }
 
-// Relief 0..10 → (amplitude max Y voxel, heightmap frequency).
+// Relief 0..8 → (amplitude max Y voxel, heightmap frequency).
 // 0–2: nízká členitost (roviny, mírné vlny). 3–5: pahorkatiny (rolling/hilly/
-// broken). 6–8: vrchoviny (rugged/craggy/mountainous). 9–10: velehory
-// (heavily dissected / alpine) — value-noise engine to nezvládne plně (chybí
-// valley carving), takže graceful degradation na úroveň 8 + konzolový warn.
-const RELIEF_AMPLITUDE = [0, 0, 1, 1, 2, 3, 4, 5, 6, 6, 6];
-const RELIEF_FREQUENCY = [0.00, 0.15, 0.20, 0.25, 0.30, 0.35, 0.45, 0.55, 0.65, 0.65, 0.65];
+// broken). 6–8: vrchoviny (rugged/craggy/mountainous). 9–10 přijímáme na vstupu,
+// ale value-noise engine je nezvládne plně (chybí valley carving / ridge noise),
+// proto níže clamp na 8 + warn — pole tak drží jen *podporované* indexy (SSoT).
+const RELIEF_AMPLITUDE = [0, 0, 1, 1, 2, 3, 4, 5, 6];
+const RELIEF_FREQUENCY = [0.00, 0.15, 0.20, 0.25, 0.30, 0.35, 0.45, 0.55, 0.65];
 
 // Surface biome → Y offset (oproti heightmap value h).
 // `grass` / `stone` — na povrchu (h beze změny).

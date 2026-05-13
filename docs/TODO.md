@@ -30,22 +30,9 @@
 - [ ] **BUILDING třída** *(IDEAS — budoucí dekorativní/factory entity nad generovaným terénem)*.
 - [ ] **TRACK třída** *(IDEAS — sourozenec PATH, vlaky odloženy)*.
 
-## Audit follow-up (sez. 29 nálezy)
-
-Doporučené, neuděláno v sez. 29 audit batch:
-
-- [ ] **F5 — Atlas/slow-path texture-source divergence**: atlas `getTcubesKindMaterial` volá `factory()` přímo, slow path přes `_faceMaterialCache` — pro stejný `:named-texture` vznikají 2 různé textury s různými random patches. Fix: shared registry `texturePerNamedKey`. User sez. 29 pre-flight check *parita OK*, takže low prio.
-- [ ] **F6 — `_faceMaterialCache` + `_tcubesAtlasMatCache` + `_rampsAtlasMatCache` paralelní cache**: tři API, tři sémantiky, stejná konceptuální věc (material per spec). Refactor na `materialFor(spec)` s discriminated union, nebo komentář dokumentující rozdíl. *(Sez. 30 doplnil `_rampsAtlasMatCache` jako třetí variantu — argument pro sjednocení sílí.)*
-- [ ] **F10 — Hover-clone material leak při `regenerateScene`**: `setHoverHighlight(true)` klonuje materials, regen nedispose. Při častém regen accumulate. Fix: `mesh.userData.hoverHotMat?.dispose?.()` před `scene.remove`.
-
-Kosmetické:
-
-- [ ] **F11 — Mrtvé importy + scratch vars**: `_b` scratch vector v main.js:455 (0 read-sitů, pozůstatek `balloon_bob` smazaného sez. 15). Komentář `_dir` na :773 zmiňuje smazaný balloon animátor.
-- [ ] **F14 — RELIEF_AMPLITUDE/FREQUENCY indexy 9/10 duplikují 8 + clamp**: `terrain.js:75-76`. Dva mechanismy pro stejnou věc (SSoT). Buď clamp, nebo pole, ne obojí.
-
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — 2/8 sezení od sez. 29. Další doporučený sez. 37+.
-- **`%AUDIT:DOCS`** — 2/10 sezení od sez. 29. Další doporučený sez. 39+.
-- **IDEAS/TODO pruning** — 12/12 (po sez. 31 přesun hotových do DONE).
+- **`%AUDIT:CODE`** — 3/8 sezení od sez. 29. Další doporučený sez. 37+.
+- **`%AUDIT:DOCS`** — 3/10 sezení od sez. 29. Další doporučený sez. 39+.
+- **IDEAS/TODO pruning** — 13/12 (po sez. 32 přesun hotových do DONE — *překročen prah, audit ideas/todo v sez. 33+*).
 - **`%CALIBRATE`** — sub-prah „CLAUDE.md +50 %" stále resetnut.

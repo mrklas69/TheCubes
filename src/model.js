@@ -425,3 +425,30 @@ export class TIMER extends OBJECTS {
   }
 }
 
+/**
+ * WORLD = singleton DO (Data Object) pro globální atributy scény (DD-29 → DD-38).
+ *
+ * Re-introduce v sez. 32 — sez. 29 ho smazal jako prázdného singletona po DD-32
+ * wipe `tree_sway` (jediný konzument `WIND_STRENGTH`). Nyní 2 živí konzumenti:
+ *   - `DAY` ↔ sun mesh + directional light pozice/intensity
+ *   - `DAY_SPEED` ↔ render loop auto-advance DAY
+ *
+ * Bez X/Y/Z (DD-01: model entita bez vizuální prostorové pozice). Atributy:
+ *   - `DAY ∈ [0, 1)` — fáze 24h cyklu. 0=východ, 0.25=poledne, 0.5=západ, 0.75=půlnoc.
+ *     Default 0.25 (poledne, scéna při bootu plně osvětlená).
+ *   - `DAY_SPEED ∈ ℝ⁺` — kolik cyklů za sekundu. 0 = pauza. Default 0 (KISS,
+ *     user explicit zapne přes #settings slider nebo `window.world.DAY_SPEED = 0.05`).
+ *
+ * Politika DD-29 stále platí: nové atributy přibudou jen s živým konzumentem.
+ */
+export class WORLD extends OBJECTS {
+  constructor(id, name, description = "") {
+    super(id, name, description);
+    // DAY = fáze 24h cyklu, normalizovaná na [0, 1). Default poledne.
+    this.DAY = 0.25;
+    // DAY_SPEED = cykly/s. 0 = paused (default). Engine v main.js inkrementuje
+    // DAY v render loopu (`world.DAY = (world.DAY + dt * world.DAY_SPEED) % 1`).
+    this.DAY_SPEED = 0;
+  }
+}
+

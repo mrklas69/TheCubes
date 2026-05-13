@@ -11,17 +11,18 @@ Raw nápady. Když dozraje, přesuň do `TODO.md`.
 - **CCUBES typizace** *(překryto DD-24)* — historicky navrhováno jako `TERRAIN` rodina (ICE/GRASS/SAND); DD-24 shape × surface řeší surface obecněji jako paletu, takže typizace CCUBES už není potřeba.
 - **Nevizualizované OBJECTS** — pravidla, recepty, timery, score. Dědí z OBJECTS přímo, ne z CUBES. → PARTIAL (sez. 9 + 20): **TIMER** (DD-17, `INTERVAL + ACTION`, engine `ACTIONS` dispatch `toggle`/`set`), **COUNTER** (`VALUE + INCREMENT` v HUD), **WORLD** singleton (DD-29, sez. 20 — `WIND_STRENGTH` násobí `tree_sway` amplitudu). *(Po sez. 17 TIMER ani COUNTER nemají aktivní instanci ve scéně — třídy + engine infrastruktura zůstávají. WORLD singleton aktivní od sez. 20.)* **Zbývající:** RULE framework (condition + action), BRAIN (per-entity chování), pravidla/recepty s kombinačními ACTION.
 
-## WORLD rozšíření *(DD-29 gated by konzument)*
+## WORLD rozšíření *(DD-29 → DD-38 gated by konzument)*
 
-Atributy `WORLD` se přidávají jen tehdy, když mají živého konzumenta v engine. Aktuální seznam kandidátů (žádný se nepřidává teď):
+Atributy `WORLD` se přidávají jen tehdy, když mají živého konzumenta v engine. Po sez. 32 re-introduce (DD-38) WORLD má 2 aktivní atributy: **`DAY`** + **`DAY_SPEED`**. Další kandidáti:
 
-- **`SUN_ANGLE`** — den/noc shader. Konzument: aktualizovat `directionalLight.position` v render loopu (azimuth + elevation) + `scene.background` barva.
-- **`CLIMATE`** — string (`"northern"`, `"desert"`, `"tropical"`). Konzument: `BIOME_TREES[climate]` lookup v `populateNorthernScene` (rename na `populateBiome`).
-- **`SEASON`** — string (`"spring"`, `"summer"`, `"autumn"`, `"winter"`). Konzument: sezónní paleta listů v TREE.KIND sub-builderech (kvazi-konstanta `LEAF_COLOR[season]`).
-- **`DAY`** — float [0, 1) cyklus dne. Konzument: kombinovaný driver pro `SUN_ANGLE` (`SUN_ANGLE = f(DAY)`) — pak má smysl `SUN_ANGLE` derivovat, ne držet jako primary.
-- **`WIND_DIRECTION`** — float [0, 360) ve stupních. Konzument: direction-aware `tree_sway` (X/Z odděleně podle směru). `tree_sway` je momentálně izotropní (random fáze X+Z), takže direction by byl mrtvý.
+- **`DAY`** — float [0, 1) cyklus dne. → **DONE** (sez. 32, DD-38). Konzument: `updateSun()` derivuje `sun.position` (plane EAST-UP s 30° náklonem `SUN_TILT`), `sun.intensity` (lerp `0.8 * max(0, sin α)`), `sunMesh.position`/`visible`. Default 0.25 (poledne).
+- **`DAY_SPEED`** — float ℝ, cykly za sekundu. → **DONE** (sez. 32, DD-38). Konzument: `updateWorldTime(dt)` inkrementuje `DAY` v render loopu. Default 0 (paused).
+- **`SUN_ANGLE`** *(původní návrh)* — překryto `DAY`. Engine derivuje úhel z DAY, není potřeba držet jako primary atribut. ~~Odložen~~.
+- **`SEASON`** — string (`"spring"`, `"summer"`, `"autumn"`, `"winter"`) **NEBO** float [0, 1) roční cyklus. Konzument: driver pro `SUN_TILT` (fixed π/6 v DD-38, sférická dráha = roadmap) + sezónní paleta listů v TREE.KIND sub-builderech, pokud kdy zoživou. Po DD-38 přirozený další konzument na WORLD.
+- **`CLIMATE`** — string (`"northern"`, `"desert"`, `"tropical"`). Konzument: per-biome textury / surface palette pro `generateTerrain`. Po terrain pivotu (DD-32) atraktivnější než původní `BIOME_TREES[climate]`.
+- **`WIND_DIRECTION`** — float [0, 360) ve stupních. Konzument: direction-aware sway, pokud kdy vrátíme animátor stromů / dekorací.
 
-Strukturní pozn.: pokud přibudou ≥3 atributy jedné kategorie (`WIND_STRENGTH` + `WIND_DIRECTION` + `WIND_TURBULENCE`), refaktor z ploché na nested (`WIND: { strength, direction, turbulence }`) — DD-29 pro to drží otevřená vrátka.
+Strukturní pozn.: pokud přibudou ≥3 atributy jedné kategorie (např. `SUN_TILT` + `SUN_DISTANCE` + `SUN_COLOR`), refaktor z ploché na nested (`SUN: { tilt, distance, color }`) — DD-29 / DD-38 pro to drží otevřená vrátka.
 
 ## Chování v čase
 - Až bude „čas něco dělat": jak? Pravidla (PocketStory style), per-object `tick()`, subscription na TIME? → DONE (sez. 5, M7): data-driven atribut `ANIMATE = { kind, ...params }` na `OBJECTS`, dispatch v enginu (DD-15). První dvě `kind`y: `balloon_bob` a `tree_sway`. Sez. 6 + 7 doplnily `rotate`, `orbit_stadium`, `pulse` (s volitelným opacity), `drift` (lineární s wrap-around). Sez. 10 (DD-18) rozšířil ANIMATE na „mode slot" — statické pózy (`sit`, `lie`) i stavové automaty (`wander`) sdílejí dispatch. Diskrétní události: `TIMER` + `ACTION` (DD-17, sez. 9).

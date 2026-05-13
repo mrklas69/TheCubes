@@ -10,7 +10,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
-import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, TTUNELS, SPRITES, COMPOSITES, PATH, TIMER, COUNTER } from "./model.js";
+import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, TTUNELS, SPRITES, COMPOSITES, PATH, TIMER, COUNTER, WORLD } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
 import { generateTerrain } from "./terrain.js";
 
@@ -72,12 +72,19 @@ controls.enableDamping = true;
 // odvrácená strana kostky by byla moc světlá a kontrast stínu by zmizel.
 scene.add(new THREE.AmbientLight(0xffffff, 0.15));
 // DirectionalLight = paralelní paprsky (jako slunce). Dává tvar kostce.
-// Zdroj v rohu (-10, 10, 10) — zleva, shora, vepředu — svítí na počátek (0,0,0).
-// target.position je default (0,0,0), směr se odvodí jako position → target.
+// Pozice se aktualizuje každý frame v `updateSun()` z `world.DAY` (DD-38, sez. 32) —
+// dráha leží v rovině nakloněné 30° od svislice (≈ severní polokoule v létě).
+// Initial pozice je placeholder pro první frame před prvním `updateSun()`.
 // Pozn.: Three.js má Y jako osu nahoru. Viz DD-10 (nahrazuje DD-09).
-const sun = new THREE.DirectionalLight(0xffffff, 0.8);
-// Pozice slunce: úhel ≈ 30° nad horizontem (Y=8, horizontal_dist=√(100+100)≈14.14
-// → atan(8/14.14)=29.5°). Stíny ~1.5× delší než výška objektu.
+const SUN_BASE_INTENSITY = 0.8;
+const sun = new THREE.DirectionalLight(0xffffff, SUN_BASE_INTENSITY);
+// Magnitude pozice slunce — zachovává původní vzdálenost √(100+64+100) ≈ 16.25.
+// Zachování důležité kvůli shadow.camera.near=1, far=50 (sun je uvnitř).
+const SUN_DISTANCE = Math.sqrt(10 * 10 + 8 * 8 + 10 * 10);
+// Sklon dráhy slunce od svislice (rad). 0 = slunce v poledne přesně v zenitu
+// (stíny nulové = nevizuální), π/6 = 30° náklon (stíny v poledne mírné, na
+// úsvitu/západu dlouhé). Roadmap: SEASON atribut na WORLD → dynamický sklon.
+const SUN_TILT = Math.PI / 6;
 sun.position.set(-10, 8, 10);
 // Slunce vrhá stíny. DirectionalLight používá **ortografickou** stínovou
 // kameru — je jako slunce v nekonečnu, paprsky jsou rovnoběžné. Frustum
@@ -112,10 +119,8 @@ scene.add(sun);
 // umístí ji za hranici 100×100 terrain (half=50). Radius 1.5 = drobný bod
 // na obloze (realistická distance perspective).
 //
-// Statická pozice — DAY/SEASON animace (Příště): přidat helper `updateSunMesh()`
-// volaný z animátoru nebo TIME tick, který sync.point.copy(sun.position).
-// multiplyScalar(SUN_DISTANCE_SCALE). Až WORLD dostane TIME/SUN_ANGLE atribut
-// (DD-29 politika), animátor mutuje obojí naráz.
+// Pozice sync-uje `updateSun()` v render loopu (DD-38, sez. 32) — drží sun mesh
+// v 5× radiusu DirectionalLight. V noci (sun.position.y < 0) sunMesh.visible=false.
 const SUN_DISTANCE_SCALE = 5;
 const sunMesh = new THREE.Mesh(
   new THREE.SphereGeometry(1.5, 16, 16),
@@ -125,6 +130,48 @@ const sunMesh = new THREE.Mesh(
 );
 sunMesh.position.copy(sun.position).multiplyScalar(SUN_DISTANCE_SCALE);
 scene.add(sunMesh);
+
+// === WORLD singleton (DD-38, sez. 32 re-introduce) ===========================
+// Nositel globálních atributů scény. Aktuální konzumenti:
+//   - `DAY` ↔ sun.position + sun.intensity + sunMesh.position/visible
+//   - `DAY_SPEED` ↔ render loop auto-advance DAY
+// `window.world` dev exposure (settings panel API mutuje atributy, console test).
+const world = new WORLD("world_0001", "Svět", "Globální atributy scény (DD-38).");
+window.world = world;
+
+// Auto-advance DAY ze rychlosti DAY_SPEED. Při speed=0 (default) je pauza —
+// user mutuje DAY manuálně přes slider/console. Modulo `% 1` zaručí cyklic.
+// Pozn.: záporný DAY_SPEED by jel opačně (před-poledne → východ → půlnoc → ...),
+// JS `%` vrací záporky → `((x % 1) + 1) % 1` zaručí [0,1).
+function updateWorldTime(dt) {
+  if (world.DAY_SPEED === 0) return;
+  world.DAY = ((world.DAY + dt * world.DAY_SPEED) % 1 + 1) % 1;
+}
+
+// Derivuje sun.position + intensity + sunMesh z `world.DAY`. Volat v render loopu
+// po `updateWorldTime` a před `composer.render()`. Math: úhel α = DAY · 2π,
+// dráha v rovině nakloněné `SUN_TILT` od svislice. Při DAY=0 slunce na východě
+// (X=+SUN_DISTANCE, Y=0), při DAY=0.25 v "poledni" (X=0, Y=cos(tilt)·dist,
+// Z=sin(tilt)·dist), atd. V noci (sin(α) < 0) intensity → 0 a sun mesh hidden.
+function updateSun() {
+  const angle = world.DAY * TAU;
+  const sinA = Math.sin(angle);
+  const cosA = Math.cos(angle);
+  sun.position.set(
+    SUN_DISTANCE * cosA,
+    SUN_DISTANCE * sinA * Math.cos(SUN_TILT),
+    SUN_DISTANCE * sinA * Math.sin(SUN_TILT),
+  );
+  // Intensity lerp: max 0 v noci (sin záporný), plné 0.8 v poledne (sin=1).
+  // `max(0, sin)` = pásmo "noc bez DirectionalLight" → scéna spoléhá na ambient
+  // (0.15) + post-process fog/DOF (vizuálně zachytitelné jako šero, ne kompletní tma).
+  sun.intensity = SUN_BASE_INTENSITY * Math.max(0, sinA);
+  // Sun mesh follow + skip render v noci (Y<0 = pod scénou = stejně neviditelné).
+  // AND s `_sunUserVisible` — pokud user vypne toggle v settings panelu, hide
+  // se zachová i v poledne (toggle = user override, ne overflow flag).
+  sunMesh.position.copy(sun.position).multiplyScalar(SUN_DISTANCE_SCALE);
+  sunMesh.visible = _sunUserVisible && sun.position.y > 0;
+}
 
 // === Post-processing (DOF + fog) =============================================
 // EffectComposer = wrapper kolem rendereru; provede sérii `passes` na off-screen
@@ -154,19 +201,22 @@ composer.addPass(bokehPass);
 composer.addPass(new OutputPass());
 
 // === Settings API — toggle volitelných vizuálních efektů ====================
-// Wire-up: `index.html` panel `#settings` (3 checkboxy) volá `window.settings.
-// setXxx(on)` na `change` event. Default v HTML = `checked` (vše on),
-// matchne aktuální stav po inicializaci.
+// Wire-up: `index.html` panel `#settings` volá `window.settings.setXxx(...)`
+// na `change` / `input` event. Default v HTML matchne initial state po
+// inicializaci (checkboxy `checked`, slider hodnoty = WORLD defaulty).
 //
-// DOF: `BokehPass.enabled = false` přeskočí pass v composeru (= 1 méně shader
-// průchod, +5-10 FPS na 100×100).
-// Fog: `scene.fog = null` vypne fog uniform v MeshStandardMaterial shaderech.
-// Restoreujeme stejnou instanci `sceneFog` (cheap toggle, žádná realokace).
-// Sun: `sunMesh.visible = false` skipne render meshu (Three.js standard).
+// DOF: `BokehPass.enabled = false` přeskočí pass v composeru (+5-10 FPS na 100×100).
+// Fog: `scene.fog = null` vypne fog uniform; restoreujeme `sceneFog` (cheap toggle).
+// Sun: dvojkový stav — user override (`_sunUserVisible`) + auto-hide v noci
+// (`updateSun()` skryje mesh pod horizontem). Finální visible = AND obou.
+// Day/DaySpeed: mutují WORLD atributy; `updateSun()` se postará per-frame.
+let _sunUserVisible = true;
 window.settings = {
-  setDOF(on) { bokehPass.enabled = on; },
-  setFog(on) { scene.fog = on ? sceneFog : null; },
-  setSun(on) { sunMesh.visible = on; },
+  setDOF(on)      { bokehPass.enabled = on; },
+  setFog(on)      { scene.fog = on ? sceneFog : null; },
+  setSun(on)      { _sunUserVisible = on; },
+  setDay(v)       { world.DAY = v; },
+  setDaySpeed(v)  { world.DAY_SPEED = v; },
 };
 
 // F12 (sez. 29) — fix: shadow frustum reaktivně dle aktuální velikosti terrain.
@@ -436,9 +486,11 @@ function makeRailTopTexture() {
   return canvasToPixelTexture(canvas);
 }
 
-// Per-cube fresh textury (žádný singleton) — každé volání factory vrátí novou
-// `THREE.Texture` s vlastním vzorem → 100 kostek × 6 stran = až 600 unikátních
-// textur. Každá 16×16 = 256 px, celkem ~600 KB GPU mem (zanedbatelné).
+// Pojmenované sdílené textury — factory vyrobí canvas s random patches, ale
+// výsledek je memoizovaný v `_namedTextureCache`. Všichni konzumenti (slow path
+// `faceMaterialFor`, TCUBES atlas, ramp atlas, PATH) sdílí stejnou `THREE.Texture`
+// instanci → jednotný vizuál napříč cestami (sez. 32 F5 fix — bez sdílení by
+// atlas a slow path měly různé random patches pro stejný `:name`).
 const NAMED_TEXTURE_FACTORIES = {
   ":dirt":       () => makeDirtTexture(),
   ":grass-top":  () => makeGrassTopTexture(),
@@ -447,6 +499,24 @@ const NAMED_TEXTURE_FACTORIES = {
   ":rail-top":   () => makeRailTopTexture(),
   ":path-dirt":  () => makePathDirtTexture(),
 };
+
+// Lazy cache pojmenovaných textur — první volání spustí factory, další vrátí
+// cached `THREE.Texture`. `null` cached miss značí neznámý název (`console.warn`
+// už proběhl) — zabrání spamování warnů.
+const _namedTextureCache = new Map();
+function getNamedTexture(name) {
+  const cached = _namedTextureCache.get(name);
+  if (cached !== undefined) return cached;
+  const factory = NAMED_TEXTURE_FACTORIES[name];
+  if (!factory) {
+    console.warn(`Neznámá pojmenovaná textura: "${name}"`);
+    _namedTextureCache.set(name, null);
+    return null;
+  }
+  const tex = factory();
+  _namedTextureCache.set(name, tex);
+  return tex;
+}
 
 // === Dispatch: atribut strany TCUBES → Three.js materiál ===
 // Rozhodne podle **typu** hodnoty, jaký materiál pro jednu stranu voxelu
@@ -472,6 +542,31 @@ const NAMED_TEXTURE_FACTORIES = {
 // nezávislé kopie.
 //
 // `null` má vlastní bucket (`"__null__"`), aby šel rozlišit od stringu `"null"`.
+//
+// === 3 paralelní material cache (F6 doc komentář) ===========================
+// V projektu žijí tři material cache vedle sebe, **každá s jinou sémantikou**:
+//
+//   1. `_faceMaterialCache`         — **slow path**, klíč = stringifikace `val`
+//      (per-face atribut: barva / `:name` / emoji). 1 materiál = 1 strana voxelu,
+//      mesh dostane `material[6]` array. Fallback pro non-terrain TCUBES, PATH,
+//      water plane, COMPOSITES boxy.
+//
+//   2. `_tcubesAtlasMatCache`       — **TCUBES atlas (DD-36)**, klíč = kind
+//      (`grass`/`dirt`/`stone`/`sand`). 1 materiál = celá kostka (6 facelet
+//      slepených do canvasu 96×16). Fast path pro terrain TCUBES — sloučí
+//      `material[6]` na 1, ušetří 5× draw call per box.
+//
+//   3. `_rampsAtlasMatCache`        — **ramp atlas (DD-36, sez. 30)**, klíč
+//      = `${type}_${surface}` (`trramps_grass`, `ttramps_stone`, `tdramp_sand`…).
+//      Per-ramp-typ varianta atlasu: 5/4/5 facelet na N×16 canvas.
+//
+// Proč nejsou sjednocené? **3 různé klíče a 3 různé fáze pipeline.**
+// Slow path bere libovolný `val`; TCUBES atlas vyžaduje pre-existující
+// `BLOCK_TEXTURES[kind]` 6-řádkový recept; ramp atlas vyžaduje pre-existující
+// `RAMP_*_TEXTURES[surface]` N-řádkový recept. Sjednocení by stačila discriminated
+// union `materialFor({ kind: 'face'|'tcubes-atlas'|'ramps-atlas', … })`, ale
+// přínos je čistě stylistický (≤ 50 řádků konsolidace), refactor by ohrozil
+// hover/raycast cestu doladěnou v sez. 31. **Záměrně oddělené** — sez. 32 F6.
 const _faceMaterialCache = new Map();
 
 function faceMaterialFor(val) {
@@ -487,13 +582,8 @@ function faceMaterialFor(val) {
   } else if (typeof val === "string") {
     // Prefix `:` značí pojmenovanou sdílenou texturu (Minecraft-style).
     if (val.startsWith(":")) {
-      const factory = NAMED_TEXTURE_FACTORIES[val];
-      if (factory) {
-        mat = new THREE.MeshStandardMaterial({ map: factory() });
-      } else {
-        console.warn(`Neznámá pojmenovaná textura: "${val}"`);
-        mat = new THREE.MeshStandardMaterial({ map: checkerboardTexture });
-      }
+      const tex = getNamedTexture(val);
+      mat = new THREE.MeshStandardMaterial({ map: tex ?? checkerboardTexture });
     } else if (/^#[0-9a-f]{3,8}$/i.test(val)) {
       // `#rrggbb` → Three.js Color parse (stejné jako number). Test přes regex,
       // aby např. `"red"` prošlo stejnou cestou (pojmenované CSS barvy).
@@ -527,13 +617,12 @@ const TAU = Math.PI * 2;
 
 // Scratch vektory pro animační hot path — reuse místo `new THREE.Vector3()`
 // každý frame. `_up` je default osa Three.js válce (+Y, readonly konstanta);
-// `_dir`, `_a`, `_b` jsou pracovní buffery, spotřebované v rámci jednoho
-// volání a hned přepsané dalším. Pattern „scratch vectors" je standard v
-// Three.js animacích — vyhýbá se GC pressure v 60 FPS smyčce.
+// `_dir` a `_a` jsou pracovní buffery, spotřebované v rámci jednoho volání
+// a hned přepsané dalším. Pattern „scratch vectors" je standard v Three.js
+// animacích — vyhýbá se GC pressure v 60 FPS smyčce.
 const _up = new THREE.Vector3(0, 1, 0);
 const _dir = new THREE.Vector3();
 const _a = new THREE.Vector3();
-const _b = new THREE.Vector3();
 
 // Fáze harmonické oscilace: převod wall-clock `t` (sekundy) na argument pro
 // `Math.sin`. `period` = doba jednoho kompletního kmitu v sekundách,
@@ -851,7 +940,7 @@ function updateBubbleTail(entry) {
   const target = resolveSpeakerTarget(instance.SPEAKER, instance.SPEAKER_OFFSET_Y, _speakerTarget);
   if (!target) { tail.visible = false; return; }
 
-  // `_dir` = cíl − střed bubliny (reuse scratch z balloon animátoru)
+  // `_dir` = cíl − střed bubliny (scratch vektor, viz `_up`/`_dir`/`_a` výše)
   _dir.subVectors(target, sprite.position);
   const distCenter = _dir.length();
   if (distCenter < 0.001) { tail.visible = false; return; }
@@ -1969,6 +2058,7 @@ function getSharedAtlasBoxGeom() {
 
 // Per-kind atlas material cache. Klíč = kind ("grass"/"dirt"/"stone"/"sand"),
 // hodnota = MeshStandardMaterial s 96×16 atlas texturou. Build je idempotentní.
+// Druhá ze tří paralelních cache — viz komentář u `_faceMaterialCache` výše.
 const _tcubesAtlasMatCache = new Map();
 function getTcubesKindMaterial(kind) {
   let cached = _tcubesAtlasMatCache.get(kind);
@@ -1978,10 +2068,9 @@ function getTcubesKindMaterial(kind) {
     _tcubesAtlasMatCache.set(kind, null);   // negative cache — non-terrain kindy
     return null;
   }
-  // Slep 6 facelet do jednoho canvasu 96×16. Každý facelet vytaha z
-  // odpovídající `:named-texture` factory (cache textur uvnitř naší
-  // memoizace `_faceMaterialCache` zde nepomáhá — pracujeme přímo s canvas
-  // image, ne přes MeshStandardMaterial wrapper).
+  // Slep 6 facelet do jednoho canvasu 96×16. Každý facelet vytaha ze sdílené
+  // `:named-texture` přes `getNamedTexture` (F5 fix — atlas a slow path teď
+  // čerpají ze stejné cached instance, takže random patches matchnou).
   const canvas = document.createElement("canvas");
   canvas.width  = ATLAS_TILE_PX * 6;
   canvas.height = ATLAS_TILE_PX;
@@ -1990,9 +2079,7 @@ function getTcubesKindMaterial(kind) {
   for (let i = 0; i < 6; i++) {
     const texName = faces[ATLAS_FACE_KEYS[i]];
     if (typeof texName !== "string" || !texName.startsWith(":")) continue;
-    const factory = NAMED_TEXTURE_FACTORIES[texName];
-    if (!factory) continue;
-    const subTex = factory();              // THREE.CanvasTexture (s `.image` = source canvas)
+    const subTex = getNamedTexture(texName);
     if (subTex?.image) {
       ctx.drawImage(subTex.image, i * ATLAS_TILE_PX, 0, ATLAS_TILE_PX, ATLAS_TILE_PX);
     }
@@ -2090,6 +2177,7 @@ const RAMP_ATLAS_SPECS = {
 
 // Lazy cache: klíč `${type}_${surface}` → MeshStandardMaterial. Build je
 // idempotentní (factory volaná opakovaně vrací stejný materiál z cache).
+// Třetí ze tří paralelních cache — viz komentář u `_faceMaterialCache` výše.
 const _rampsAtlasMatCache = new Map();
 function getRampAtlasMaterial(type, surface) {
   const key = `${type}_${surface}`;
@@ -2110,9 +2198,7 @@ function getRampAtlasMaterial(type, surface) {
   for (let i = 0; i < N; i++) {
     const texName = texSet[spec.keys[i]];
     if (typeof texName !== "string" || !texName.startsWith(":")) continue;
-    const factory = NAMED_TEXTURE_FACTORIES[texName];
-    if (!factory) continue;
-    const subTex = factory();              // THREE.CanvasTexture (s `.image` = source canvas)
+    const subTex = getNamedTexture(texName);  // sdílená cached instance (F5)
     if (subTex?.image) {
       ctx.drawImage(subTex.image, i * ATLAS_TILE_PX, 0, ATLAS_TILE_PX, ATLAS_TILE_PX);
     }
@@ -2358,11 +2444,29 @@ function regenerateScene(params) {
   const staleWater = scene.children.filter((c) => c.userData.terrain === true);
   for (const mesh of staleWater) {
     scene.remove(mesh);
+    disposeHoverClones(mesh);
     const inst = mesh.userData.instance;
     if (inst) meshByInstance.delete(inst.ID);
   }
 
   spawnTerrain(params);
+}
+
+// Uvolnění klonovaných materiálů z lazy hover-clone-on-first-hover (single-mesh
+// case v `setHoverHighlight`). Bez tohoto by se klony akumulovaly v GPU paměti
+// při opakovaném `regenerateScene` (mesh remove sám nedrží GPU lifecycle).
+// Sdílený originál (`hoverOrigMat`) nedispose — patří atlasu / sdílené factory.
+function disposeHoverClones(root) {
+  root.traverse((child) => {
+    if (!child.isMesh) return;
+    const cloned = child.userData.hoverHotMat;
+    if (!cloned) return;
+    const mats = Array.isArray(cloned) ? cloned : [cloned];
+    for (const mat of mats) mat.dispose?.();
+    child.userData.hoverHotMat = null;
+    child.userData.hoverOrigMat = null;
+    child.userData.hoverInit = false;
+  });
 }
 // Globální expose pro HTML panel `#terrainctrl` (inline script v index.html).
 window.regenerateScene = regenerateScene;
@@ -2694,6 +2798,10 @@ function animate() {
   const dt  = now - _lastFrameTime;
   _lastFrameTime = now;
   updateAnimations(now);
+  // WORLD tick + sun derivace (DD-38, sez. 32) — DAY_SPEED inkrementuje DAY,
+  // updateSun přepočítá pozici DirectionalLight + intensity + sunMesh.
+  updateWorldTime(dt);
+  updateSun();
   // Ocásky dialogových bublin: přepočítáme až **po** animátorech, aby jsme
   // četli aktuální `object3d.position` případných pohybujících se mluvčí
   // (tbox_0002 orbituje, …).

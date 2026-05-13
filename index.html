@@ -168,6 +168,23 @@
     #settings input[type="checkbox"] {
       accent-color: #66ccdd;
     }
+    /* Slider řádek — label nad inputem, hodnota vpravo v labelu (DD-38 WORLD).
+       Izomorfně s `#terrainctrl .tc-row` (label/value/slider triáda),
+       jen kompaktnější (settings panel je úzký). */
+    #settings .slider-row {
+      margin: 6px 0 2px 0;
+    }
+    #settings .slider-row label {
+      display: flex; justify-content: space-between;
+      cursor: default; margin: 0; font-size: 12px; opacity: 0.85;
+    }
+    #settings .slider-row label span {
+      opacity: 0.7; font-variant-numeric: tabular-nums;
+    }
+    #settings input[type="range"] {
+      width: 100%;
+      accent-color: #66ccdd;
+    }
   </style>
 
   <!-- Import map: mapuje holé názvy ("three", "three/addons/...") na CDN URL.
@@ -262,14 +279,22 @@
     </div>
   </div>
 
-  <!-- Settings panel (sez. 31) — toggle vizuálních efektů. Wire na
-       `window.settings.setXxx(on)` (exposed v main.js). Default checked
-       = aktuální stav po inicializaci scény. -->
+  <!-- Settings panel (sez. 31, rozšířen sez. 32) — vizuální toggle + WORLD
+       atributy (DD-38). Wire na `window.settings.setXxx(...)` (exposed v
+       main.js). Defaulty matchnou inicializaci scény. -->
   <div id="settings">
     <h3>Settings</h3>
     <label><input type="checkbox" id="set-dof" checked> DOF (rozostření)</label>
     <label><input type="checkbox" id="set-fog" checked> Fog (mlha)</label>
     <label><input type="checkbox" id="set-sun" checked> Slunce</label>
+    <div class="slider-row">
+      <label for="set-day">DAY <span id="set-day-val">0.25</span></label>
+      <input type="range" id="set-day" min="0" max="0.999" step="0.01" value="0.25">
+    </div>
+    <div class="slider-row">
+      <label for="set-day-speed">DAY_SPEED <span id="set-day-speed-val">0.000</span></label>
+      <input type="range" id="set-day-speed" min="0" max="0.1" step="0.001" value="0">
+    </div>
   </div>
 
   <canvas id="scene"></canvas>
@@ -371,14 +396,29 @@
     })();
   </script>
 
-  <!-- Settings panel controller — wire 3 toggle checkboxy na `window.settings`
-       API (DOF/Fog/Sun) exposed v `src/main.js`. -->
+  <!-- Settings panel controller — wire toggle checkboxy + DAY/DAY_SPEED slidery
+       na `window.settings` API (DOF/Fog/Sun/Day/DaySpeed) exposed v `src/main.js`.
+       Slidery: `input` event = live (žádné regeneration jako v terrainctrl). -->
   <script>
     (() => {
       const $ = (id) => document.getElementById(id);
       $("set-dof").addEventListener("change", (e) => window.settings.setDOF(e.target.checked));
       $("set-fog").addEventListener("change", (e) => window.settings.setFog(e.target.checked));
       $("set-sun").addEventListener("change", (e) => window.settings.setSun(e.target.checked));
+      const dayInput   = $("set-day");
+      const dayVal     = $("set-day-val");
+      const speedInput = $("set-day-speed");
+      const speedVal   = $("set-day-speed-val");
+      dayInput.addEventListener("input", (e) => {
+        const v = parseFloat(e.target.value);
+        window.settings.setDay(v);
+        dayVal.textContent = v.toFixed(2);
+      });
+      speedInput.addEventListener("input", (e) => {
+        const v = parseFloat(e.target.value);
+        window.settings.setDaySpeed(v);
+        speedVal.textContent = v.toFixed(3);
+      });
     })();
   </script>
 </body>

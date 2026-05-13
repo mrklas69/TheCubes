@@ -1,6 +1,6 @@
 # Glossary
 
-Canonical terminologie projektu TheCubes. Stav po sez. 31 (DD-32 terrain sandbox pivot, DD-33 ramp smoothing layer, DD-34 orientation mapping centralizace, DD-35 TDRAMP class, DD-36 TCUBES atlas pipeline, DD-37 InstancedMesh batch pipeline). Smazané třídy a koncepty (FACILITY rodina + factory toy, severská dioráma s pixel-voxel COMPOSITES, WORLD singleton, VOXEL_MODEL infrastruktura) žijí v immutable diary jako historický kontext — zde se neuvádějí.
+Canonical terminologie projektu TheCubes. Stav po sez. 32 (DD-32 terrain sandbox pivot, DD-33 ramp smoothing layer, DD-34 orientation mapping centralizace, DD-35 TDRAMP class, DD-36 TCUBES atlas pipeline, DD-37 InstancedMesh batch pipeline, DD-38 WORLD re-introduce s DAY/DAY_SPEED). Smazané třídy a koncepty (FACILITY rodina + factory toy, severská dioráma s pixel-voxel COMPOSITES, VOXEL_MODEL infrastruktura) žijí v immutable diary jako historický kontext — zde se neuvádějí.
 
 **Identita projektu po DD-32 (sez. 24):** model-first **procedurální terrain sandbox** s OOP modelem jako runtime. User nastavuje parametry krajiny (size, relief 0..10, surface mix grass/stone/sand/water, seed) přes UI panel; `generateTerrain` v `src/terrain.js` produkuje 3D scénu z hierarchie BLOCKS. Předchozí identitní vrstvy (factory toy DD-30/DD-31, severská dioráma DD-25/DD-27) zafixované v git historii jako uzavřené kapitoly.
 
@@ -46,6 +46,7 @@ V BLOCKS rodině v praxi jen násobky 90° (cardinální orientace svahu / osy t
 
 - **TIMER** — atributy: `INTERVAL` (počet ticků mezi firem) a `ACTION = { kind, target, attr, value? }`. První skutečná reakce na `TIME.tick` (DD-04 dostal use case). Engine dispatch `ACTIONS[kind]` — aktuálně `toggle` (flip bool) a `set` (nastavit hodnotu). Registrace přes `registerBehavior(instance)` (symetrický sibling `scene.add(createMeshFor(...))` pro vizuální entity). Viz DD-17. *(M8+.)*
 - **COUNTER** — atributy `VALUE` (int, default 0) a `INCREMENT` (int, default 1, může být záporné). Engine při `registerBehavior` dynamicky přidá řádek do HUD elementu `#hud` a v tick handleru mutuje `VALUE += INCREMENT`. Demonstruje **HUD observability** — nevizuální ≠ neviditelný, COUNTER je čitelný vedle `TIME`. *(M8+.)*
+- **WORLD** — singleton DO (Data Object) pro globální atributy scény. Bez `X/Y/Z` (DD-01 demonstrace separace vizuální/modelová entita). Aktuální atributy: `DAY ∈ [0,1)` (fáze 24h cyklu, 0=východ, 0.25=poledne, 0.5=západ, 0.75=půlnoc; default 0.25) a `DAY_SPEED ∈ ℝ` (cykly za sekundu; default 0 = paused). Engine konzumenti: `updateSun()` derivuje pozici DirectionalLight + intensity + sun mesh z `DAY`; `updateWorldTime(dt)` inkrementuje `DAY` o `dt * DAY_SPEED`. Politika *„atribut přibude jen s živým konzumentem"* držena (DD-29 → DD-38). Sez. 20 zavedl s `WIND_STRENGTH`; sez. 29 audit ho odstranil po DD-32 wipe `tree_sway`; sez. 32 vrátil s 2 novými konzumenty (DD-38). Dev exposure: `window.world`. *(M8+.)*
 
 ## Čas
 
@@ -188,10 +189,11 @@ Pravidlo BLOCKS rodiny: **vrch `:grass-top`, jinak `:dirt`** napříč grass blo
   - *Sez. 16:* 4-vrstvá taxonomie + BLOCKS rodina (DD-25).
   - *Sez. 17:* Sjednocená ORIENTATION (DD-26), PATH třída (DD-27).
   - *Sez. 18:* Sjednocená Y konvence (DD-28).
-  - *Sez. 20:* WORLD singleton (DD-29) — smazán sez. 29 (audit cleanup, žádný konzument po DD-32).
+  - *Sez. 20:* WORLD singleton (DD-29) — smazán sez. 29 (audit cleanup, žádný konzument po DD-32), re-introduce sez. 32 (DD-38).
   - *Sez. 21–23:* factory-observer pivot (DD-30 + DD-31) — smazán DD-32.
   - *Sez. 24–26:* **terrain generator pivot** (DD-32), ramp smoothing layer (DD-33 + DD-34 + DD-35).
   - *Sez. 28:* **TCUBES atlas refactor** (DD-36) — 6× redukce draw calls.
   - *Sez. 29:* Audit cleanup — smazána VOXEL_MODEL + WORLD infrastruktura bez konzumenta.
   - *Sez. 30:* Rampy atlas refactor + size 100×100 unlock — atlas pipeline vyčerpaná (FPS 7 @ 100×100, draw calls 47k).
   - *Sez. 31:* **InstancedMesh refactor** (DD-37) — FPS 7 → **104** @ 100×100 (15×), draw calls 47k → **1k** (47×). Plus sun mesh + post-process (fog + DOF/BokehPass) + settings panel.
+  - *Sez. 32:* **WORLD re-introduce** (DD-38) s DAY/DAY_SPEED — sun mesh + DirectionalLight reactive (intensity lerp = noc tmavá, 30° náklon dráhy). UI slidery v `#settings`. Plus audit follow-up F5/F6/F10/F11/F14.
