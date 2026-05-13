@@ -412,15 +412,66 @@ export function generateTerrain({ size, relief, surfaces, seed = 42 }) {
 
 // === G2 (sez. 35) — biome matice 4×3 (LATITUDE × HUMIDITY). ===
 // `world.LATITUDE` enum × `world.HUMIDITY` enum → display jméno biomu pro UI
-// readout v `#terrainctrl` Climate sekci. G3 konzument: surface mix lookup
-// (driver `surfaces` z biomu místo UI props). Polární vlhko geografi vzácné →
-// "—" placeholder, UI to zobrazí jako prázdný biome (žádný downstream selhán).
+// readout v `#terrainctrl` Climate sekci. G3 (sez. 36) — konzument
+// `BIOME_SURFACES` níž (driver surface mix místo UI sliderů). Polární vlhko
+// je geografi vzácné a v reálné Arktidě klima podobné tundře → alias na
+// `polar.mid` (jméno "Polární tundra", transparent fallback).
 export const BIOME_NAMES = {
   tropical:    { wet: "Tropický deštný prales", mid: "Savana",        dry: "Horká poušť" },
   subtropical: { wet: "Vlhké subtropy",         mid: "Mediteránní",   dry: "Subtropická step" },
   temperate:   { wet: "Listnatý les",           mid: "Step / Prérie", dry: "Chladná poušť" },
-  polar:       { wet: "—",                      mid: "Tundra",        dry: "Ledová poušť" },
+  polar:       { wet: "Polární tundra",         mid: "Tundra",        dry: "Ledová poušť" },
 };
+
+// === G3 (sez. 36, DD-44) — surface mix driver per biome. ===
+// `world.LATITUDE × HUMIDITY` → `surfaces` objekt (4 koef. sum=1.0) předaný
+// do `generateTerrain`. Nahrazuje 4 UI surface slidery (DD-44 hard override:
+// climate driver = jediný zdroj pravdy). Tabulka je hardcoded — 12 buněk ×
+// 4 čísel = 48 hodnot; parametric formula (např. `water = f(humidity)`) by
+// ztratila výrazovou volnost (Tropický prales ≠ Vlhké subtropy množstvím
+// vody, i když oba "wet"). Per-cell je čitelnější.
+//
+// Design os:
+//   HUMIDITY → water + grass (wet = více vody + zeleně, dry = málo)
+//   LATITUDE → stone vs. sand mix (polar = stone-heavy + sand-as-snow proxy;
+//                                   tropical = málo stone; ostatní středně)
+//
+// Známý dluh (G4 kandidát, viz TODO): `sand` v polar bunkách je proxy pro
+// sníh. Až přibude `snow` surface (klon grass-top s bílou paletou), polar.*
+// se migruje. Vizuálně to do té doby vypadá jako poušť, ne sníh.
+//
+// `polar.wet` = alias `polar.mid` (geografi vzácné combo → fallback). UI
+// uchová `BIOME_NAMES.polar.wet = "Polární tundra"` (transparent fallback).
+export const BIOME_SURFACES = {
+  tropical: {
+    wet: { grass: 0.55, stone: 0.05, sand: 0.05, water: 0.35 },
+    mid: { grass: 0.65, stone: 0.10, sand: 0.20, water: 0.05 },
+    dry: { grass: 0.00, stone: 0.10, sand: 0.90, water: 0.00 },
+  },
+  subtropical: {
+    wet: { grass: 0.55, stone: 0.10, sand: 0.10, water: 0.25 },
+    mid: { grass: 0.55, stone: 0.30, sand: 0.10, water: 0.05 },
+    dry: { grass: 0.10, stone: 0.40, sand: 0.45, water: 0.05 },
+  },
+  temperate: {
+    wet: { grass: 0.60, stone: 0.10, sand: 0.05, water: 0.25 },
+    mid: { grass: 0.65, stone: 0.20, sand: 0.05, water: 0.10 },
+    dry: { grass: 0.15, stone: 0.45, sand: 0.35, water: 0.05 },
+  },
+  polar: {
+    // wet = alias mid (Arktická tundra geografi nejbližší).
+    wet: { grass: 0.10, stone: 0.50, sand: 0.30, water: 0.10 },
+    mid: { grass: 0.10, stone: 0.50, sand: 0.30, water: 0.10 },
+    dry: { grass: 0.00, stone: 0.40, sand: 0.55, water: 0.05 },
+  },
+};
+
+// Helper: bezpečně dohnat surfaces pro daný climate combo. Fallback na
+// `temperate.mid` (= dnešní WORLD default) pro neznámý klíč — defensive,
+// `world.LATITUDE/HUMIDITY` jsou controlled enum přes UI.
+export function surfacesForBiome(latitude, humidity) {
+  return BIOME_SURFACES[latitude]?.[humidity] ?? BIOME_SURFACES.temperate.mid;
+}
 
 // === G1 (sez. 35) — UI slider clamp dle MIN(sx, sz). ===
 // Mapa 10×10 nedává proporční smysl pro alpine 6 voxelů Y (ostré vertikální

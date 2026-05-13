@@ -1054,3 +1054,44 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 - DD-42 (sez. 35) — G2 Climate. DAY-mapping fix vznikl při G2 návrhu jako pre-G2 micro-fix (sun-related koherence před LATITUDE → sun tilt).
 - Sez. 35 user feedback A2. Kontext v `docs/diary/2026-05-13.md` Sez. 35.
 
+## DD-44 — G3 SURFACES driver-derived per biome (hard override, sez. 36)
+
+**Stav:** Sez. 36. Pokračování G2 (DD-42): `BIOME_NAMES` 4×3 tabulka byla nakreslená v UI readoutu, ale **bez druhého konzumenta** — surface mix v `generateTerrain` byl pořád určen 4 UI slidery (z DD-32 sez. 25–26), které neznají biome. UI legálně dovolil "Sahara s 0.8 grass" = nesoulad mezi popiskem biome a vygenerovaným terénem.
+
+**Rozhodnutí:**
+
+1. **`BIOME_SURFACES[LATITUDE][HUMIDITY]` lookup** v `src/terrain.js` — 4×3 tabulka 12 buněk × 4 koef. (`grass`/`stone`/`sand`/`water`, sum=1.0). Hardcoded čísla (ne parametric formula), 12 řádků kódu. Per-cell ladění zachovává výrazovou volnost (Tropický prales ≠ Vlhké subtropy množstvím vody).
+
+2. **Helper `surfacesForBiome(lat, hum)`** — bezpečný lookup s fallback na `temperate.mid` při neznámém klíči (defensive, `world.LATITUDE/HUMIDITY` jsou controlled enum přes UI).
+
+3. **Hard override v UI** (varianta A z `%THINK`):
+   - Surface DOM sekce v `#terrainctrl` **smazána** (4 slidery + auto-normalize). Žádný "Manual surfaces" toggle.
+   - Climate slidery (`tc-latitude`, `tc-humidity`): `change` event triggeruje `regenerateScene(readParams())`. `input` event nadále mutuje WORLD atributy per-frame (sun tilt + biome readout = G2 chování).
+   - `readParams()` dohnají surfaces z aktuálních Climate sliderů přes `window.surfacesForBiome(latKey, humKey)`.
+   - Debug surface mix přes konzoli: `window.regenerateScene({ size:[...], relief:..., seed:..., surfaces: {...} })`.
+
+4. **Polar/wet fallback** (varianta A z `%THINK`): `BIOME_SURFACES.polar.wet = polar.mid` alias (Arktická tundra geografi nejbližší). `BIOME_NAMES.polar.wet` rename z `"—"` na `"Polární tundra"` — transparent fallback, ne mystery placeholder.
+
+5. **`TERRAIN_DEFAULTS` cleanup** v `main.js`: hardcoded `surfaces: {...}` odstraněn. `buildScene()` derivuje surfaces z `world.LATITUDE/HUMIDITY` při bootu (`surfacesForBiome(world.LATITUDE, world.HUMIDITY)`).
+
+**Důvod (proč DD a ne jen feature):**
+
+- Mění **user-facing UI flow** — surface slidery zmizely, jediný způsob volby surface mixu je přes Climate. Změna kontraktu mezi UI a generátorem.
+- **Izomorfismus s G2 sun tilt** — Climate driver je teď *vždy* zdroj pravdy pro climate-derived atributy (sun tilt i surfaces), bez "manual mode" výjimek. KISS + conceptual integrity.
+- **Aktivuje DD-29 odložený `CLIMATE` slot** plně — DD-42 popsalo G3 jako "budoucí konzument", DD-44 ho realizuje.
+- Předjímá hierarchii budoucích driver-derived atributů (G4 vegetation density per biome, G5 weather, …) — pattern "WORLD enum → lookup table → generator input" se ukáže opakovaně.
+
+**Známá omezení:**
+
+- `sand` v `polar.*` buňkách (zejména "Polární tundra", "Tundra", "Ledová poušť") je **proxy pro sníh** — vizuálně to vypadá jako poušť. G4 kandidát: přidat `snow` surface kind (klon `grass-top` s bílou paletou) + migrate `polar.*` z `sand` na `snow`. Sub-prah TODO. Mezitím akceptováno.
+- Surface stav uložený v UI mezi sezeními (browser autofill `value` na surface sliderech) **ztracený** — surface slidery v DOM už neexistují. Per-session UI state se stejně neukládá (žádný persistence layer).
+- 12 hodnot tabulky je ladění-citlivé — pokud user řekne "Tropický prales by měl mít víc vody", změna je per-cell v `BIOME_SURFACES` (žádná formula k tweaknutí globálně). To je záměr (per-cell volnost > parametric DRY).
+
+**Reference:**
+
+- DD-29 (sez. 19) — odložený WORLD `CLIMATE` slot. DD-42 zavedl atributy, DD-44 přidává druhého konzumenta (vedle sun tilt).
+- DD-42 (sez. 35) — G2 WORLD Climate atributy + `BIOME_NAMES` tabulka. DD-44 přidává `BIOME_SURFACES` paralelní strukturu.
+- DD-32 (sez. 25) — `generateTerrain` API. DD-44 ne-mění API (surfaces parametr zachován), jen *kdo* ho vyplňuje (driver místo UI sliderů).
+- Sez. 26 — surface sliders + `normalizeSurfaces()` zavedení v `#terrainctrl`. DD-44 je odstraňuje (immutable historie zachována v DIARY).
+- Sez. 36 user volby: Q1=A (hard override), Q2=A (Tundra alias), Q3=A (schválená tabulka), Q4=A (snow sub-prah TODO). Kontext v `docs/diary/2026-05-13.md` Sez. 36.
+
