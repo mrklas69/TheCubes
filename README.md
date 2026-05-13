@@ -6,28 +6,28 @@ Model-first **procedurální terrain sandbox** s OOP modelem jako runtime *(DD-3
 
 ## Status
 
-**Aktuálně:** `main` po merge `feat/terrain` (sez. 27) + `feat/terrain-perf` (sez. 28). DD-32 Fáze 0–3 + atlas refactor (DD-36) + **InstancedMesh refactor (DD-37, sez. 31)** + **WORLD re-introduce s DAY/DAY_SPEED (DD-38, sez. 32)** hotové. Sez. 29 audit cleanup (`feat/audit-29-cleanup`) — smazána dormant infrastruktura bez konzumenta (VOXEL_MODEL + WORLD); sez. 32 WORLD vrácen s 2 živými konzumenty (sun mesh + render tick). 100×100 terrain playable @ FPS 104, denní cyklus přes UI slider.
+**Aktuálně:** `main` po sez. 38 (multi-feature, bez topic branche). DD-32 Fáze 0–3 + **InstancedMesh refactor (DD-37, sez. 31)** + **WORLD DAY/DAY_SPEED (DD-38, sez. 32)** + **atmospheric lerp DD-39 + LAMP/SpotLight DD-40 (sez. 33)** + **lowpoly vertex-color pipeline DD-41 (sez. 34, nahrazuje DD-36 atlas)** + **G2 Climate WORLD.LATITUDE × HUMIDITY DD-42 + DAY mapping DD-43 (sez. 35)** + **G3 SURFACES driver-derived per biome DD-44 + fBm/ridge³ heightmap DD-45 (sez. 36)** + **smoothstep bimodální heightmap pro r ≥ 6 DD-46 (sez. 37)** + **G6 climate-driven surface state (drop water surface, snow per LATITUDE, water LIQUID prototype flood-fill, ice) DD-47 + atmospheric color extensions (sun piecewise + sky 3-keypoint dusk + water wave) DD-48 (sez. 38)** hotové. 100×100 terrain playable @ FPS 104, denní cyklus + klima driver pro biomy + sníh/jezera/led přes UI.
 
 Předchozí identitní vrstvy (factory toy DD-30/DD-31, severská dioráma DD-25/DD-27) jsou **zafixované v git historii** (`main`, commity sez. 14–23) jako uzavřené kapitoly — DD-32 je revoke z aktivního vývoje, ne smaz historického záznamu.
 
-**Hierarchie modelu (po sez. 32):**
+**Hierarchie modelu (po sez. 38, post-DD-47 TTUNELS drop):**
 
 ```
 OBJECTS (ID, NAME, DESCRIPTION, ANIMATE)
  ├── CUBES (X, Y, Z float; Y konvence per typ — DD-28)
  │    ├── BLOCKS (1C grid, Y = grid center, ORIENTATION ∈ [0, 360) — DD-26)
  │    │    ├── CCUBES (COLOR)
- │    │    ├── TCUBES (TEXTURE × 6; terrain kindy přes atlas — DD-36)
- │    │    ├── TRRAMPS (TEXTURE × 5, ORIENTATION)
- │    │    ├── TTRAMPS (TEXTURE × 4, ORIENTATION)
- │    │    ├── TDRAMP (TEXTURE × 5, ORIENTATION — DD-35)
- │    │    └── TTUNELS (TEXTURE × 4, ORIENTATION)
+ │    │    ├── TCUBES (lowpoly vertex-color paleta — DD-41)
+ │    │    ├── TRRAMPS (ORIENTATION; DD-41 lowpoly)
+ │    │    ├── TTRAMPS (ORIENTATION; DD-41 lowpoly)
+ │    │    └── TDRAMP (ORIENTATION — DD-35; DD-41 lowpoly + DD-47 _snow varianta)
  │    ├── SPRITES (ASSET, SPEAKER, SPEAKER_OFFSET_Y)
- │    ├── COMPOSITES (abstract bez konkrétních potomků po sez. 29)
+ │    ├── COMPOSITES
+ │    │    └── LAMP (Victorian-style, SpotLight uvnitř — DD-40)
  │    └── PATH (KIND, POINTS — LINES vrstva 3, DD-27)
  ├── TIMER (INTERVAL, ACTION)
  ├── COUNTER (VALUE, INCREMENT)
- └── WORLD (DAY, DAY_SPEED — singleton DO, DD-38)
+ └── WORLD (DAY, DAY_SPEED, LATITUDE, HUMIDITY — singleton DO, DD-38 + DD-42)
 ```
 
 **Smazáno DD-32 z aktivního modelu** (zůstává v git historii sez. 21–23): `FACILITY` rodina + 3 potomci, registry `RESOURCES_DEF`/`RECIPES_DEF`/`FACILITY_DEF`, PATH atributy `SOURCE`/`SINK`/`RESOURCE`/`THROUGHPUT`, `world.RESOURCES` agregát.
@@ -40,21 +40,22 @@ OBJECTS (ID, NAME, DESCRIPTION, ANIMATE)
 
 **Milníky:**
 - **M1–M7** hotové (sez. 1–5): statický svět, voxelové potomky, COMPOSITES, SPRITES, TCUBES, ANIMATE dispatch.
-- **M8+** průběžně (sez. 6–32): další `ANIMATE.kind`y, SPRITES.SPEAKER (DD-16), TIMER + COUNTER (DD-17), pevné měřítko (DD-22), all-voxel pivot (DD-23), 4-vrstvá taxonomie + BLOCKS rodina (DD-25), sjednocená ORIENTATION (DD-26), PATH (DD-27), sjednocená Y konvence (DD-28), **terrain generator pivot (DD-32)**, ramp smoothing layer (DD-33 + DD-34), TDRAMP (DD-35), **TCUBES atlas pipeline (DD-36)**, **InstancedMesh batch pipeline (DD-37)** + sun mesh + post-process (fog + DOF/BokehPass) + settings panel, **WORLD re-introduce (DD-38)** s DAY/DAY_SPEED + sun denní cyklus.
+- **M8+** průběžně (sez. 6–37): další `ANIMATE.kind`y, SPRITES.SPEAKER (DD-16), TIMER + COUNTER (DD-17), pevné měřítko (DD-22), all-voxel pivot (DD-23), 4-vrstvá taxonomie + BLOCKS rodina (DD-25), sjednocená ORIENTATION (DD-26), PATH (DD-27), sjednocená Y konvence (DD-28), **terrain generator pivot (DD-32)**, ramp smoothing layer (DD-33 + DD-34), TDRAMP (DD-35), TCUBES atlas pipeline (DD-36, nahrazen DD-41), **InstancedMesh batch pipeline (DD-37)** + sun mesh + post-process (fog + DOF/BokehPass) + settings panel, **WORLD re-introduce (DD-38)** s DAY/DAY_SPEED + sun denní cyklus, **atmospheric lerping (DD-39)**, **LAMP/SpotLight (DD-40)**, **lowpoly vertex-color pipeline (DD-41)**, **G2 Climate WORLD.LATITUDE × HUMIDITY (DD-42)** + DAY mapping fix (DD-43), **G3 SURFACES driver-derived (DD-44)** + fBm/ridge³ heightmap (DD-45), **smoothstep bimodální heightmap pro r ≥ 6 (DD-46)**.
 
-Detail v `CLAUDE.md` (Status), `docs/DIARY.md` (chronologie sezení), `docs/DESIGN_DECISIONS.md` (DD-01 až DD-38).
+Detail v `CLAUDE.md` (Status), `docs/DIARY.md` (chronologie sezení), `docs/DESIGN_DECISIONS.md` (DD-01 až DD-48).
 
-**Plán (po sez. 32):**
-- **Hotovo (DD-32 Fáze 0–3 + atlas + instanced + post-process + denní cyklus):** generateTerrain MVP, value-noise heightmap, biome map, ramp smoothing layer, UI panel `#terrainctrl`, `regenerateScene`, TCUBES atlas (DD-36), rampy atlas (sez. 30), InstancedMesh batches (DD-37) — FPS @ 100×100 z 7 na 104, sun mesh + atmospheric fog + DOF, settings panel, WORLD DAY/DAY_SPEED (DD-38) — sun denní cyklus s intensity lerping.
-- **Otevřené (sez. 33+):**
-  - SEASON atribut na WORLD (driver pro `SUN_TILT`, sférická dráha slunce).
-  - Sky/ambient color lerping reactive na DAY (sunset oranžová, noc tmavá).
+**Plán (po sez. 38):**
+- **Otevřené:**
   - Slider DAY sync z value při auto-advance (drobnost UX).
-  - LIQUID třída pro vodní plane(y) (DD-33 kandidát).
-  - Klastrování spojitých water cells (flood-fill, jeden plane na celé jezero).
-  - Roadmap relief 9..10 (valley carving / ridge noise).
-  - Procedural paths + tunely v generovaném terénu.
-  - BatchedMesh refactor (r167+, 13 → ~3 calls) — diminishing returns, low prio (sez. 32 oponován).
+  - LIQUID 1. třída entita (DD-25 vrstva 4) — DD-47 sez. 38 dnes single-mesh per cell prototype. Plná: OOP třída pod CUBES, atribut LEVEL/TEMPERATURE/FLOW_DIRECTION + STEAM/FOG rozšíření (IDEAS „Voda ve všech skupenstvích").
+  - **Klastrování water cells do bbox** (connected components flood-fill, jeden plane na jezero) — DD-47 follow-up perf optimalizace pro velké scény (100×100 polar mid ~500 cells → 5-20 jezer).
+  - **WORLD.SEASON driver** pro `freezeRatio` (zima víc led, léto méně). DD-29 → DD-38 → DD-42 → DD-47 progresion: SEASON další konzument.
+  - HSL hue shift pro sky lerp (DD-48 follow-up — current RGB-linear přechází přes desaturovanou hnědou).
+  - Mraky/srážky (déšť, sníh padá z mraků; particle system base infrastruktura, IDEAS sez. 38).
+  - Roadmap relief 9..10 (valley carving / ridge noise — DD-46 řeší r ≥ 6 bimodal, r > 8 stále clamp na 8).
+  - Procedural paths + tunely v generovaném terénu (TTUNELS drop sez. 38 — vrátit z gitu, až budou tunely chtěné).
+  - `.glb`/glTF asset import pipeline (otevírá Stickman integraci a hezčí lampu).
+  - BatchedMesh refactor (r167+, 13 → ~3 calls) — diminishing returns, low prio.
 
 ## Stack
 

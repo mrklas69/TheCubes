@@ -27,6 +27,48 @@ function mulberry32(seed) {
   };
 }
 
+// MinHeap (binary heap) — priority queue pro Krok 6 water flood fill (sez. 38).
+// Items: `{ level, cell }`, sort by `level` ascending. ~30 ř., interní, ne export.
+// Pro 100×100 = 10k cells je O(N log N) sort vůči O(N²) sorted array kritický.
+class MinHeap {
+  constructor() { this.heap = []; }
+  push(item) {
+    this.heap.push(item);
+    this._siftUp(this.heap.length - 1);
+  }
+  pop() {
+    if (this.heap.length === 0) return null;
+    const top = this.heap[0];
+    const last = this.heap.pop();
+    if (this.heap.length > 0) {
+      this.heap[0] = last;
+      this._siftDown(0);
+    }
+    return top;
+  }
+  get size() { return this.heap.length; }
+  _siftUp(i) {
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (this.heap[p].level <= this.heap[i].level) break;
+      [this.heap[p], this.heap[i]] = [this.heap[i], this.heap[p]];
+      i = p;
+    }
+  }
+  _siftDown(i) {
+    const n = this.heap.length;
+    while (true) {
+      const l = 2 * i + 1, r = 2 * i + 2;
+      let m = i;
+      if (l < n && this.heap[l].level < this.heap[m].level) m = l;
+      if (r < n && this.heap[r].level < this.heap[m].level) m = r;
+      if (m === i) break;
+      [this.heap[i], this.heap[m]] = [this.heap[m], this.heap[i]];
+      i = m;
+    }
+  }
+}
+
 // Value noise — vrací funkci `(x, z) → [0, 1]` plynulou v world prostoru.
 // Vygeneruje hodnoty na celočíselných uzlech `gx × gz` gridu (s wrap-around),
 // pak bilineárně interpoluje mezi 4 sousedy s **smoothstep** křivkou pro plynulé
@@ -67,10 +109,11 @@ function makeValueNoise(sizeX, sizeZ, freq, seed) {
   };
 }
 
-// Relief 0..8 → (amplitude max Y voxel, heightmap base frequency).
+// Relief 0..10 → (amplitude max Y voxel, heightmap base frequency).
 // 0–2: nízká členitost (roviny, mírné vlny). 3–5: pahorkatiny (rolling/hilly/
 // broken). 6–8: vrchoviny (rugged/craggy/mountainous). 9–10 přijímáme na vstupu,
 // ale generátor je nezvládne plně (chybí valley carving), níže clamp na 8 + warn.
+// Tabulka má jen 9 prvků (indexy 0..8) — relief 9/10 fall-through na idx 8 po clampu.
 //
 // **DD-45 (sez. 36) — fBm + ridge blend retune:**
 // Po přechodu na fBm (3 oktávy, lacunarity 2, persistence 0.5) je *base freq*
@@ -89,16 +132,16 @@ const RELIEF_FREQUENCY = [0.00, 0.12, 0.14, 0.16, 0.18, 0.20, 0.18, 0.15, 0.12];
 
 // Surface biome → Y offset (oproti heightmap value h).
 // `grass` / `stone` — na povrchu (h beze změny).
-// `sand` — pláž / údolí, o 1 voxel níž.
-// `water` — depression, o 2 voxely níž; přidá water plane nad surface.
+// `sand` — depression, o 1 voxel níž (poušť / údolí).
+// **Sez. 38 (DD-47):** `water` surface dropped — voda jako surface kind smazán.
+// Voda se vrátí později jako LIQUID 1. třída entita (DD-25 vrstva 4), ne surface.
 const SURFACE_Y_OFFSET = {
   grass: 0,
   stone: 0,
   sand: -1,
-  water: -2,
 };
 
-export function generateTerrain({ size, relief, surfaces, seed = 42 }) {
+export function generateTerrain({ size, relief, surfaces, seed = 42, snowSpec = { mode: "none" }, waterSpec = { enabled: false } }) {
   // === Validace ===
   if (!Array.isArray(size) || size.length !== 2) {
     throw new Error("generateTerrain: size musí být [sx, sz]");
@@ -286,6 +329,62 @@ export function generateTerrain({ size, relief, surfaces, seed = 42 }) {
     c.y_top = c.h + (SURFACE_Y_OFFSET[c.surface] ?? 0);
   }
 
+  // === Krok 3.5: Snow flag per cell (sez. 38, DD-47) ===
+  // `snowSpec.mode`:
+  //   "polar"     → všechny cells snowed (= jednotně bílá scéna).
+  //   "temperate" → cells s `y_top >= altThreshold` vždy (= vrcholky hor)
+  //                 + **top N % zbylých cells dle altitude-biased noise score**,
+  //                 kde N% = `1 − patchThreshold` (default 30 %). Score per cell
+  //                 = `snowNoise(x,z) + altNorm × altBias`; sort descending, vyber
+  //                 prvních N %. Izomorfie s biome assignment v Kroku 2 (sort+rank).
+  //                 Důvod (sez. 38 user feedback): předchozí lerp-threshold
+  //                 přístup zvyšoval celkovou plochu sněhu (= sníh všude), tento
+  //                 sort+rank **zachová stochastickou 30 % plochu**, jen ji
+  //                 přesune k vyšším cells. Vrcholy stále nemusí být zasněžené
+  //                 (noise drift), nížiny příležitostně sníh dostanou (= mikro-
+  //                 klimatický noise).
+  //   "none"      → žádný sníh (tropical / subtropical).
+  // Sníh modifikuje **jen top voxel surface** (= `_snow` postfix na kindu);
+  // sloupcové vrstvy (dirt/stone) zůstávají bez snow (= "sníh leží shora").
+  // Pro rampy se sníh propaguje z dest cell (= ramp surface dědí snowed flag
+  // ze source cell svahu, viz Pass 2).
+  const snowNoise = (snowSpec.mode === "temperate")
+    ? makeValueNoise(sx, sz, 0.08, seed + 2)  // seed +2 = nezávislý sample (height +0, biome +1)
+    : null;
+  const snowAltThreshold   = snowSpec.altThreshold   ?? 6;
+  const snowPatchThreshold = snowSpec.patchThreshold ?? 0.7;
+  const snowAltBias        = snowSpec.altBias        ?? 0.3;
+  if (snowSpec.mode === "polar") {
+    for (const c of cells) c.snowed = true;
+  } else if (snowSpec.mode === "temperate") {
+    // Pre-compute min/max y_top pro altitude normalize.
+    let _snowMinY = Infinity, _snowMaxY = -Infinity;
+    for (const c of cells) {
+      if (c.y_top < _snowMinY) _snowMinY = c.y_top;
+      if (c.y_top > _snowMaxY) _snowMaxY = c.y_top;
+    }
+    const _snowYRange = _snowMaxY - _snowMinY;
+    // Pass 1: mountain cells (y >= altThreshold) → vždy snowed.
+    // Pass 2: zbylé cells → sort by score, top (1-patchThreshold) %.
+    const remaining = [];
+    for (const c of cells) {
+      if (c.y_top >= snowAltThreshold) {
+        c.snowed = true;
+      } else {
+        const altNorm = _snowYRange > 0 ? (c.y_top - _snowMinY) / _snowYRange : 0;
+        const score = snowNoise(c.x, c.z) + altNorm * snowAltBias;
+        remaining.push({ c, score });
+      }
+    }
+    remaining.sort((a, b) => b.score - a.score);
+    const snowCount = Math.floor(remaining.length * (1 - snowPatchThreshold));
+    for (let i = 0; i < remaining.length; i++) {
+      remaining[i].c.snowed = i < snowCount;
+    }
+  } else {
+    for (const c of cells) c.snowed = false;
+  }
+
   // === Krok 4: sloupcové vyplnění (dirt vrstva, stone dno) ===
   // Dno terénu = nejnižší y_top napříč všemi cells minus 1 (= aspoň 1 vrstva
   // stone pod nejhlubší surface). Také aspoň y=-1 (= viditelné dno i pro
@@ -294,27 +393,20 @@ export function generateTerrain({ size, relief, surfaces, seed = 42 }) {
   const yBottom = Math.min(-1, minYTop - 1);
 
   const blocks = [];
-  const water = [];
   for (const c of cells) {
-    const { x, z, y_top, surface } = c;
-    // Pod vodou je dirt (= dno depression). Ostatní surfaces se renderují
-    // jako svůj kind (grass/stone/sand).
-    const topKind = surface === "water" ? "dirt" : surface;
+    const { x, z, y_top, surface, snowed } = c;
+    // Top voxel: pokud cell je snowed, postfix `_snow` na kindu (= white TOP
+    // face, base BOTTOM/SIDE z `BLOCK_COLORS`).
+    const topKind = snowed ? `${surface}_snow` : surface;
     blocks.push([topKind, x, y_top, z]);
 
     // Sloupec pod top voxelem: vrstvy y ∈ [yBottom, y_top − 1].
     // Dno (y = yBottom) = stone, ostatní = dirt. Pravidlo „překryté =
-    // hlína/skála" (sez. 14 builder export).
+    // hlína/skála" (sez. 14 builder export). Snow se nepropaguje do sloupce
+    // (sníh leží shora, ne uvnitř).
     for (let y = y_top - 1; y >= yBottom; y--) {
       const layerKind = (y === yBottom) ? "stone" : "dirt";
       blocks.push([layerKind, x, y, z]);
-    }
-
-    // Vodní plane(y) — MVP 1×1 cell. Y = y_top + 0.55 = mírně nad dirt
-    // surface (proti z-fightingu). Klastrování spojitých water cells do
-    // bounding boxů (= jeden plane na celé jezero) je fáze 2.
-    if (surface === "water") {
-      water.push({ x, z, w: 1, d: 1, y: y_top + 0.55 });
     }
   }
 
@@ -511,15 +603,104 @@ export function generateTerrain({ size, relief, surfaces, seed = 42 }) {
         continue;  // konflikt — ramp B blokuje cestu, drop A
       }
     }
+    // Snow propagate (sez. 38, DD-47): ramp dědí snowed status ze source
+    // cell svahu. Edge ramp → `cand.b` (= dest cell, vyšší soused). Corner/
+    // diagonal → `cand.bDiag` (= diag peak cell). Pokud source cell snowed,
+    // ramp surface dostane `_snow` postfix (SLOPE+TOP white, BACK/sides base).
+    const srcCell = cand.type === "edge" ? cand.b : cand.bDiag;
+    const finalSurface = srcCell?.snowed ? `${cand.surface}_snow` : cand.surface;
     ramps.push({
       kind: cand.type,
       x: cand.a.x, y: cand.a.y_top + 1, z: cand.a.z,
-      surface: cand.surface,
+      surface: finalSurface,
       orientation: cand.orientation,
     });
   }
 
-  return { blocks, water, ramps };
+  // === Krok 6: Water flood fill (sez. 38, post-DD-47 LIQUID prototype) ===
+  // **Priority flood** (Wang & Liu, 2006): voda zaplňuje negativní útvary až
+  // po nejnižší cestu k okraji scény. Algoritmus:
+  //   1. Boundary cells iniciate `water_level = y_top` (= voda uteče přes
+  //      nejnižší boundary cell ven; "okraj scény = drain", interpretace
+  //      sez. 38 Q2 (a) overflow). Push do min-heap.
+  //   2. Min-heap propaguje od nejnižší úrovně dovnitř: každý zatím nevizit.
+  //      soused dostane `water_level = max(current_level, neighbor.y_top)`.
+  //      Vyšší inner cell tlumí stoupání hladiny (= "natural rim"); nižší
+  //      inner cell dědí současný level (= basin floor pod hladinou).
+  //   3. Cell má vodu pokud `water_level > y_top` (strictly).
+  // Komplexita O(N log N) — kritická pro 100×100 (10k cells). MinHeap class
+  // definovaná na začátku souboru.
+  //
+  // **Frozen (ice) decision:** per-cell dle `waterSpec.freezeRatio`:
+  //   1.0 → vše frozen (polar all-ice).
+  //   0.0 → nic frozen (tropical/subtropical voda všechna).
+  //   0..1 → noise threshold per cell (`iceNoise(x,z) > (1 - freezeRatio)`).
+  //          Pro freezeRatio = 0.3 (temperate) ~30% ledových ostrůvků.
+  //
+  // Snow conflict: water cells mají `snowed = false` (cell pod hladinou nemá
+  // sníh shora). Override snow flag z Krok 3.5.
+  const water = [];
+  if (waterSpec.enabled) {
+    const waterLevel = new Map();
+    const visited = new Set();
+    const heap = new MinHeap();
+    // Boundary init: cells na 4 hranách scény (x = x0 / x0+sx-1, z analog).
+    const xMin = x0, xMax = x0 + sx - 1;
+    const zMin = z0, zMax = z0 + sz - 1;
+    for (const c of cells) {
+      const isBoundary = (c.x === xMin || c.x === xMax || c.z === zMin || c.z === zMax);
+      if (isBoundary) {
+        const key = `${c.x},${c.z}`;
+        waterLevel.set(key, c.y_top);
+        visited.add(key);
+        heap.push({ level: c.y_top, cell: c });
+      }
+    }
+    // Flood: pop min level, propagate do nevisited sousedů.
+    while (heap.size > 0) {
+      const { level, cell: cur } = heap.pop();
+      for (const dir of NEIGHBORS) {
+        const nx = cur.x + dir.dx;
+        const nz = cur.z + dir.dz;
+        const nKey = `${nx},${nz}`;
+        if (visited.has(nKey)) continue;
+        const n = cellAt.get(nKey);
+        if (!n) continue;
+        visited.add(nKey);
+        const nLevel = Math.max(level, n.y_top);
+        waterLevel.set(nKey, nLevel);
+        heap.push({ level: nLevel, cell: n });
+      }
+    }
+    // Mark water cells + frozen decision.
+    const freezeRatio  = waterSpec.freezeRatio  ?? 0;
+    const iceNoise = (freezeRatio > 0 && freezeRatio < 1)
+      ? makeValueNoise(sx, sz, 0.08, seed + 3)  // seed +3 = nezávislý (height +0, biome +1, snow +2)
+      : null;
+    const iceThreshold = 1 - freezeRatio;
+    for (const c of cells) {
+      const key = `${c.x},${c.z}`;
+      const wl = waterLevel.get(key);
+      if (wl > c.y_top) {
+        c.water   = true;
+        c.water_y = wl;
+        c.snowed  = false;  // pod vodou není sníh shora
+        let frozen;
+        if (freezeRatio >= 1.0)      frozen = true;
+        else if (freezeRatio <= 0.0) frozen = false;
+        else                          frozen = iceNoise(c.x, c.z) > iceThreshold;
+        // Plane Y: cell `Y` je grid-center, top face na `Y + 0.5`. Rim cell
+        // má y_top = water_level, takže jeho top face je na `wl + 0.5`. Hladina
+        // **pod okrajem** (user feedback sez. 38) = `wl + 0.45` (0.05 pod top
+        // face rim → rim voxel mírně "trčí" nad vodu jako reálný břeh).
+        water.push({ x: c.x, z: c.z, y: wl + 0.45, frozen, w: 1, d: 1 });
+      } else {
+        c.water = false;
+      }
+    }
+  }
+
+  return { blocks, ramps, water };
 }
 
 // === G2 (sez. 35) — biome matice 4×3 (LATITUDE × HUMIDITY). ===
@@ -529,52 +710,52 @@ export function generateTerrain({ size, relief, surfaces, seed = 42 }) {
 // je geografi vzácné a v reálné Arktidě klima podobné tundře → alias na
 // `polar.mid` (jméno "Polární tundra", transparent fallback).
 export const BIOME_NAMES = {
-  tropical:    { wet: "Tropický deštný prales", mid: "Savana",        dry: "Horká poušť" },
+  tropical:    { wet: "Tropický prales",        mid: "Savana",        dry: "Horká poušť" },
   subtropical: { wet: "Vlhké subtropy",         mid: "Mediteránní",   dry: "Subtropická step" },
   temperate:   { wet: "Listnatý les",           mid: "Step / Prérie", dry: "Chladná poušť" },
   polar:       { wet: "Polární tundra",         mid: "Tundra",        dry: "Ledová poušť" },
 };
 
-// === G3 (sez. 36, DD-44) — surface mix driver per biome. ===
-// `world.LATITUDE × HUMIDITY` → `surfaces` objekt (4 koef. sum=1.0) předaný
-// do `generateTerrain`. Nahrazuje 4 UI surface slidery (DD-44 hard override:
+// === G3 (sez. 36, DD-44; sez. 38 DD-47 drop water) — surface mix driver per biome. ===
+// `world.LATITUDE × HUMIDITY` → `surfaces` objekt (3 koef. sum=1.0) předaný
+// do `generateTerrain`. Nahrazuje UI surface slidery (DD-44 hard override:
 // climate driver = jediný zdroj pravdy). Tabulka je hardcoded — 12 buněk ×
-// 4 čísel = 48 hodnot; parametric formula (např. `water = f(humidity)`) by
-// ztratila výrazovou volnost (Tropický prales ≠ Vlhké subtropy množstvím
-// vody, i když oba "wet"). Per-cell je čitelnější.
+// 3 čísel = 36 hodnot; parametric formula by ztratila výrazovou volnost
+// (Tropický prales ≠ Vlhké subtropy množstvím zeleně, i když oba "wet").
 //
 // Design os:
-//   HUMIDITY → water + grass (wet = více vody + zeleně, dry = málo)
-//   LATITUDE → stone vs. sand mix (polar = stone-heavy + sand-as-snow proxy;
-//                                   tropical = málo stone; ostatní středně)
+//   HUMIDITY → grass podíl (wet = více zeleně, dry = méně, kompenzace stone/sand)
+//   LATITUDE → stone vs. sand mix (polar = stone-heavy; tropical = málo stone)
 //
-// Známý dluh (G4 kandidát, viz TODO): `sand` v polar bunkách je proxy pro
-// sníh. Až přibude `snow` surface (klon grass-top s bílou paletou), polar.*
-// se migruje. Vizuálně to do té doby vypadá jako poušť, ne sníh.
+// **Sez. 38 (DD-47):** `water` sloupec smazán — drop water surface kind
+// (viz `SURFACE_Y_OFFSET` výš). Voda se vrátí jako LIQUID 1. třída entity.
+// Původní `water` % přerozděleny: fertile biomy (tropical/subtropical/temperate
+// wet/mid) → grass (více vegetace bez "water sinks"); polar wet/mid → stone/sand
+// (skály + ledové pouště v Arktidě běžnější než jezera).
 //
 // `polar.wet` = alias `polar.mid` (geografi vzácné combo → fallback). UI
 // uchová `BIOME_NAMES.polar.wet = "Polární tundra"` (transparent fallback).
 export const BIOME_SURFACES = {
   tropical: {
-    wet: { grass: 0.55, stone: 0.05, sand: 0.05, water: 0.35 },
-    mid: { grass: 0.65, stone: 0.10, sand: 0.20, water: 0.05 },
-    dry: { grass: 0.00, stone: 0.10, sand: 0.90, water: 0.00 },
+    wet: { grass: 0.90, stone: 0.05, sand: 0.05 },
+    mid: { grass: 0.70, stone: 0.10, sand: 0.20 },
+    dry: { grass: 0.00, stone: 0.10, sand: 0.90 },
   },
   subtropical: {
-    wet: { grass: 0.55, stone: 0.10, sand: 0.10, water: 0.25 },
-    mid: { grass: 0.55, stone: 0.30, sand: 0.10, water: 0.05 },
-    dry: { grass: 0.10, stone: 0.40, sand: 0.45, water: 0.05 },
+    wet: { grass: 0.80, stone: 0.10, sand: 0.10 },
+    mid: { grass: 0.60, stone: 0.30, sand: 0.10 },
+    dry: { grass: 0.15, stone: 0.40, sand: 0.45 },
   },
   temperate: {
-    wet: { grass: 0.60, stone: 0.10, sand: 0.05, water: 0.25 },
-    mid: { grass: 0.65, stone: 0.20, sand: 0.05, water: 0.10 },
-    dry: { grass: 0.15, stone: 0.45, sand: 0.35, water: 0.05 },
+    wet: { grass: 0.85, stone: 0.10, sand: 0.05 },
+    mid: { grass: 0.75, stone: 0.20, sand: 0.05 },
+    dry: { grass: 0.20, stone: 0.45, sand: 0.35 },
   },
   polar: {
     // wet = alias mid (Arktická tundra geografi nejbližší).
-    wet: { grass: 0.10, stone: 0.50, sand: 0.30, water: 0.10 },
-    mid: { grass: 0.10, stone: 0.50, sand: 0.30, water: 0.10 },
-    dry: { grass: 0.00, stone: 0.40, sand: 0.55, water: 0.05 },
+    wet: { grass: 0.10, stone: 0.55, sand: 0.35 },
+    mid: { grass: 0.10, stone: 0.55, sand: 0.35 },
+    dry: { grass: 0.00, stone: 0.40, sand: 0.60 },
   },
 };
 
@@ -583,6 +764,29 @@ export const BIOME_SURFACES = {
 // `world.LATITUDE/HUMIDITY` jsou controlled enum přes UI.
 export function surfacesForBiome(latitude, humidity) {
   return BIOME_SURFACES[latitude]?.[humidity] ?? BIOME_SURFACES.temperate.mid;
+}
+
+// Helper: snowSpec dle LATITUDE (sez. 38, DD-47). Polar = jednotně bílo,
+// temperate = vrcholky hor (Y ≥ 6) + klastrované patches (snowNoise > 0.7),
+// jiné = bez sněhu. Parameter `altThreshold` / `patchThreshold` lze tweaknout
+// (např. teplejší temperate jaro = vyšší altThreshold).
+export function snowSpecForLatitude(latitude) {
+  if (latitude === "polar")    return { mode: "polar" };
+  if (latitude === "temperate") return { mode: "temperate", altThreshold: 6, patchThreshold: 0.7, altBias: 0.3 };
+  return { mode: "none" };
+}
+
+// Helper: waterSpec dle LATITUDE × HUMIDITY (sez. 38, post-DD-47 LIQUID prototype).
+// `dry` = bez vody (poušť bez jezer, Q1 sez. 38). `wet`/`mid` = water enabled,
+// freezeRatio dle latitude (polar = 1.0 vše led, temperate = 0.3 částečně led,
+// sub/tropical = 0.0 voda bez ledu).
+export function waterSpecForClimate(latitude, humidity) {
+  if (humidity === "dry") return { enabled: false };
+  let freezeRatio;
+  if (latitude === "polar")     freezeRatio = 1.0;
+  else if (latitude === "temperate") freezeRatio = 0.3;
+  else                          freezeRatio = 0.0;
+  return { enabled: true, freezeRatio };
 }
 
 // === G1 (sez. 35) — UI slider clamp dle MIN(sx, sz). ===

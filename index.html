@@ -344,16 +344,22 @@
       // G3 (sez. 36, DD-44): `surfaces` je driver-derived z aktuálních
       // Climate sliderů přes `window.surfacesForBiome(lat, hum)` (lookup do
       // `BIOME_SURFACES` v terrain.js, fallback temperate.mid při neznámu).
+      // DD-47 (sez. 38): plus `snowSpec` driver-derived z LATITUDE (`polar`
+      // = jednotně bílo, `temperate` = vrcholky + patches, jiné = bez sněhu).
       function readParams() {
         const latKey = LATITUDE_KEYS[parseInt(lat.value, 10)];
         const humKey = HUMIDITY_KEYS[parseInt(hum.value, 10)];
         const surfaces = window.surfacesForBiome?.(latKey, humKey)
-                      ?? { grass: 0.65, stone: 0.20, sand: 0.05, water: 0.10 };  // fallback = temperate.mid
+                      ?? { grass: 0.75, stone: 0.20, sand: 0.05 };  // fallback = temperate.mid (DD-47 drop water)
+        const snowSpec  = window.snowSpecForLatitude?.(latKey) ?? { mode: "none" };
+        const waterSpec = window.waterSpecForClimate?.(latKey, humKey) ?? { enabled: false };
         return {
           size:     [parseInt(sizeX.value, 10), parseInt(sizeZ.value, 10)],
           relief:   parseInt(relief.value, 10),
           surfaces,
           seed:     parseInt(seed.value, 10),
+          snowSpec,
+          waterSpec,
         };
       }
 
@@ -393,11 +399,6 @@
       };
       [sizeX, sizeZ, relief, seed].forEach((el) => el.addEventListener("change", onChange));
 
-      // Init — sync `relief.max` s defaultním size 10×10 (= relief 0..3).
-      // `defer` na `<script type="module">` (main.js) garantuje, že
-      // `window.maxReliefForSize` je v okamžiku tohoto IIFE běhu definován.
-      updateReliefSliderMax();
-
       // === Climate (G2 sez. 35 + G3 sez. 36 DD-44) ===
       // `input` event mutuje WORLD atributy (per-frame sun tilt + biome readout).
       // `change` event triggeruje regen (driver-derived surface mix).
@@ -430,9 +431,19 @@
       lat.addEventListener("change", onChange);
       hum.addEventListener("change", onChange);
 
-      // Init readout (default LATITUDE=temperate idx 2, HUMIDITY=mid idx 1 →
-      // biome = "Step / Prérie"). Sync HTML default `value` s WORLD constructor.
-      updateBiomeReadout();
+      // Init (sez. 38 bug fix) — defer na DOMContentLoaded. Inline classic
+      // `<script>` (tento IIFE) běží **synchroně při parsování HTML**, tj.
+      // PŘED `<script type="module" src="src/main.js">` (= defer-like execute
+      // po HTML parse complete). Při IIFE běhu jsou `window.maxReliefForSize`
+      // i `window.BIOME_NAMES` undefined → init fallbacky by daly relief max=10
+      // a biome readout "—". DOMContentLoaded firuje **po** všech defer+module
+      // scriptech, takže main.js už expose vše potřebné.
+      // Defaults: LATITUDE=temperate idx 2 + HUMIDITY=mid idx 1 → biome "Step /
+      // Prérie"; size 10×10 → relief slider max 3 (Rolling).
+      document.addEventListener("DOMContentLoaded", () => {
+        updateReliefSliderMax();
+        updateBiomeReadout();
+      });
     })();
   </script>
 

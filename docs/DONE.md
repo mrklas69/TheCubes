@@ -653,3 +653,69 @@ ESM Node histogram check pro 5 cases (USER case + 2 high-relief bimodal + 2 regr
 **Y=0 chybí** v bimodal výstupu (smoothstep cliff = žádaná vlastnost bimodal distribuce, ne bug). Disclosure proaktivní.
 
 Browser test (user): verdikt *„Super!"* → DD-46 close. User raw nápad pro příště: *„voda ve všech skupenstvích..."* → IDEAS.md.
+
+## Sezení 38 (2026-05-13) — DD-47 G6 climate-driven surface state + DD-48 atmospheric color extensions + %AUDIT:CODE cleanup
+
+Multi-feature single-instance sezení na main bez topic branche. Audit cleanup K1/K2/D1/D2/D3/D4 + 2 nové DD + řada bug fixů.
+
+### Audit cleanup (sez. 38 `%AUDIT:CODE`)
+
+- [x] **K1 README.md docs drift sync** — Status sekce (DD-37→DD-46 milníky chyběly, 8 sezení drift), Hierarchie modelu (drop `TEXTURE × N` po DD-41, add LAMP COMPOSITES potomek, WORLD doplnit LATITUDE/HUMIDITY), Plán otevřených bodů (drop dořešené SEASON-driver+sky lerp, add „voda ve všech skupenstvích" + Snow surface G4 + glTF asset pipeline). ~20 ř. diff.
+- [x] **K2 CLAUDE.md docs drift sync** — Key Files tabulka (model.js + main.js + terrain.js sync s DD-39/40/41/42/43/44/45/46/47/48), pointer DD-01..DD-46 (po sez. 38 update). 4 řádky diff.
+- [x] **D1 `BLOCKS` + `COMPOSITES` import drop** — main.js:13 import expression. Verifikováno gepem (žádný `instanceof BLOCKS`/`COMPOSITES`, `new BLOCKS()`/`new COMPOSITES()` runtime). Trivial 2-jmen drop.
+- [x] **D2 TTUNELS DROP** — User volba DROP varianty (vs. migrate na lowpoly nebo wait). Smazána třída TTUNELS (`model.js` −37 ř.) + dispatch case + builder section (`main.js` ~−287 ř., section header + TTUNEL_GEOM_CACHE IIFE + createTTunnelFor) + import + GLOSSARY entry + zmínky napříč docs (5+ outdated). Vrátit z git historie pre-sez. 38, až budou tunely chtěné (procedurální paths + tunely jako součást terrain generátoru).
+- [x] **D3 terrain.js komentář ř. 70** — „Relief 0..8" → „Relief 0..10 (clamp 8 internal)". Drobná dezinformace API contract.
+- [x] **D4 GLOSSARY engine-internal maps odstavec** — `_terrainBatches`, `meshByInstance`, `_faceMaterialCache`, `_lowpolyMat`, `RAMP_FACE_VERT_COUNTS`/`RAMP_FACE_PALETTE_KEYS` — kritická infrastruktura, kterou onboard čtenář potřebuje znát. +6 ř. v sekci "Lowpoly vertex-color pipeline".
+
+### Adaptive fog (sez. 38 bug fix, žádný DD)
+
+- [x] **Adaptive fog distances dle scene size** — `updateFogForSize(sx, sz)` v `spawnTerrain`: `near = max(sx, sz) * 0.3, far = max(sx, sz) * 1.2 + 10`. Aditivní +10 oslabuje pro malé scény víc (10×10: 12→22, +83 %) než velké (100×100: 120→130, +8 %). Důvod: fixed `near=30, far=120` ze sez. 31 byl pro 100×100 perf test, default 10×10 měl celou scénu v <near zóně → toggle FOG byl vizuálně bez efektu.
+
+### Hover dirt fix (sez. 38, žádný DD)
+
+- [x] **Dirt color lighten** — `0x6b4423 → 0x8a5e36` v `BLOCK_COLORS.dirt.*` + `grass.{BOTTOM,SIDE}`. Důvod: tmavá dirt × multiplikativní hover `(1.6, 0.8, 0.2)` = tmavě hnědá s oranžovým nádechem, ne sytá oranžová. Po lighten: hover (0.86, 0.30, 0.042) = sytá oranžová. Bonus: terén čitelnější i bez hover.
+
+### Biome readout onload bug fix (sez. 38, žádný DD)
+
+- [x] **`updateBiomeReadout` + `updateReliefSliderMax` defer na DOMContentLoaded** — Inline classic `<script>` IIFE v `index.html` běží sync při parsování, PŘED `<script type="module" src="src/main.js">` (defer-like). V tom okamžiku `window.BIOME_NAMES` undefined → fallback "—". DOMContentLoaded firuje po všech defer/module scriptech. Plus drop falešný komentář o "`defer` na module garantuje". Bonus: relief slider `max` při onLoad teď správně 3 pro default 10×10 (= Rolling).
+
+### DD-47 Climate-driven surface state (G6 sez. 38)
+
+- [x] **Drop water surface kind.** `SURFACE_Y_OFFSET` 4 → 3 (drop `water: -2`). `BIOME_SURFACES` 12 řádků: water sloupec smazán, % přerozděleno (fertile biomy → grass, polar → stone+sand). `generateTerrain` drop topKind dirt-pod-water trick + water plane spawn. `main.js` drop `_waterMat`/`_waterGeom`/`createWaterPlane` *(vrácené ve DD-48 LIQUID prototype níž s ice variantou)*. `regenerateScene` drop staleWater filter. **BIOME_NAMES rename:** `tropical.wet` „Tropický deštný prales" → „Tropický prales" (drop voda reference).
+- [x] **Snow distribution per LATITUDE** — `snowSpecForLatitude(latitude)` helper: polar → all snowed, temperate → `y_top ≥ 6` vždy + **sort+rank top 30 %** zbylých cells dle `score = snowNoise + altNorm × 0.3`, jiné → bez sněhu. Sort+rank izomorfní s biome assignment Kroku 2 (sort+threshold) — zachová target 30 % area shifted distribuce k vyšším cells. Iterace v sez. 38: (1) uniform noise → user "vrcholy bez sněhu", (2) altitude-biased threshold → user "moc sněhu", (3) sort+rank → user "Super!".
+- [x] **Snow implementace.** `BLOCK_COLORS` 4 → 8 (`_snow` varianta TOP=`0xf5f5f5` off-white, BOTTOM/SIDE base). Top voxel kindu dostane `_snow` postfix při `c.snowed`. Sloupcové vrstvy beze změny (sníh leží shora). Ramps dědí `_snow` z source cell svahu (Pass 2). Water cells override `snowed = false`.
+- [x] **Water LIQUID prototype + priority flood** — `waterSpecForClimate(latitude, humidity)` helper: dry no water, wet/mid enabled, freezeRatio polar 1.0 / temperate 0.3 / sub-tropical 0.0. **MinHeap class** (binary heap, ~30 ř.) pro priority flood (Wang & Liu 2006). Boundary cells iniciate `water_level = y_top` → push do heap. Min-heap propaguje od nejnižší úrovně dovnitř: `nLevel = max(level, neighbor.y_top)`. Cell má vodu pokud `water_level > y_top`. Boundary jako overflow (Q2=a) — voda uteče přes nejnižší boundary cell ven.
+- [x] **Water materials vrácené po DD-47 drop** — `_waterMat` (0x3a7090, opacity 0.55, metalness 0.20, roughness 0.25), `_iceMat` (0xd9e8ec po DD-48 ice color lighten, opacity 0.85, metalness 0.05, roughness 0.55 = větší zákal + menší reflexe per user spec). Per-cell THREE.Mesh (= LIQUID prototype), clustering connected components do bbox sub-prah pro perf na velkých scénách. Hladina `wl + 0.45` (= 0.05 pod top face rim cell → břeh voxel mírně „trčí" jako reálný shore).
+- [x] **DD-47 zápis** — climate-driven surface state. Konceptuální izomorfie s DD-44 surface driver. Krok směr k LIQUID 1. třída entitě (DD-25 vrstva 4 sub-prah).
+- [x] **Sub-prah TODO** (3) — water cluster do bbox, SEASON driver pro freezeRatio, ice canvas texture noise patches.
+
+### DD-48 Atmospheric color extensions (sez. 38)
+
+- [x] **Sun color 3-keypoint piecewise** v `updateSun()` — `_sunColorSunrise` (0xffd4c6, 30 % lerp k 0xff7040), `_sunColorMid` (0xfff3d4, 30 % k 0xffd870), `_sunColorNoon` (0xffffff). Driver: `daylight = max(0, -cos α)` (DRY se sun.intensity). Calibration: 1/10 málo viditelné, 10/10 přepálené, 3/10 OK.
+- [x] **Sky background 3-keypoint piecewise** v `updateAtmosphere()` — `_skyNight` (0x000000), `_skyDusk` (0x5f3433, 30 % lerp k 0xff7040 z `_skyDay`), `_skyDay` (0x1a1a2e). Driver: raw `negCosA ∈ [-1, 1]` (NE clamped daylight) — rozliší „deep night" od „moment sunset". `sceneFog.color.copy(scene.background)` per-frame propaguje barvu do fog. Rozšiřuje DD-39 (2-keypoint → 3-keypoint).
+- [x] **Adaptive fog distances** — viz nad (sez. 38 bug fix). Začleněno do DD-48 sekce v immutable log.
+- [x] **Ice materiál** — `_iceMat` (0xd9e8ec, opacity 0.85, metalness 0.05, roughness 0.55). Vs. water (opacity 0.55, metalness 0.20, roughness 0.25): větší zákal + menší reflexe per user spec. Color shift k bílé (`_iceMat.color` původní 0xc0d8e0 → 0xd9e8ec, ~40 % k bílé) symboluje „led jemně zasněžený".
+- [x] **Water wave anim (KISS)** — sinusová vertikální oscilace `position.y = baseY + sin(t × ω) × 0.04` per non-frozen water mesh. `WATER_WAVE_AMP=0.04`, `WATER_WAVE_PERIOD=9.0` s (= klidný swell, sez. 38 user iter 3 s → 9 s). Ice meshes neanimují. Per-frame: 1 `Math.sin` + N `position.y =`.
+- [x] **DD-48 zápis** — atmospheric color extensions, rozšiřuje DD-39.
+- [x] **Sub-prah TODO** (2) — HSL hue shift pro sky/sun lerp, per-cluster water wave fáze.
+
+### Sez. 38 Diff
+
+- `src/terrain.js` +~180 / −~45 ř. (MinHeap class, Krok 6 water flood fill, snowSpec parameter + Krok 3.5 sort+rank snow, waterSpec parameter, `snowSpecForLatitude` + `waterSpecForClimate` exports, BIOME_SURFACES drop water column, BIOME_NAMES rename, drop water spawn paths).
+- `src/main.js` +~120 / −~330 ř. (snow paleta BLOCK_COLORS 4→8, vrácení water/ice materiálů, water wave anim Set + animate() loop, adaptive fog helper, sun color piecewise, sky 3-keypoint, dirt color lighten, drop TTUNELS section ~287 ř., drop BLOCKS+COMPOSITES import).
+- `src/model.js` −37 ř. (drop TTUNELS class + JSDoc + zmínka v BLOCKS doc).
+- `index.html` ~+10 / −~10 ř. (readParams pass snowSpec+waterSpec, DOMContentLoaded init).
+- `docs/DESIGN_DECISIONS.md` +~120 ř. (DD-47 + DD-48 sekce).
+- `docs/TODO.md`, `docs/DONE.md` (tento záznam), `docs/GLOSSARY.md`, `docs/IDEAS.md`, `docs/DIARY.md` + diary sez. 38 sekce.
+- `README.md`, `CLAUDE.md` (audit K1/K2 sync).
+
+### Sez. 38 Smoke test
+
+Browser test 5 scénářů (user):
+1. Default temperate.mid 10×10 r3 → biome readout "Step / Prérie" ✓, žádný sníh (Y ≤ 1), drobné jezírka v depresích.
+2. Polar mid → uniform bílá scéna ✓, ledové plane ne-animuje ✓.
+3. Tropical wet r5 → velké modrá jezera v údolích bez ledu, bez sněhu ✓.
+4. Temperate wet r5 → mix sníh patches (preferují vyšší cells) + voda v údolích + drobné ledové ostrůvky (~30 %).
+5. Humidity=Sucho → žádná voda nikde ✓ (poušť).
+
+Sez. 38 audit cadence reset 0/8. Žádné regression.

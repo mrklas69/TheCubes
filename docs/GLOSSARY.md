@@ -1,6 +1,6 @@
 # Glossary
 
-Canonical terminologie projektu TheCubes. Stav po sez. 37 (DD-32 terrain sandbox pivot, DD-33 ramp smoothing layer, DD-34 orientation mapping centralizace, DD-35 TDRAMP class, DD-36 TCUBES atlas pipeline *(superseded DD-41)*, DD-37 InstancedMesh batch pipeline, DD-38 WORLD re-introduce s DAY/DAY_SPEED *(sun position math superseded DD-43)*, DD-39 atmospheric lerping, DD-40 LAMP/SpotLight pattern, DD-41 lowpoly vertex-color pipeline, DD-42 G2 Climate WORLD LATITUDE×HUMIDITY + sun tilt driver, DD-43 DAY mapping standardizace 0.5=poledne, DD-44 G3 SURFACES driver-derived per biome, DD-45 fBm+ridge³ heightmap pro high relief, DD-46 smoothstep bimodální heightmap pro r≥6). Smazané třídy a koncepty (FACILITY rodina + factory toy, severská dioráma s pixel-voxel COMPOSITES, VOXEL_MODEL infrastruktura) žijí v immutable diary jako historický kontext — zde se neuvádějí.
+Canonical terminologie projektu TheCubes. Stav po sez. 38 (DD-32 terrain sandbox pivot, DD-33 ramp smoothing layer, DD-34 orientation mapping centralizace, DD-35 TDRAMP class, DD-36 TCUBES atlas pipeline *(nahrazeno DD-41)*, DD-37 InstancedMesh batch pipeline, DD-38 WORLD re-introduce s DAY/DAY_SPEED *(sun position math superseded DD-43, atmospheric lerp 2-keypoint superseded DD-48)*, DD-39 atmospheric lerping *(2-keypoint nahrazen 3-keypoint DD-48)*, DD-40 LAMP/SpotLight pattern, DD-41 lowpoly vertex-color pipeline, DD-42 G2 Climate WORLD LATITUDE×HUMIDITY + sun tilt driver, DD-43 DAY mapping standardizace 0.5=poledne, DD-44 G3 SURFACES driver-derived per biome *(BIOME_SURFACES 4-col → 3-col v DD-47 drop water)*, DD-45 fBm+ridge³ heightmap pro high relief, DD-46 smoothstep bimodální heightmap pro r≥6, **DD-47 G6 climate-driven surface state** *(drop water surface kind, snow distribution per LATITUDE, water LIQUID prototype flood-fill, ice materials)*, **DD-48 atmospheric color extensions** *(sun color 3-keypoint piecewise + sky 3-keypoint dusk + adaptive fog + ice + water wave anim)*). Smazané třídy a koncepty (FACILITY rodina + factory toy, severská dioráma s pixel-voxel COMPOSITES, VOXEL_MODEL infrastruktura) žijí v immutable diary jako historický kontext — zde se neuvádějí.
 
 **Identita projektu po DD-32 (sez. 24) + DD-44 (sez. 36):** model-first **procedurální terrain sandbox** s OOP modelem jako runtime. User nastavuje parametry krajiny (size, relief 0..10, seed) + Climate (LATITUDE × HUMIDITY) přes UI panel; surface mix je driver-derived z Climate (DD-44, `BIOME_SURFACES` lookup); `generateTerrain` v `src/terrain.js` produkuje 3D scénu z hierarchie BLOCKS. Předchozí identitní vrstvy (factory toy DD-30/DD-31, severská dioráma DD-25/DD-27) zafixované v git historii jako uzavřené kapitoly.
 
@@ -19,7 +19,6 @@ Canonical terminologie projektu TheCubes. Stav po sez. 37 (DD-32 terrain sandbox
 - **TRRAMPS** (triangular rectangular ramps) — potomek BLOCKS = trojboký hranol (= pravoúhlý klín). 5 face atributů: `TEXTURE_SLOPE` (svah), `TEXTURE_BOTTOM`, `TEXTURE_BACK` (vertikál nad apex sloupcem), `TEXTURE_LEFT`, `TEXTURE_RIGHT` (2 boční trojúhelníky). Plus `ORIENTATION`. Default svah klesá k +Z (apex sloupec na −Z). *(Sez. 16, DD-25.)*
 - **TTRAMPS** (triangular triangular ramps = trirectangular tetrahedron) — potomek BLOCKS = trojboký jehlan se 3 mutually perpendicular pravoúhlými stěnami sdílejícími roh `C`, čtvrtá stěna SLOPE = rovnostranný trojúhelník (hrana √2). 4 face atributy: `TEXTURE_SLOPE`, `TEXTURE_BOTTOM`, `TEXTURE_BACK`, `TEXTURE_LEFT`. Plus `ORIENTATION`. Použití: rohové rampy (corner ramps), stoupání ze 3 sousedních směrů na jeden vyvýšený roh. *(Sez. 16, DD-25.)*
 - **TDRAMP** (diagonal ramp) — potomek BLOCKS = 1C blok bez jednoho horního rohu („low corner"). Krychle 1×1×1 mínus tetrahedron odříznutý na 1 z 4 horních rohů → 7-vrcholový polyhedron: čtvercová podstava + trojúhelníková „horní podstava" (TOP_TRI s 3 ze 4 horních rohů) + diagonální SLOPE z low_bot k opačné horní hraně (NW_top−SE_top, „lomená rampa" sdílí hranu s TOP_TRI). 7 faces se 5 material groups: `TEXTURE_SLOPE`, `TEXTURE_TOP`, `TEXTURE_BOTTOM`, `TEXTURE_WALL_FULL` (2 plné quad stěny opačně k low corner), `TEXTURE_WALL_TRI` (2 trojúhelníkové vert. stěny u low corner). Plus `ORIENTATION` (DD-26 + DD-34): default low corner v lokálním (−X, −Z) = terrain.js „SW" → peak v rohu opačně = „EN" (+X, +Z). Použití: vyhlazení **3-cell convex peak** stepu (A má 2 sousední direct vyšší + diag corner vyšší) nebo **L-shape** stepu (2 sousední direct vyšší bez diag peaku). Strict-dominuje 1× TRRAMPS edge — 2 přístupy + 2 zakryté stěny v 1 mesh. *(Sez. 26, DD-35.)*
-- **TTUNELS** (tunnel blocks) — potomek BLOCKS = 1C blok s klenutým průchozím tunelem v jedné ose. Geometricky: kvádr 1×1×1 mínus „obdélník + půlkruh extrudovaný v ose průchodu" („od krychle odečtený válec a kvádr"). 4 face atributy: `TEXTURE_TOP` (vrchní vnější stěna, typicky `:grass-top`), `TEXTURE_SIDES` (boční vnější stěny + 2 entry walls s vyříznutým profilem), `TEXTURE_WALLS` (vnitřní 2 boční stěny), `TEXTURE_CEILING` (vnitřní klenutý strop, 12 segmentů). **Bez dna** — tunel je „průhledný dolů" na top voxelu pod ním. Plus `ORIENTATION`. *(Sez. 16, DD-25.)*
 
 ### Atribut ORIENTATION (DD-26 + DD-34)
 
@@ -78,8 +77,10 @@ V BLOCKS rodině v praxi jen násobky 90° (cardinální orientace svahu / osy t
 
 - **`size`** — `[sx, sz]` rozměr terénu v 1C voxelech (default `[10, 10]`, slider rozsah 3..100 — sez. 30; sez. 31 DD-37 InstancedMesh refactor dosáhl FPS 104 @ 100×100 seed 42, draw calls ~1k).
 - **`relief`** — integer 0..10 řídící amplitudu + frekvenci heightmap. **11 pojmenovaných stupňů** (slider label): `0 Flat`, `1 Level`, `2 Gently undulating`, `3 Rolling hills`, `4 Hilly`, `5 Uneven`, `6 Rugged`, `7 Craggy`, `8 Mountainous`, `9 Heavily dissected` *(roadmap valley carving)*, `10 Alpine` *(roadmap ridge noise)*. Aktuálně `9` a `10` clamp na `8` s warningem.
-- **`surfaces`** — `{ grass, stone, sand, water }` mix v rozsahu [0, 1], auto-normalizovaný na sumu 1 (UI panel programmatic). Mapuje biome map noise → kind: low-freq noise → sort + exact-match thresholds = souvislé klastry. Y modifier: `sand−1`, `water−2` (eroze/depresse).
+- **`surfaces`** — `{ grass, stone, sand }` mix v rozsahu [0, 1], sum=1 (po DD-47 sez. 38 drop water column). Mapuje biome map noise → kind: low-freq noise → sort + exact-match thresholds = souvislé klastry. Y modifier: `sand−1` (poušť/údolí), ostatní 0.
 - **`seed`** — integer pro `mulberry32` RNG (default `42`). Determinismus = stejný seed + parametry → bit-identical scéna.
+- **`snowSpec`** *(DD-47 sez. 38)* — `{ mode, altThreshold?, patchThreshold?, altBias? }`. Driver-derived z `world.LATITUDE` přes `snowSpecForLatitude(latitude)` helper. `mode = "polar"` → vše snowed; `mode = "temperate"` → cells s `y_top ≥ altThreshold` (default 6) vždy + top `(1 - patchThreshold)` % zbylých cells dle altitude-biased noise score (sort+rank pattern); `mode = "none"` → bez sněhu.
+- **`waterSpec`** *(DD-47 sez. 38)* — `{ enabled, freezeRatio? }`. Driver-derived z `world.LATITUDE × HUMIDITY` přes `waterSpecForClimate(lat, hum)` helper. `dry` → bez vody (poušť), `wet`/`mid` → flood-fill enabled. `freezeRatio` 1.0 (polar) / 0.3 (temperate) / 0.0 (sub/tropical).
 
 ### Engine
 
@@ -87,11 +88,15 @@ Value-noise heightmap (mulberry32 + grid sampling + bilineární smoothstep + wr
 
 ### Terrain kindy (biome IDs)
 
-- **`grass`** — top voxel `:grass-top`, sides/bottom `:dirt` (severská konvence sez. 17 „vrch grass, jinak dirt").
-- **`dirt`** — všech 6 ploch `:dirt`. Middle/bottom vrstvy sloupců.
-- **`stone`** — všech 6 ploch `:stone`. Bottom vrstvy + biome.
-- **`sand`** — všech 6 ploch `:sand`. Biome surface s Y modifier −1.
-- **`water`** — biome marker (ne TCUBES kind). Generuje vodní plane mesh místo sloupce; Y modifier −2.
+Po DD-41 (sez. 34) vertex-color lowpoly paleta v `BLOCK_COLORS` (main.js), ne procedurální textury. Po DD-47 (sez. 38) **water surface kind dropped** (voda jako entita LIQUID prototype, ne surface biome).
+
+- **`grass`** — TOP zelená, BOTTOM/SIDE earth (= dirt).
+- **`dirt`** — všech 6 ploch earth.
+- **`stone`** — všech 6 ploch šedá.
+- **`sand`** — všech 6 ploch písčitě žlutá. Biome surface s Y modifier −1.
+
+**Snow varianty (DD-47 sez. 38, kind enum 4→8):**
+- **`grass_snow`** / **`dirt_snow`** / **`stone_snow`** / **`sand_snow`** — TOP=`0xf5f5f5` (off-white), BOTTOM/SIDE base. Top voxel snowed cell dostane `_snow` postfix. Ramps dědí přes source cell svahu (SLOPE+TOP white, BACK/sides base). Sloupcové vrstvy beze změny (sníh leží shora).
 
 ### Ramp smoothing layer (DD-33, sez. 26)
 
@@ -101,11 +106,23 @@ Po heightmap → biome → spawn engine analýzuje 4-cell sousedství a doplňuj
 - **TTRAMPS corner** (DD-33) — isolated diag peak (0 direct vyšších + 1 diag vyšší + oba direct sousedi na úrovni A) → jehlan k diagonálnímu apex. Vyhlazení rohu.
 - **TDRAMP diagonal** (DD-35) — 2-stage detekce. **Stage 1:** 3-cell convex peak (2 sousední direct + 1 diag vyšší). **Stage 2:** L-shape (2 sousední direct vyšší bez diag peaku). Strict-dominuje 1× TRRAMPS edge.
 
+### Water flood-fill (DD-47, sez. 38, LIQUID prototype)
+
+Po Krok 5 ramps Krok 6 vyplňuje negativní útvary (basins) vodou. **Priority flood** (Wang & Liu 2006):
+
+1. **Boundary init:** cells na 4 stranách scény dostanou `water_level = y_top` + push do `MinHeap` (binary heap, ~30 ř.).
+2. **Flood:** pop min level, propaguj k zatím nevisited sousedům → `nLevel = max(level, neighbor.y_top)`. Vyšší inner cell tlumí stoupání hladiny.
+3. **Mark:** cell má vodu pokud `water_level > y_top` (strictly). Boundary jako overflow drain (interpretace „okraj scény = okraj pro vodu").
+4. **Frozen flag** per cell: `freezeRatio ≥ 1.0` (polar) → vše ice, `≤ 0.0` (sub/tropical) → vše voda, mezi (0..1, temperate 0.3) → `iceNoise(x, z) > (1 - freezeRatio)` threshold per cell (~30 % ledové ostrůvky).
+5. **Hladina Y** plane = `water_level + 0.45` (= 0.05 **pod** top face rim cell → břeh voxel mírně „trčí" jako reálný shore).
+
+Komplexita O(N log N), pro 100×100 = 10k cells trivial.
+
 ## Vizuální zdroje
 
 TheCubes scéna se buduje ze tří vizuálních zdrojů:
 
-- **Voxelová podlaha / terrain** → procedurální **BLOCKS rodina** (TCUBES + TRRAMPS/TTRAMPS/TDRAMP/TTUNELS) s `:named-texture` paletou.
+- **Voxelová podlaha / terrain** → procedurální **BLOCKS rodina** (TCUBES + TRRAMPS/TTRAMPS/TDRAMP) s lowpoly vertex-color paletou (DD-41).
 - **Dekorativní cesty** → **PATH** strip mesh (Catmull-Rom + procedural texture).
 - **Dialog / štítek / UI** → **SPRITES**.
 
@@ -119,7 +136,16 @@ TheCubes scéna se buduje ze tří vizuálních zdrojů:
 
 **flatShading: false (důležitý fix).** BoxGeometry + ramp BufferGeometries už mají per-face normály v `geometry.attributes.normal` (vertices nesdílené přes faces) → flat look vzniká z geometrie. `flatShading: true` na materiálu by nutilo shader spočítat normálu z `dFdx/dFdy` derivatives → u **InstancedMesh** cross-instance precision drift = tenké šedé/černé seam linky mezi sousedy (DD-41 known fix sez. 34).
 
-**Slow path** (`_faceMaterialCache` Map v `faceMaterialFor`): non-terrain TCUBES (CCUBES default šachovnice DD-07, PATH, water plane, COMPOSITES) + TTUNELS. Jediná zachovaná cache po DD-41 — terrain TCUBES/rampy jdou batch path (DD-37) s jedním sdíleným `_lowpolyMat`, žádná per-kind cache potřeba. Perf HUD `mat` čítač = `_faceMaterialCache.size` jen.
+**Slow path** (`_faceMaterialCache` Map v `faceMaterialFor`): non-terrain TCUBES (CCUBES default šachovnice DD-07, PATH, water plane, COMPOSITES). Jediná zachovaná cache po DD-41 — terrain TCUBES/rampy jdou batch path (DD-37) s jedním sdíleným `_lowpolyMat`, žádná per-kind cache potřeba. Perf HUD `mat` čítač = `_faceMaterialCache.size` jen.
+
+**Engine-internal maps** (sez. 38 audit dodatek, [[D4]]): kritická infrastruktura, kterou onboard-čtenář potřebuje znát.
+- `_terrainBatches` (`main.js`) — `Map<string, InstancedMesh>` klíčované `"tcubes:<kind>"` / `"<typ>:<surface>"` → batch dispatched z `pushInstanceToBatch`. Sez. 31 DD-37 pipeline backbone.
+- `meshByInstance` (`main.js`) — `Map<instance.ID, THREE.Object3D | { batch, idx }>`. Single-mesh case mapuje na Object3D, batch case na `{ batch, idx }` tuple. Spotřebovává hover + tooltip + cleanup v `regenerateScene`.
+- `_faceMaterialCache` (`main.js`) — slow-path material cache (popsaná výš). Perf HUD `mat` čítač.
+- `_lowpolyMat` (`main.js`) — jeden sdílený `MeshLambertMaterial({vertexColors:true})` napříč všemi terrain batchi. Lifecycle = aplikace.
+- `_waterMat` / `_iceMat` (`main.js`, DD-47/DD-48 sez. 38) — sdílené `MeshStandardMaterial` pro LIQUID prototype. Water: 0x3a7090, opacity 0.55, metalness 0.20, roughness 0.25. Ice: 0xd9e8ec, opacity 0.85, metalness 0.05, roughness 0.55 (větší zákal + menší reflexe per user spec).
+- `_waterMeshes` (`main.js`, DD-48 sez. 38) — `Set<THREE.Mesh>` pro water wave anim. Jen non-frozen water cells. Ice meshes vynechány (rigid surface). Cleared v `regenerateScene`. Per-frame `position.y = baseY + sin(t × ω) × 0.04` (period 9 s).
+- `RAMP_FACE_VERT_COUNTS` / `RAMP_FACE_PALETTE_KEYS` (`main.js`) — per-typ tabulky (`trramps`/`ttramps`/`tdramp` → `[face vertex counts]` resp. `[BLOCK_COLORS klíče]`) pro vertex-color injection v `getRampGeom`.
 
 **Historické (DD-36 atlas, supersededDD-41):** Sez. 28 zavedla TCUBES atlas (`_tcubesAtlasMatCache`, 4 atlas materials = 6 facelets × 16 px do CanvasTexture 96×16 per kind), sez. 30 ramp atlas (`_rampsAtlasMatCache`, 9 atlas materials). DD-41 smazala obě cache + atlas builders + texture tabulky (`BLOCK_TEXTURES`, `RAMP_*_TEXTURES`, `RAMP_ATLAS_SPECS`, `RAMP_SURFACE_FROM_KIND`, `ATLAS_*` konstanty, `createTRRampFor`/`createTTRampFor`/`createTDRampFor` slow-path funkce). Důvod: atlas vyřešil draw call count (DD-37 InstancedMesh batche pak srazila na ~13 calls), ale tile pattern uvnitř kindu zůstal jako vizuální dluh. DD-41 lowpoly = solid color flat look, eliminuje dluh + simplifikuje pipeline (~−250 ř.) + připravuje G3 (climate-driven barvy = data, ne textury).
 
@@ -134,7 +160,7 @@ JS-generované pixel-art textury 16×16 px. Sdílené přes `NAMED_TEXTURE_FACTO
 - `:path-dirt` — štěrková cesta (sez. 17). Kropenatý šum ~240 záplat 1–2 px šedých odstínů + hnědý ton. Použito v PATH.
 - `:rail-top` — kolejnice (template, není použitá v aktuální scéně — kandidát pro budoucí TRACK třídu).
 
-Pravidlo BLOCKS rodiny: **vrch `:grass-top`, jinak `:dirt`** napříč grass blok / TRRAMPS / TTRAMPS / TDRAMP / TTUNELS (severská konvence sez. 17).
+Pravidlo BLOCKS rodiny: **vrch `:grass-top`, jinak `:dirt`** napříč grass blok / TRRAMPS / TTRAMPS / TDRAMP (severská konvence sez. 17). Pozn.: po DD-41 (sez. 34) terrain BLOCKS textury nepoužívají — `:named-texture` paleta žije už jen ve slow path (CCUBES default + PATH).
 
 ### Canvas SPRITES
 
@@ -148,14 +174,14 @@ Pravidlo BLOCKS rodiny: **vrch `:grass-top`, jinak `:dirt`** napříč grass blo
 
 | Třída / rodina | `instance.Y` semantics | Pro stojící na grass podlaze (gy=−1) |
 |---|---|---|
-| **BLOCKS** (CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, TTUNELS) | grid Y voxelu (= mesh **center**) | `Y = 0` (1C blok nad podlahou) |
+| **BLOCKS** (CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP) | grid Y voxelu (= mesh **center**) | `Y = 0` (1C blok nad podlahou) |
 | SPRITES, PATH | libovolný Y (free 3D space) | dle obsahu |
 
 **BLOCKS = grid-Y** (1C grid-aligned bloky terénu, snap-to-int v rendereru DD-12 vynucuje konvenci automaticky — uživatel uvažuje „blok je ve sloupci gy=0").
 
 ## Pojmy
 
-- **Texture** — 2D obraz aplikovaný na **plochu** meshe. Použití: PATH strip (Catmull-Rom texturovaný proužek), SPRITES billboardy (dialogy/štítky), šachovnice na mateřské CUBES (DD-07 placeholder pro neznámý kind), procedurální `:named-texture` slow path (CCUBES/COMPOSITES/TTUNELS). Terrain TCUBES + rampy textury **nepoužívají** od DD-41 (sez. 34, lowpoly vertex-color pipeline).
+- **Texture** — 2D obraz aplikovaný na **plochu** meshe. Použití: PATH strip (Catmull-Rom texturovaný proužek), SPRITES billboardy (dialogy/štítky), šachovnice na mateřské CUBES (DD-07 placeholder pro neznámý kind), procedurální `:named-texture` slow path (CCUBES/COMPOSITES). Terrain TCUBES + rampy textury **nepoužívají** od DD-41 (sez. 34, lowpoly vertex-color pipeline).
 - **Sprite** — 2D obraz vždy otočený **ke kameře** (billboard). Použití: SPRITES třída.
 - **Voxel** — krychlová jednotka. 1 TC voxel = 1 m (= 1 instance CCUBES/TCUBES).
 - **Pixel-art** — vizuální styl s viditelnými „pixely". Dosahujeme přes `NearestFilter` na `CanvasTexture` (nezablurovaná interpolace) + nízké rozlišení (16×16 typicky). Sdílí se mezi procedurálními texturami (`:dirt`/`:grass-top`/…) a atlas pipeline (DD-36).

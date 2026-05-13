@@ -10,9 +10,9 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
-import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, TTUNELS, SPRITES, COMPOSITES, LAMP, PATH, TIMER, COUNTER, WORLD } from "./model.js";
+import { CUBES, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, SPRITES, LAMP, PATH, TIMER, COUNTER, WORLD } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
-import { generateTerrain, maxReliefForSize, BIOME_NAMES, BIOME_SURFACES, surfacesForBiome } from "./terrain.js";
+import { generateTerrain, maxReliefForSize, BIOME_NAMES, BIOME_SURFACES, surfacesForBiome, snowSpecForLatitude, waterSpecForClimate } from "./terrain.js";
 
 // === Renderer ===
 // WebGLRenderer = Three.js komponenta, která překládá scénu na GPU volání.
@@ -42,6 +42,7 @@ const scene = new THREE.Scene();
 // 0=půlnoc, 0.25=východ, 0.5=poledne, 0.75=západ), nahrazuje původní DD-38 mapping
 // kde 0.25=poledne (matematicky úsporné, prakticky matoucí pro user-facing slider).
 const _skyDay = new THREE.Color(0x1a1a2e);   // tmavě modrofialová (poledne)
+const _skyDusk = new THREE.Color(0x5f3433);  // dusk peak oslabený na 30 % (sez. 38, lerp(_skyDay, 0xff7040, 0.3))
 const _skyNight = new THREE.Color(0x000000); // úplná čerň (půlnoc bez Měsíce)
 const AMBIENT_DAY = 0.15;
 const AMBIENT_NIGHT = 0.005; // téměř 0 — noc skoro úplná tma, scéna spoléhá výhradně na lokální SpotLight (lampy)
@@ -55,6 +56,24 @@ scene.background = new THREE.Color().copy(_skyDay); // placeholder, updatuje upd
 // (přes `#settings` panel) mohl restore stejnou instanci místo realokace.
 const sceneFog = new THREE.Fog(_skyDay.getHex(), 30, 120);
 scene.fog = sceneFog;
+
+// Adaptivní fog distances dle velikosti scény (sez. 38 bug fix). Default
+// distances 30..120 byly nastavené pro 100×100 perf test (sez. 31) — pro
+// menší scény ležel celý terén v < near zóně a fog byl vizuálně neaktivní
+// (toggle FOG on/off nedělal nic viditelného).
+// Vzorec drží paritu s historickou 30..120 hodnotou pro 100×100, škáluje
+// proporcionálně pro menší scény. `max(sx, sz)` (ne min) = pokrýt delší
+// hranu terénu — kratší vždy spadne do fog gradient zóny.
+//
+// Aditivní offset `+10` j na far oslabuje fog pro malé scény (10×10:
+// 12 → 22, +83 %) víc než pro velké (100×100: 120 → 130, +8 %), aby
+// uživatel viděl celé dioráma i na default 10×10 (vzdálený okraj ~13 j
+// od default kamery v (4,4,4)).
+function updateFogForSize(sx, sz) {
+  const m = Math.max(sx, sz);
+  sceneFog.near = m * 0.3;
+  sceneFog.far  = m * 1.2 + 10;
+}
 
 // === Kamera ===
 // PerspectiveCamera = perspektivní projekce (vzdálené věci jsou menší).
@@ -141,6 +160,22 @@ scene.add(sun);
 // Pozice sync-uje `updateSun()` v render loopu (DD-38, sez. 32) — drží sun mesh
 // v 5× radiusu DirectionalLight. V noci (sun.position.y < 0) sunMesh.visible=false.
 const SUN_DISTANCE_SCALE = 5;
+
+// Sun color paleta (sez. 38). 3-keypoint piecewise lerp dle `daylight` (= max(0, -cos α)).
+// Symetrický před/po poledni — atmospheric warming při sunrise/sunset reálné Země,
+// kdy paprsky jdou skrz delší vrstvu atmosféry → modré spektrum se rozptýlí,
+// červené prochází (Rayleigh scattering). DirectionalLight color přebarví celou
+// scénu na warm tone během krajních fází dne.
+//   daylight=0   (sunrise/sunset)  → červánková (sytě oranžová s nádechem červené)
+//   daylight=0.5 (mid-morning/-noon → teplé žluté
+//   daylight=1   (poledne)         → neutrální bílá
+// Hodnoty oslabené na 30 % původní amplitudy (sez. 38 user feedback: full
+// peak `0xff7040`/`0xffd870` = "obrazovka v ohni", 10 % téměř neviditelné).
+// Pravidlo: keypoint = `lerp(_sunColorNoon, original_peak, 0.3)`. Pro silnější
+// dusk efekt zvýšit blend ratio (např. 0.5 = polocesta, 1.0 = původní oheň).
+const _sunColorSunrise = new THREE.Color(0xffd4c6);  // lerp(white, 0xff7040, 0.3)
+const _sunColorMid     = new THREE.Color(0xfff3d4);  // lerp(white, 0xffd870, 0.3)
+const _sunColorNoon    = new THREE.Color(0xffffff);
 const sunMesh = new THREE.Mesh(
   new THREE.SphereGeometry(1.5, 16, 16),
   // `fog: false` = slunce ignoruje scene.fog; jinak by se bílá koule s rostoucí
@@ -192,7 +227,15 @@ function updateSun() {
   // `max(0, -cos)` = pásmo "noc bez DirectionalLight". `updateAtmosphere()` stmívá
   // ambient + sky podle stejné křivky → v noci scéna spoléhá jen na zbytkový
   // AMBIENT_NIGHT (0.04) + tmavé pozadí, vizuálně temná silueta.
-  sun.intensity = SUN_BASE_INTENSITY * Math.max(0, negCosA);
+  const daylight = Math.max(0, negCosA);
+  sun.intensity = SUN_BASE_INTENSITY * daylight;
+  // Color piecewise lerp (sez. 38) — sunrise/sunset červánková, mid žlutá, poledne bílá.
+  // `lerpColors(c1, c2, t)` zapisuje do `this` instance, žádná per-frame alokace.
+  if (daylight < 0.5) {
+    sun.color.lerpColors(_sunColorSunrise, _sunColorMid, daylight * 2);
+  } else {
+    sun.color.lerpColors(_sunColorMid, _sunColorNoon, (daylight - 0.5) * 2);
+  }
   // Sun mesh follow + skip render v noci (Y<0 = pod scénou = stejně neviditelné).
   // AND s `_sunUserVisible` — pokud user vypne toggle v settings panelu, hide
   // se zachová i v poledne (toggle = user override, ne overflow flag).
@@ -200,16 +243,30 @@ function updateSun() {
   sunMesh.visible = _sunUserVisible && sun.position.y > 0;
 }
 
-// Day/night atmospheric lerp. Driver: `world.DAY` (DD-38), stejná `daylight`
-// křivka jako sun.intensity v `updateSun()` (DRY). 3 konzumenti:
-//   - scene.background (lerp _skyNight ↔ _skyDay) — obloha
+// Day/night atmospheric lerp. Driver: `world.DAY` (DD-38). 3 konzumenti:
+//   - scene.background (3-keypoint piecewise _skyNight → _skyDusk → _skyDay) — obloha
 //   - sceneFog.color (kopie background) — vzdálené splývá s oblohou
 //   - ambientLight.intensity (lerp AMBIENT_NIGHT ↔ AMBIENT_DAY) — fill light
+//
+// Sky používá **raw `negCosA` ∈ [-1, 1]** (ne clamped `daylight`), aby šlo
+// rozlišit "deep night" (negCosA → -1) od "moment sunset/sunrise" (negCosA → 0).
+// 3-keypoint piecewise (sez. 38, rozšiřuje DD-39 původní 2-keypoint lineární):
+//   negCosA = -1 (půlnoc)         → _skyNight (čerň)
+//   negCosA =  0 (sunset/sunrise) → _skyDusk  (oranžová)
+//   negCosA = +1 (poledne)        → _skyDay   (modrofialová)
+// Ambient intensity zůstává driven `daylight` (= max(0, negCosA)) — fill light
+// se v noci propadne na AMBIENT_NIGHT, dusk fáze už lift na ~AMBIENT_NIGHT
+// (= shoduje se s "obloha se rozjasňuje, ale slunce ještě neosvětluje").
 // `lerpColors(c1, c2, alpha)` zapisuje do `this` instance, žádná alokace per-frame.
 function updateAtmosphere() {
-  const daylight = Math.max(0, -Math.cos(world.DAY * TAU));
-  scene.background.lerpColors(_skyNight, _skyDay, daylight);
+  const negCosA = -Math.cos(world.DAY * TAU);
+  if (negCosA < 0) {
+    scene.background.lerpColors(_skyNight, _skyDusk, negCosA + 1);
+  } else {
+    scene.background.lerpColors(_skyDusk, _skyDay, negCosA);
+  }
   sceneFog.color.copy(scene.background);
+  const daylight = Math.max(0, negCosA);
   ambientLight.intensity = AMBIENT_NIGHT + (AMBIENT_DAY - AMBIENT_NIGHT) * daylight;
 }
 
@@ -1119,9 +1176,6 @@ function createMeshFor(instance) {
     // Pozn.: Terrain TCUBES jdou batch path (DD-37 InstancedMesh), createMeshFor
     // slouží pro single-spawn mimo terrain (dev/test).
     object3d = createTCubeFor(instance);
-  } else if (instance instanceof TTUNELS) {
-    // Tunel skrz 1C blok (4 vnitřní stěny, 2 osy průchozí).
-    object3d = createTTunnelFor(instance);
   } else if (instance instanceof CCUBES) {
     // Voxel s plochou barvou (dříve TERRAIN).
     const geometry = new THREE.BoxGeometry(1, 1, 1);
@@ -1580,253 +1634,6 @@ const TDRAMP_GEOM_CACHE = (() => {
   return geom;
 })();
 
-// === TTUNELS — 1C blok s klenutým tunelem ===================================
-//
-// Geometrie: kvádr 1×1×1 mínus „obdélník + půlkruh extrudovaný v ose X" (=
-// klenutý tunel se spodním obdélníkovým průchodem). Profil otvoru v rovině
-// YZ (kolmé k ose tunelu):
-//   Spodní obdélník: Y = −0.5..0,    Z = −0.3..+0.3
-//   Horní půlkruh:   střed (Y=0, Z=0), poloměr 0.3 → klenba k Y=+0.3
-//   Nad obloukem (Y=+0.3..+0.5) zůstává plný materiál — „klenba bloku".
-//
-// 4 material groups (= 4 user-faces):
-//   0 = TOP       — vnější vrchní stěna (typicky `:grass-top`)
-//   1 = SIDES     — vnější 2 boky + 2 vstupní stěny s vyříznutým profilem
-//   2 = WALLS     — vnitřní 2 boční stěny (Z=±0.3, Y=−0.5..0)
-//   3 = CEILING   — vnitřní klenutý strop (N=12 segmentů půlkruhu)
-//
-// Bez bottom outside i bez inside floor — tunel je „průhledný dolů" na top
-// voxelu pod ním (typicky grass podlaha diorámy).
-//
-// Vstupní stěny (X=±0.5) jsou triangulovány: 2 ears (sloupce mimo tunel) +
-// 1 shoulder (pásek nad obloukem) + 2 sektory klenby (fan z corner shoulder
-// k bodům půlkruhu, 6 trojúhelníků per sektor).
-//
-// Vnitřní povrchy mají normály mířící **dovnitř** tunelu (k ose průchodu),
-// aby je postava uvnitř viděla bez DoubleSide. Vnější povrchy mají normály
-// ven (standard FrontSide).
-
-const TTUNEL_GEOM_CACHE = (() => {
-  const W = 0.3;   // polovina šířky tunelu
-  const H = 0.0;   // přechod rectangular → arch (Y koordináta)
-  const R = W;     // poloměr půlkruhu = polovina šířky
-  const N = 12;    // segmentů na půlkruhu (sudé číslo, dělí se na 2 čtvrtě)
-
-  // Polokruhové body na entry plane (X = const). Parametrizace: θ ∈ [0, π],
-  //   archPt(θ) = (Z = R·cos(θ), Y = H + R·sin(θ))
-  //   θ=0:   (+R, H)        — pravý dolní (= SOUTH-bottom of arch)
-  //   θ=π/2: (0,  H+R)      — vrchol oblouku
-  //   θ=π:   (−R, H)        — levý dolní (= NORTH-bottom of arch)
-  const arch = [];
-  for (let i = 0; i <= N; i++) {
-    const θ = (i / N) * Math.PI;
-    arch.push({ z: R * Math.cos(θ), y: H + R * Math.sin(θ) });
-  }
-
-  const positions = [];
-  const normals = [];
-  const uvs = [];
-  const indices = [];
-  const groups = [];
-
-  function addTri(p0, p1, p2, n, uv0, uv1, uv2, materialIndex) {
-    const start = positions.length / 3;
-    positions.push(...p0, ...p1, ...p2);
-    normals.push(...n, ...n, ...n);
-    uvs.push(...uv0, ...uv1, ...uv2);
-    const idxStart = indices.length;
-    indices.push(start, start + 1, start + 2);
-    groups.push({ start: idxStart, count: 3, materialIndex });
-  }
-
-  function addQuad(p0, p1, p2, p3, n, uv0, uv1, uv2, uv3, materialIndex) {
-    const start = positions.length / 3;
-    positions.push(...p0, ...p1, ...p2, ...p3);
-    normals.push(...n, ...n, ...n, ...n);
-    uvs.push(...uv0, ...uv1, ...uv2, ...uv3);
-    const idxStart = indices.length;
-    indices.push(start, start + 1, start + 2);
-    indices.push(start, start + 2, start + 3);
-    groups.push({ start: idxStart, count: 6, materialIndex });
-  }
-
-  // Material constants
-  const MAT_TOP     = 0;
-  const MAT_SIDES   = 1;
-  const MAT_WALLS   = 2;
-  const MAT_CEILING = 3;
-
-  // === OUTSIDE — TOP quad + 2 side quads + 2 entry walls (žádný bottom) ===
-
-  // TOP outside (Y=+0.5, normála +Y), CCW from above. Vlastní material =
-  // jako grass cube top → uživatel typicky pošle `:grass-top`.
-  addQuad(
-    [-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, -0.5],
-    [0, 1, 0],
-    [0, 0], [0, 1], [1, 1], [1, 0],
-    MAT_TOP,
-  );
-
-  // NORTH outside (Z=−0.5, normála −Z), CCW from -Z
-  addQuad(
-    [0.5, -0.5, -0.5], [-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5],
-    [0, 0, -1],
-    [0, 0], [1, 0], [1, 1], [0, 1],
-    MAT_SIDES,
-  );
-
-  // SOUTH outside (Z=+0.5, normála +Z), CCW from +Z
-  addQuad(
-    [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
-    [0, 0, 1],
-    [0, 0], [1, 0], [1, 1], [0, 1],
-    MAT_SIDES,
-  );
-
-  // Helper — entry wall na X = xPlane (sign = +1 pro EAST, −1 pro WEST).
-  // Skládá se ze 2 ears + shoulder + 2 fan sektorů kolem půlkruhu.
-  function buildEntryWall(xPlane, sign) {
-    const n = [sign, 0, 0];
-
-    // Pro CCW vrtex order respektující normálu (sign·X, 0, 0) volíme:
-    //   sign = +1: vertices (Y=yA, Z=zA) → (Y=yB, Z=zB) such that
-    //              (yB−yA)·(zC−zA) − (zB−zA)·(yC−yA) > 0
-    //   sign = −1: opačné znaménko.
-    // Pro konzistenci kódu napíšeme dvě varianty pro +1 a převrátíme order
-    // u trojúhelníků/quadů pro −1.
-
-    function quadEntry(yzCorners, uvs, mat) {
-      // yzCorners = [[yA, zA], [yB, zB], [yC, zC], [yD, zD]] — pořadí pro +X CCW.
-      const verts = yzCorners.map(([y, z]) => [xPlane, y, z]);
-      if (sign === 1) {
-        addQuad(verts[0], verts[1], verts[2], verts[3], n, uvs[0], uvs[1], uvs[2], uvs[3], mat);
-      } else {
-        // Reverse winding for −X normal
-        addQuad(verts[0], verts[3], verts[2], verts[1], n, uvs[0], uvs[3], uvs[2], uvs[1], mat);
-      }
-    }
-
-    function triEntry(yzCorners, uvs, mat) {
-      const verts = yzCorners.map(([y, z]) => [xPlane, y, z]);
-      if (sign === 1) {
-        addTri(verts[0], verts[1], verts[2], n, uvs[0], uvs[1], uvs[2], mat);
-      } else {
-        addTri(verts[0], verts[2], verts[1], n, uvs[0], uvs[2], uvs[1], mat);
-      }
-    }
-
-    // 1. NORTH ear (Z=−0.5..−W, full Y) — pro +X CCW: (Y=−0.5,Z=−0.5) → (Y=+0.5,Z=−0.5) → (Y=+0.5,Z=−W) → (Y=−0.5,Z=−W)
-    quadEntry(
-      [[-0.5, -0.5], [0.5, -0.5], [0.5, -W], [-0.5, -W]],
-      [[0, 0], [0, 1], [1, 1], [1, 0]],
-      MAT_SIDES,
-    );
-
-    // 2. SOUTH ear (Z=+W..+0.5, full Y) — analogicky
-    quadEntry(
-      [[-0.5, W], [0.5, W], [0.5, 0.5], [-0.5, 0.5]],
-      [[0, 0], [0, 1], [1, 1], [1, 0]],
-      MAT_SIDES,
-    );
-
-    // 3. SHOULDER (Z=−W..+W, Y=H+R..+0.5) — pro +X CCW: (Y=H+R,Z=−W) → (Y=+0.5,Z=−W) → (Y=+0.5,Z=+W) → (Y=H+R,Z=+W)
-    quadEntry(
-      [[H + R, -W], [0.5, -W], [0.5, W], [H + R, W]],
-      [[0, 0], [0, 1], [1, 1], [1, 0]],
-      MAT_SIDES,
-    );
-
-    // 4. NORTH arch sector — fan z corner (Y=H+R, Z=−W) k arch points i ∈ [N/2, N]
-    const apexNorth = [H + R, -W];
-    for (let i = N / 2; i < N; i++) {
-      const a = arch[i];
-      const b = arch[i + 1];
-      // Pro +X CCW order trojúhelníku (apex, archPt[i], archPt[i+1]):
-      // ověřeno cross-productem že má kladnou X složku.
-      triEntry(
-        [apexNorth, [a.y, a.z], [b.y, b.z]],
-        [[0, 1], [0.7, 0.6], [0, 0]],
-        MAT_SIDES,
-      );
-    }
-
-    // 5. SOUTH arch sector — fan z corner (Y=H+R, Z=+W) k arch points i ∈ [0, N/2]
-    const apexSouth = [H + R, W];
-    for (let i = 0; i < N / 2; i++) {
-      const a = arch[i];
-      const b = arch[i + 1];
-      triEntry(
-        [apexSouth, [a.y, a.z], [b.y, b.z]],
-        [[1, 1], [0.3, 0.6], [1, 0]],
-        MAT_SIDES,
-      );
-    }
-  }
-
-  buildEntryWall(0.5, 1);   // EAST entry (X=+0.5, normála +X)
-  buildEntryWall(-0.5, -1); // WEST entry (X=−0.5, normála −X)
-
-  // === INSIDE — 2 walls + 12 ceiling segments (žádný floor — průhled dolů) ===
-
-  const ε = 0.001;
-
-  // NORTH inside wall (Z=−W+ε, Y=−0.5..H), normála +Z (mířit do tunelu)
-  addQuad(
-    [-0.5, -0.5, -W + ε], [0.5, -0.5, -W + ε], [0.5, H, -W + ε], [-0.5, H, -W + ε],
-    [0, 0, 1],
-    [0, 0], [1, 0], [1, 1], [0, 1],
-    MAT_WALLS,
-  );
-
-  // SOUTH inside wall (Z=+W−ε, Y=−0.5..H), normála −Z (mířit do tunelu)
-  addQuad(
-    [-0.5, -0.5, W - ε], [-0.5, H, W - ε], [0.5, H, W - ε], [0.5, -0.5, W - ε],
-    [0, 0, -1],
-    [0, 0], [0, 1], [1, 1], [1, 0],
-    MAT_WALLS,
-  );
-
-  // CEILING — N segmentů půlkruhu, každý jako quad mezi entry a exit walls.
-  // Inward normála per segment: směrem ke středu polokruhu (0, H, 0).
-  // Order vrcholů (i_west, (i+1)_west, (i+1)_east, i_east) → cross product
-  // dává normálu (0, ΔZ, −ΔY), což pro arch jdoucí CCW (θ rostoucí) znamená
-  // inward orientaci.
-  for (let i = 0; i < N; i++) {
-    const a = arch[i];
-    const b = arch[i + 1];
-    const θ_mid = ((i + 0.5) / N) * Math.PI;
-    const nIn = [0, -Math.sin(θ_mid), -Math.cos(θ_mid)];
-    addQuad(
-      [-0.5, a.y, a.z], [-0.5, b.y, b.z], [0.5, b.y, b.z], [0.5, a.y, a.z],
-      nIn,
-      [0, 0], [0, 1], [1, 1], [1, 0],
-      MAT_CEILING,
-    );
-  }
-
-  const geom = new THREE.BufferGeometry();
-  geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geom.setAttribute("normal",   new THREE.Float32BufferAttribute(normals, 3));
-  geom.setAttribute("uv",       new THREE.Float32BufferAttribute(uvs, 2));
-  geom.setIndex(indices);
-  for (const g of groups) geom.addGroup(g.start, g.count, g.materialIndex);
-  return geom;
-})();
-
-// Sestaví klenutý tunelový blok pro TTUNELS instanci. 4 materials přes
-// sdílený `faceMaterialFor` dispatch.
-function createTTunnelFor(instance) {
-  const materials = [
-    faceMaterialFor(instance.TEXTURE_TOP),      // 0
-    faceMaterialFor(instance.TEXTURE_SIDES),    // 1
-    faceMaterialFor(instance.TEXTURE_WALLS),    // 2
-    faceMaterialFor(instance.TEXTURE_CEILING),  // 3
-  ];
-  const mesh = new THREE.Mesh(TTUNEL_GEOM_CACHE, materials);
-  snapToGrid(mesh, instance);
-  mesh.rotation.y = instance.ORIENTATION * (Math.PI / 180);
-  return mesh;
-}
 
 // Sestaví 2D billboard pro SPRITES instanci. Vrací `THREE.Sprite` — speciální
 // Three.js objekt, který se sám stará o to, aby byl vždy otočený ke kameře
@@ -2042,8 +1849,8 @@ function createPathFor(instance) {
 }
 
 // === Terrain builder (DD-32, sez. 24; DD-41 lowpoly pipeline sez. 34) =======
-// `generateTerrain` (src/terrain.js) vrátí { blocks, water, ramps }; `buildScene`
-// spawne TCUBES + rampy + water planes do scény přes batch path (DD-37
+// `generateTerrain` (src/terrain.js) vrátí { blocks, ramps }; `buildScene`
+// spawne TCUBES + rampy do scény přes batch path (DD-37
 // InstancedMesh). Lowpoly pipeline (DD-41) nahradila DD-36 atlas — barvy v
 // `BLOCK_COLORS` mapě, vertex-color geometry, jeden sdílený `_lowpolyMat`.
 //
@@ -2058,10 +1865,19 @@ function createPathFor(instance) {
 // grass má jen vrch zelený, stěny a spodek = hnědá zem. Stone/sand/dirt jsou
 // homogenní (BOTTOM/SIDE marginálně tmavší pro mikroshade rozdíl mezi sousedy).
 const BLOCK_COLORS = {
-  grass: { TOP: 0x6aaa3a, BOTTOM: 0x6b4423, SIDE: 0x6b4423 },
-  dirt:  { TOP: 0x6b4423, BOTTOM: 0x6b4423, SIDE: 0x6b4423 },
+  grass: { TOP: 0x6aaa3a, BOTTOM: 0x8a5e36, SIDE: 0x8a5e36 },
+  dirt:  { TOP: 0x8a5e36, BOTTOM: 0x8a5e36, SIDE: 0x8a5e36 },
   stone: { TOP: 0x9a9a9a, BOTTOM: 0x8a8a8a, SIDE: 0x8a8a8a },
   sand:  { TOP: 0xe8d97a, BOTTOM: 0xd9c66a, SIDE: 0xd9c66a },
+  // Snow varianty (sez. 38, DD-47): TOP=off-white (sníh leží na horních +
+  // nekolmých plochách), BOTTOM/SIDE = base color (= "sníh seshora"). Pro
+  // rampy `getRampGeom` automaticky mapuje SLOPE+TOP face na palette.TOP
+  // (= white), BACK/LEFT/RIGHT/BOTTOM zachovají base. Off-white `0xf5f5f5`
+  // místo pure `0xffffff` — čistá bílá by mohla být oslnivá při bright sun.
+  grass_snow: { TOP: 0xf5f5f5, BOTTOM: 0x8a5e36, SIDE: 0x8a5e36 },
+  dirt_snow:  { TOP: 0xf5f5f5, BOTTOM: 0x8a5e36, SIDE: 0x8a5e36 },
+  stone_snow: { TOP: 0xf5f5f5, BOTTOM: 0x8a8a8a, SIDE: 0x8a8a8a },
+  sand_snow:  { TOP: 0xf5f5f5, BOTTOM: 0xd9c66a, SIDE: 0xd9c66a },
 };
 
 // Sdílený material pro VŠECHNY terrain batche (TCUBES + rampy po G0b).
@@ -2200,25 +2016,56 @@ function createBlock(kind, x, y, z) {
   );
 }
 
-// Vodní plane(y) — sdílený materiál + geometrie (DRY: water cells sdílí jeden
-// MeshStandardMaterial, šetří GPU pamět). Transparent + nízká opacity =
-// částečně vidět dno (dirt) pod vodou. Plane v rovině XZ (rotace −π/2 kolem X).
+// Vodní + ledové plane(y) — sdílené materiály (DRY, jeden mat per stav).
+// Voda: transparent 0.55, mírná reflexe (metalness 0.2, roughness 0.25), modrá.
+// Led: transparent 0.85 (větší zákal), nízká reflexe (metalness 0.05, roughness
+// 0.55 = matnější), světle modro-bílá. User feedback sez. 38: led má **menší
+// reflexi a větší zákal** než voda.
+// Vrácené sez. 38 jako LIQUID prototype (= flood-fill basin entity, ne biome
+// surface DD-47 dropped pattern). Reference k post-DD-47 entitě v IDEAS.md.
 const _waterMat = new THREE.MeshStandardMaterial({
   color:        0x3a7090,
   transparent:  true,
-  opacity:      0.7,
-  metalness:    0.15,
-  roughness:    0.35,
+  opacity:      0.55,
+  metalness:    0.20,
+  roughness:    0.25,
+  side:         THREE.DoubleSide,
+});
+const _iceMat = new THREE.MeshStandardMaterial({
+  // Color shift bělejší (sez. 38 user feedback "led jemně zasněžený").
+  // Lerp(0xc0d8e0, 0xffffff, ~0.4) = `0xd9e8ec` — světlejší modrobílá, snowy.
+  color:        0xd9e8ec,
+  transparent:  true,
+  opacity:      0.85,
+  metalness:    0.05,
+  roughness:    0.55,
   side:         THREE.DoubleSide,
 });
 const _waterGeom = new THREE.PlaneGeometry(1, 1);
 
+// Water wave animation (sez. 38, KISS): sinusová vertikální oscilace celé
+// hladiny synchroně. Žádný shader / texture work. Ice meshe **neanimují**
+// (rigid surface). Per-frame v `animate()` aplikuje na všechny meshe v
+// `_waterMeshes` Set.
+const WATER_WAVE_AMP    = 0.04;  // metrů (drobná vlnka, ne dramatic surge)
+const WATER_WAVE_PERIOD = 9.0;   // s (klidný swell, sez. 38 user 3× pomalejší než původní 3 s)
+const WATER_WAVE_OMEGA  = 2 * Math.PI / WATER_WAVE_PERIOD;
+const _waterMeshes = new Set();  // jen non-frozen water; zase clear v regenerateScene
+
 function createWaterPlane(w) {
-  const mesh = new THREE.Mesh(_waterGeom, _waterMat);
+  // `w.frozen` flag rozhoduje materiál: ice (polar all, temperate ~30 %) vs.
+  // water (otherwise). Plane v rovině XZ po rotaci kolem X osy.
+  const mesh = new THREE.Mesh(_waterGeom, w.frozen ? _iceMat : _waterMat);
   mesh.rotation.x = -Math.PI / 2;
   mesh.position.set(w.x, w.y, w.z);
-  mesh.scale.set(w.w, 1, w.d);  // X šířka, Z hloubka; plane je teď v XZ rovině po rotaci
+  mesh.scale.set(w.w ?? 1, 1, w.d ?? 1);
   mesh.receiveShadow = true;
+  // Water wave anim registrace: stash base Y + add do `_waterMeshes` Set.
+  // Ice se ne-anim (rigid surface) — vynechán ze Setu.
+  if (!w.frozen) {
+    mesh.userData.waterBaseY = w.y;
+    _waterMeshes.add(mesh);
+  }
   return mesh;
 }
 
@@ -2348,9 +2195,9 @@ const TERRAIN_DEFAULTS = {
 };
 
 // Spawne terrain z parametrů do scény. Sez. 31 InstancedMesh refactor:
-// místo N `THREE.Mesh` per blok/ramp → 1 `InstancedMesh` per (geom, atlas mat)
-// pár, ~13 batchů celkem @ libovolný size. Water plane(y) zůstávají single-mesh
-// (low count, ne worth instancing).
+// místo N `THREE.Mesh` per blok/ramp → 1 `InstancedMesh` per (geom, mat) pár.
+// Sez. 38 DD-47: drop water surface kind + add snow varianty → batche
+// rozšířeny na ~17 (4 base + 4 snow TCUBES + 9 ramp surface×type).
 //
 // 3-pass:
 //   1) Pre-count instancí per batch klíč (pro alokaci kapacity).
@@ -2359,6 +2206,7 @@ const TERRAIN_DEFAULTS = {
 //   3) Spawn instancí (`pushInstanceToBatch` plní matrix + barvu + map).
 function spawnTerrain(params) {
   const terrain = generateTerrain(params);
+  updateFogForSize(params.size[0], params.size[1]);
 
   // 1) Pre-count.
   const counts = new Map();  // batchKey → int
@@ -2421,8 +2269,10 @@ function spawnTerrain(params) {
     if (batch.instanceColor) batch.instanceColor.needsUpdate = true;
   }
 
-  // Water plane(y) zůstávají single-mesh (5-10 instancí typically, regen levný).
-  for (const w of terrain.water) {
+  // Water plane(y) (sez. 38, post-DD-47 LIQUID prototype) — single-mesh per
+  // water cell. `frozen` flag rozhoduje materiál (water vs. ice).
+  // userData.terrain = true → flag pro regenerateScene cleanup.
+  for (const w of terrain.water ?? []) {
     const mesh = createWaterPlane(w);
     mesh.userData.terrain = true;
     scene.add(mesh);
@@ -2460,14 +2310,14 @@ function regenerateScene(params) {
   }
   _terrainBatches.clear();
 
-  // 2) Water single-meshe (filter pres userData.terrain, NE InstancedMesh).
+  // 2) Water single-meshe (filter přes userData.terrain). Sez. 38 LIQUID
+  // prototype: water cells jsou per-cell THREE.Mesh, ne InstancedMesh batch.
   const staleWater = scene.children.filter((c) => c.userData.terrain === true);
   for (const mesh of staleWater) {
     scene.remove(mesh);
     disposeHoverClones(mesh);
-    const inst = mesh.userData.instance;
-    if (inst) meshByInstance.delete(inst.ID);
   }
+  _waterMeshes.clear();  // wave anim Set sync — staré meshe jsou pryč
 
   spawnTerrain(params);
 }
@@ -2498,15 +2348,22 @@ window.BIOME_NAMES = BIOME_NAMES;
 // pro UI controller (HTML inline IIFE volá při sestavování `readParams`).
 window.BIOME_SURFACES = BIOME_SURFACES;
 window.surfacesForBiome = surfacesForBiome;
+// DD-47 (sez. 38) — snowSpec helper pro UI panel (`#terrainctrl` `readParams()`).
+window.snowSpecForLatitude = snowSpecForLatitude;
+// Sez. 38 LIQUID prototype — waterSpec helper (flood-fill voda dle climate).
+window.waterSpecForClimate = waterSpecForClimate;
 
 function buildScene(scene) {
-  // G3 (sez. 36) — surfaces driver-derived z WORLD climate atributů. UI
+  // G3 (sez. 36, DD-44) — surfaces driver-derived z WORLD climate atributů.
+  // Sez. 38 (DD-47) — plus snowSpec driver-derived z `world.LATITUDE`. UI
   // Climate slidery mutují `world.LATITUDE/HUMIDITY` (přes `window.settings`)
   // a regen-trigger volá `regenerateScene(readParams())` z HTML controlleru,
-  // který surface mix dohnají identicky z aktuálního WORLD stavu.
+  // který oba parametry dohnají identicky z aktuálního WORLD stavu.
   spawnTerrain({
     ...TERRAIN_DEFAULTS,
-    surfaces: surfacesForBiome(world.LATITUDE, world.HUMIDITY),
+    surfaces:  surfacesForBiome(world.LATITUDE, world.HUMIDITY),
+    snowSpec:  snowSpecForLatitude(world.LATITUDE),
+    waterSpec: waterSpecForClimate(world.LATITUDE, world.HUMIDITY),
   });
 }
 
@@ -2835,6 +2692,13 @@ function animate() {
   updateWorldTime(dt);
   updateSun();
   updateAtmosphere();
+  // Water wave anim (sez. 38, KISS): sinusová vertikální oscilace celé
+  // hladiny napříč všemi non-frozen water meshes synchroně. 1 sin compute /
+  // frame, pak Y update per mesh (žádná alokace).
+  if (_waterMeshes.size > 0) {
+    const wave = Math.sin(now * WATER_WAVE_OMEGA) * WATER_WAVE_AMP;
+    for (const m of _waterMeshes) m.position.y = m.userData.waterBaseY + wave;
+  }
   // Ocásky dialogových bublin: přepočítáme až **po** animátorech, aby jsme
   // četli aktuální `object3d.position` případných pohybujících se mluvčí
   // (tbox_0002 orbituje, …).
