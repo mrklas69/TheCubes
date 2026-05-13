@@ -2,6 +2,33 @@
 
 Raw nápady. Když dozraje, přesuň do `TODO.md`.
 
+## Vytunit reliéf generátor *(sez. 38 user nápad)*
+
+Po DD-44/45/46 sequence (BIOME_SURFACES driver + fBm/ridge³ + smoothstep bimodal) má heightmap pipeline stálé chování, ale je hodně knobů k tunit:
+- **RELIEF_AMPLITUDE / RELIEF_FREQUENCY tabulky** — empiricky vyladěné, ale nejsou per-LATITUDE/BIOME. Tropical/temperate mají stejné amplitudy → polární scéna může vypadat jak alpine.
+- **BIMODAL_RELIEF_THRESHOLD = 6** hard switch — sub-prah z DD-46 (plynulý morph r5↔r6). Pokud user pocítí "trhanej přechod".
+- **VALLEY_AMP = −1 asymetrický** vůči PEAK_AMP=amplitude — sub-prah DD-46 (symmetric varianta = bimodální symetrický tvar).
+- **SMOOTHSTEP_LO/HI = 0.4/0.6** — bimodal cliff width. Užší (0.45, 0.55) = ostřejší, širší (0.3, 0.7) = víc gradient.
+- **Ridge³ vs. ridge² vs. plain ridge** pro r ≤ 5 — single-peak distribuce shape.
+- **fBm OCTAVES / LACUNARITY / PERSISTENCE** — 3/2.0/0.5 dnes. Více oktáv (4-5) = víc detailů, méně (2) = hladší. Lacunarity 2.5+ = větší freq skok.
+
+Návrh: tunable parameters expose přes hidden dev panel (`#devctrl`?) — debug live tweak bez recompile. Default values držet jako DD-46 baseline, panel ovládá pro experimentování. Tvorba `params.tuning = { thresholdR6, valleyAmp, smoothLo, smoothHi, ... }` na `generateTerrain` API.
+
+## Mraky / srážky *(sez. 38 user nápad)*
+
+Atmosferický overlay nad terénem. Vizuální vrstva (= nemodifikuje terén, jen scénu).
+
+- **Mraky** — bílé/šedé sprite particle systém na obloze. Možnosti:
+  - (a) `THREE.Sprite` instances rozesílané v pásu nad terénem, drift animátor pomalu posouvá. KISS.
+  - (b) Volumetric clouds — geometry shader nebo billboard cascade. Drahé.
+  - (c) Procedural sky shader (e.g., Hosek-Wilkie) — fyzikální atmosféra. Over-engineering pro voxel sandbox.
+- **Déšť** — partikle ze sponzorujícího mraku. `THREE.Points` s gravitační velocity. Kolize s top voxelem = particle smaže. Per-cell wetness modifier? Drobnost.
+- **Sníh** — partikle s pomalou velocity. Akumulace na top voxelech = mění surface na `_snow` (= viz Skupenství vody sez. 38 plán). Cyklus s temperate noise patches → snow patches rostou/mizí dle DAY×TEMPERATURE driveru.
+
+**Driver:** `WORLD.WEATHER` enum (`clear`/`overcast`/`rain`/`snow`) nebo derivovat z `WORLD.HUMIDITY × LATITUDE × DAY` (sezónně). UI: dropdown nebo manual override v `#settings`.
+
+**Závislost:** vyžaduje particle system base infrastrukturu (Three.js `Points`/`Sprite` instance manager). Nebo deferovat až bude víc dynamic entit. Sub-prah pro pozdější sezení.
+
 ## Voda ve všech skupenstvích *(sez. 37 user nápad)*
 
 Aktuálně `water` žije jako jeden surface kind v `SURFACE_Y_OFFSET` + 1×1 plane na cell (DD-32 MVP). User nápad: **systematická voda jako entita s skupenstvími**. Rozšíření modelu:

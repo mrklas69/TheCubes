@@ -75,7 +75,7 @@ export class CUBES extends OBJECTS {
  * 4-vrstvá taxonomie scény, vrstva 1). Sdílí mezi sebou: snap-to-int v rendereru
  * (DD-12), procedurální geometrie v engine, sdílená paleta `:named-textures`
  * přes `faceMaterialFor` (DD-14). Potomci se liší tvarem: krychle (TCUBES,
- * 6 faces), klín (TRRAMPS, 5 faces), jehlan (TTRAMPS, 4 faces), tunel (TTUNELS).
+ * 6 faces), klín (TRRAMPS, 5 faces), jehlan (TTRAMPS, 4 faces), 7-vrcholový blok (TDRAMP).
  *
  * `ORIENTATION` (DD-26 sez. 17) — float ∈ [0, 360) ve **stupních**, rotace
  * kolem Y osy. Default 0. Engine převádí `mesh.rotation.y = ORIENTATION * π/180`.
@@ -212,43 +212,6 @@ export class TDRAMP extends BLOCKS {
   constructor(id, name, x, y, z, orientation = 0, description = "") {
     super(id, name, x, y, z, description);
     this.ORIENTATION = orientation;
-  }
-}
-
-/**
- * TTUNELS = Tunnel Block = 1C blok s klenutým průchozím tunelem v jedné ose.
- * Geometricky: kvádr 1×1×1 minus obdélníkový spodek + půlkruhový oblouk
- * extrudovaný podél osy průchodu (= „od krychle odečtený válec a kvádr").
- * Default orientace (`ORIENTATION=0`): tunel podél osy X, vstupy na +X a −X.
- *
- * Profil tunelu v rovině YZ (kolmé k ose průchodu):
- *  - Spodní obdélníková část: Y=−0.5..0, Z=−0.3..+0.3 (= šířka 0.6, výška 0.5)
- *  - Horní půlkruh: střed v (0, 0), poloměr 0.3 (= klenba sahá k Y=+0.3)
- *  - Nad obloukem zůstává „klenba bloku" Y=+0.3..+0.5 plný materiál
- *
- * 4 faces / nátěry:
- *  - **TEXTURE_TOP** — vrchní vnější stěna (typicky `:grass-top`, jako grass cube
- *    pohled shora).
- *  - **TEXTURE_SIDES** — vnější boční stěny (NORTH + SOUTH) + 2 vstupní stěny
- *    s vyříznutým profilem (typicky `:dirt`).
- *  - **TEXTURE_WALLS** — vnitřní 2 boční stěny tunelu (na Z=±0.3, Y=−0.5..0).
- *  - **TEXTURE_CEILING** — vnitřní klenutý strop (12 segmentů půlkruhu).
- *
- * Důležité: blok nemá vnější bottom ani vnitřní floor. Tunel je „průhledný
- * dolů" — postava uvnitř i pohled odshora vidí přímo top voxelu pod tunelem
- * (typicky grass podlaha diorámy). Vyžaduje, aby blok pod tunelem byl plný.
- *
- * `ORIENTATION` (DD-26, stupně ∈ [0, 360)) — rotace bloku kolem osy Y. 0° =
- * osa tunelu X (default), 90° = osa Z, atd.
- */
-export class TTUNELS extends BLOCKS {
-  constructor(id, name, x, y, z, textures = {}, orientation = 0, description = "") {
-    super(id, name, x, y, z, description);
-    this.TEXTURE_TOP     = textures.TOP     ?? null;
-    this.TEXTURE_SIDES   = textures.SIDES   ?? null;
-    this.TEXTURE_WALLS   = textures.WALLS   ?? null;
-    this.TEXTURE_CEILING = textures.CEILING ?? null;
-    this.ORIENTATION     = orientation;
   }
 }
 

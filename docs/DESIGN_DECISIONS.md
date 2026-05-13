@@ -1194,3 +1194,111 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 - DD-44 (sez. 36) — G3 SURFACES driver. DD-46 ne-koliduje. Polar/wet biome (sand-heavy + voda) dostane v DD-46 výrazná údolí s vodou + skalnaté hřebeny = tundra/horská tundra look.
 - Sez. 37 user volba: Q1=D (G5 smoothstep bimodální), Q2=A (hard switch r≥6), Q3=A (VALLEY_AMP=−1), Q4=A (range 0.4-0.6). Kontext v `docs/diary/2026-05-13.md` Sezení 37.
 
+## DD-47 — Climate-driven surface state: snow + drop water + LIQUID prototype (G6, sez. 38)
+
+**Stav:** Sez. 38 (single-instance, postupně 4 commit-worthy bloky bez topic branch). User feedback po DD-46: *„Voda ve všech skupenstvích…"* IDEAS sez. 37 raw nápad → konkrétní plán sez. 38 (snow + jezera/řeky + led, mraky/srážky odloženy). Plus sez. 38 `%AUDIT:CODE` (9/8 prah, 3 sezení bez auditu) zachytil docs drift K1/K2/D1/D3/D4 (audit cleanup pre-feature).
+
+**Rozhodnutí:**
+
+1. **Drop `water` surface kind.** `SURFACE_Y_OFFSET` 4 → 3 (drop `water: -2`). `BIOME_SURFACES` 12 řádků: water sloupec smazán, % přerozděleno (fertile biomy → grass, polar → stone+sand). `generateTerrain` drop topKind dirt-pod-water trick + water plane spawn. Důvod: surface kind je vrstvenost (na zemi leží), voda je vyplňující entita (vyplňuje topologii) — sémantický mismatch (DD-44 surfaces × DD-32 water plane patternu).
+
+2. **Snow distribution per LATITUDE** (`snowSpecForLatitude(latitude)` helper):
+   - `polar` → všechny cells snowed.
+   - `temperate` → cells s `y_top >= 6` vždy + **sort+rank top 30 %** zbylých cells dle `score = snowNoise(x,z) + altNorm × 0.3`. Izomorfie s biome assignment v Kroku 2 (sort+threshold) — zachová stochastickou 30 % plochu, jen ji shift k vyšším cells.
+   - `tropical` / `subtropical` → žádný sníh.
+3. **Snow implementace.** `BLOCK_COLORS` rozšířen 4 → 8 (`_snow` varianta na TOP=`0xf5f5f5` off-white, BOTTOM/SIDE base). Top voxel kindu dostane `_snow` postfix při `c.snowed`. Sloupcové vrstvy beze změny (sníh leží shora). Ramps dědí `_snow` z source cell svahu (Pass 2 v `generateTerrain`). Water cells override snow flag na false (cell pod hladinou nemá sníh).
+
+4. **Water LIQUID prototype** (`waterSpecForClimate(latitude, humidity)` helper):
+   - `humidity = dry` → bez vody (poušť).
+   - `humidity ∈ {wet, mid}` → flood-fill enabled.
+   - `freezeRatio`: `polar` 1.0, `temperate` 0.3, jiné 0.0.
+
+5. **Water priority flood-fill algorithm** (Wang & Liu 2006):
+   - Boundary cells iniciate `water_level = y_top` + push do MinHeap. Interpretace „okraj scény = drain" (overflow): voda uteče přes nejnižší boundary cell.
+   - Min-heap propaguje od nejnižší úrovně dovnitř: `nLevel = max(level, neighbor.y_top)`. Vyšší inner cells tlumí stoupání hladiny.
+   - Cell má vodu pokud `water_level > y_top`. Plane Y = `wl + 0.45` (hladina mírně pod rim cell top face → břeh voxel „trčí" jako reálný shore).
+   - Frozen flag per cell: `polar` všechny ice, `temperate` `iceNoise > (1 - freezeRatio)` (~30 % cluster), `sub/tropical` nikdy.
+   - MinHeap class (~30 ř., interní): O(N log N) pro 100×100 = trivial.
+
+6. **BIOME_NAMES rename:** `tropical.wet` „Tropický deštný prales" → „Tropický prales" (drop přímý voda reference, ostatní názvy zachovány).
+
+**Důvod:**
+
+- **Konceptuální izomorfie** s DD-44 surface driver — `waterSpecForClimate` a `snowSpecForLatitude` paralelně s `surfacesForBiome` (climate parametry → state). User explicitně řekl *„stejně jako distribujeme sníh… distribujme vodu"* = sdílený pattern.
+- **Sníh sort+rank** vs. původní noise-only threshold (sez. 38 iter. 1): zachová target area 30 %, jen shift distribuce. User feedback: noise-only přístup nedával dost sněhu na pohořích, threshold-lerp přístup pak dal sněhu moc.
+- **Water LIQUID prototype** vrací vodu jako entitu (= flood-fill basin = reálná geografie), ne biome surface (DD-44 pattern). Krok směr k LIQUID 1. třída entitě (DD-25 vrstva 4 kandidát z IDEAS).
+- **Ice materiál** (větší zákal opacity 0.85, menší reflexe roughness 0.55) vs. water (opacity 0.55, roughness 0.25) — user spec sez. 38.
+
+**Známá omezení:**
+
+- **Water plane per cell** = N meshes (pro 100×100 polar mid: cca 200-500 water cells → 200-500 meshes). Performance OK pro current scope (≤1k extra calls), ale clustering connected components do bounding boxů (1 plane / jezero) je sub-prah pro velké scény.
+- **Snow + ramp boundary edge case** (sez. 38 D2 sub-prah): ramp z non-snowed do snowed cell má snowed SLOPE (= „cesta nahoru je zasněžená"), opačně non-snowed. Acceptable.
+- **Y konvence vs. plane Y `wl + 0.45`** = mírně **pod** rim top face. Z-fight možný pokud rim cell má top face na přesně `wl + 0.5` (rare). Nebyl pozorován v sez. 38.
+- **freezeRatio = 0.3 hard-coded** pro temperate — sub-prah pro sezonalitu (WORLD.SEASON driver = více led v zimě, méně v létě).
+- **Wave anim per-frame compute** je `Math.sin` × 1 + Y update × N — trivial CPU, ale teoreticky by mohlo být sub-prah pro shader-based vertex displacement (dramatičtější vlny) u větších scén.
+
+**Reference:**
+
+- DD-32 (sez. 25) — `generateTerrain` MVP s water surface kind. DD-47 supersededvodu jako surface (drop).
+- DD-44 (sez. 36) — G3 surface driver. DD-47 follow-up: voda z BIOME_SURFACES odebrána, % přerozděleno.
+- DD-42 (sez. 35) — WORLD.LATITUDE × HUMIDITY climate matrix. DD-47 přidá `snowSpecForLatitude` + `waterSpecForClimate` konzumenty.
+- DD-25 (sez. 16) — 4-vrstvá taxonomie. DD-47 LIQUID prototype připravuje 4. vrstvu (= jezera jako entity, ne plane meshes — sub-prah).
+- IDEAS.md „Voda ve všech skupenstvích" sez. 37 raw nápad → DD-47 částečné řešení (snow + ice + water entity, STEAM/FOG/cyklus skupenství zůstává v IDEAS).
+- TODO.md G4 (snow kandidát) sub-prah uzavřen (snow nyní first-class přes `_snow` postfix paletu).
+- Sez. 38 user volby: snow=A1A (kind enum 4→8) / A2=Ano (water % redistribuce dle plánu) / A3=Ano (noise+altitude bias) / A4=ok (BIOME_NAMES rename) / A5=ok (ramp snow propagace). Water=A1=ano (dry no water) / A2=a (boundary overflow). Sun/sky=A1=A (status quo doba slunce). Kontext v `docs/diary/2026-05-13.md` Sezení 38.
+
+## DD-48 — Atmospheric color extensions: sun piecewise + sky 3-keypoint + ice + water wave (sez. 38)
+
+**Stav:** Sez. 38 user feedback: *„měnit barvu slunečního světla: východ červánková → žluté → poledne bílá → zpět"*. Rozšiřuje DD-39 (2-keypoint atmospheric lerp) na 3-keypoint piecewise + nový DirectionalLight color animace + ice materiály + water wave anim.
+
+**Rozhodnutí:**
+
+1. **Sun color 3-keypoint piecewise** v `updateSun()`:
+   - daylight=0 (sunrise/sunset) → `_sunColorSunrise` (0xffd4c6, oranžovo-bílá; 30 % lerp k `0xff7040` z bílé).
+   - daylight=0.5 (mid) → `_sunColorMid` (0xfff3d4, teplá bílá; 30 % lerp k `0xffd870`).
+   - daylight=1 (poledne) → `_sunColorNoon` (0xffffff, neutrální bílá).
+   - Driver: `daylight = max(0, -cos α)` (= sun.intensity křivka, DRY).
+   - Sez. 38 user calibration: 1/10 původního ohně bylo neviditelné, 3/10 přijatelné (= 30 % blend ratio).
+
+2. **Sky background 3-keypoint piecewise** v `updateAtmosphere()`:
+   - negCosA=−1 (půlnoc) → `_skyNight` (0x000000).
+   - negCosA=0 (sunrise/sunset) → `_skyDusk` (0x5f3433, 30 % lerp k `0xff7040` z `_skyDay`).
+   - negCosA=+1 (poledne) → `_skyDay` (0x1a1a2e).
+   - Driver: raw `negCosA ∈ [-1, 1]` (NE clamped daylight) — rozliší „deep night" od „moment sunset".
+   - `sceneFog.color.copy(scene.background)` per-frame propaguje barvu do fog.
+
+3. **Adaptive fog distances** (sez. 38 bug fix): `updateFogForSize(sx, sz)` v spawnTerrain:
+   ```
+   near = max(sx, sz) * 0.3
+   far  = max(sx, sz) * 1.2 + 10
+   ```
+   Aditivní +10 offset oslabuje fog pro malé scény (10×10 far: 12→22, +83 %) víc než pro velké (100×100 far: 120→130, +8 %). Důvod: původní fixed `near=30, far=120` byl pro 100×100 perf test (sez. 31), pro 10×10 default leželo celé dioráma v <near zóně → toggle FOG on/off nebyl viditelný.
+
+4. **Ice materiál** (`_iceMat`): `MeshStandardMaterial({ color: 0xd9e8ec, opacity: 0.85, metalness: 0.05, roughness: 0.55, side: DoubleSide })`. Vs. water (`color: 0x3a7090, opacity: 0.55, metalness: 0.2, roughness: 0.25`): větší zákal + menší reflexe (user spec). Color shift k bílé (`_iceMat.color` 0xc0d8e0 → 0xd9e8ec, ~40 % k bílé) symboluje „led jemně zasněžený".
+
+5. **Water wave anim** (KISS): sinusová vertikální oscilace `position.y = baseY + sin(t × ω) × 0.04` per non-frozen water mesh. `WATER_WAVE_AMP=0.04`, `WATER_WAVE_PERIOD=9.0` s (= klidný swell). Ice meshes **neanimují** (rigid surface, vynechány ze `_waterMeshes` Set). Per-frame: 1 `Math.sin` + N `position.y =` — trivial.
+
+6. **Dirt color lighten** (sez. 38 hover support): `0x6b4423` → `0x8a5e36` v `BLOCK_COLORS.dirt.*` + `grass.{BOTTOM,SIDE}`. Důvod: tmavá dirt × multiplikativní hover (1.6, 0.8, 0.2) = tmavě hnědá s oranžovým nádechem (R=0.67); světlejší dirt × hover = sytá oranžová (R=0.86). Plus terén čitelnější i bez hover (= dirt vrstvy mezi top a stone byly téměř černé).
+
+**Důvod:**
+
+- **DD-39 sub-prah uzavření** — sez. 33 DD-39 zavedl atmospheric lerping s 2 keypoints + TODO sub-prah „přidat 3. barvu `_skyDusk` (oranžová) s peakem kolem daylight ≈ 0". DD-48 to řeší + rozšiřuje na sun color.
+- **Konzistence atmosphere ↔ sun** — sky a slunce sdílí dusk/dawn peak. Před DD-48: sky lerp 2-keypoint (čerň ↔ modrá), sun pevně bílá. Po DD-48: sky 3-keypoint (čerň → oranžová → modrá), sun 3-keypoint (oranžovo-bílá → teplá bílá → bílá). Konceptuálně izomorfní = atmospheric scattering layer.
+- **User-tunable amplitude** — 30 % calibration (1/10 málo, 10/10 přepálené). Komentář v kódu: změna blend ratio = jediný knob pro budoucí tweak.
+- **Water wave KISS** — vertikální oscilace celé hladiny synchroně místo per-vertex displacement / shader. Pro voxel-art look „klidná hladina" dostačující. Šero animovaná hladina dobré odlišení od pevného ledu.
+
+**Známá omezení:**
+
+- **Sky/sun přechod bez hue shift** — current lerp je RGB-linear, ne HSL/HSV. Mezi `_skyDusk` (0x5f3433, teplá) a `_skyDay` (0x1a1a2e, tmavě modrá) RGB lerp prochází přes desaturovanou tmavě hnědou. HSL lerp by dal hue rotation (orange → blue přes purple). KISS: RGB stačí, sub-prah pro pozdější.
+- **Wave anim global** — všechna voda synchroně. Realistic by bylo per-cluster wave (každé jezero vlastní fáze). Sub-prah.
+- **Sun color shift 30 %** může být moc subtilní pro některé prefer. Tweakable via konstanty komentáře (`0.1 = subtle`, `0.3 = current`, `0.5 = halfway`, `1.0 = full ozhuje`).
+- **Ice color shift bez snow texture** — `_iceMat.color` 0xd9e8ec je solid. Reálný „zasněžený led" by měl noise patches (= partially zasněžený, partially čistý led). Sub-prah pro canvas texture / vertex colors.
+
+**Reference:**
+
+- DD-39 (sez. 33) — atmospheric lerp 2-keypoint. DD-48 rozšiřuje na 3-keypoint + přidává DirectionalLight color konzument.
+- DD-38 (sez. 32) — WORLD.DAY driver. DD-48 přidá další konzumenty (sun.color + sky 3-keypoint).
+- DD-47 (sez. 38) — LIQUID prototype. DD-48 doplňuje ice materiál + water wave anim (= DD-47 functional, DD-48 cosmetic).
+- Sez. 38 user calibration: 1/10 málo, 3/10 přijatelné, period 3s → 9s pro klidný swell. Hover dirt feedback: zesvětlit dirt místo posílit oranžovou (= multiplikativní hover problém pro tmavá albeda).
+- Sez. 38 audit (`%AUDIT:CODE`): K1/K2 docs drift fix, D1 BLOCKS+COMPOSITES drop, D2 TTUNELS drop (~287 ř.), D3 terrain.js komentář, D4 GLOSSARY engine-internal maps. Kontext v `docs/diary/2026-05-13.md` Sezení 38.
+
