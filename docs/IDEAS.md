@@ -18,7 +18,7 @@ Atributy `WORLD` se přidávají jen tehdy, když mají živého konzumenta v en
 - **`DAY`** — float [0, 1) cyklus dne. → **DONE** (sez. 32, DD-38). Konzument: `updateSun()` derivuje `sun.position` (plane EAST-UP s 30° náklonem `SUN_TILT`), `sun.intensity` (lerp `0.8 * max(0, sin α)`), `sunMesh.position`/`visible`. Default 0.25 (poledne).
 - **`DAY_SPEED`** — float ℝ, cykly za sekundu. → **DONE** (sez. 32, DD-38). Konzument: `updateWorldTime(dt)` inkrementuje `DAY` v render loopu. Default 0 (paused).
 - **`SUN_ANGLE`** *(původní návrh)* — překryto `DAY`. Engine derivuje úhel z DAY, není potřeba držet jako primary atribut. ~~Odložen~~.
-- **`SEASON`** — string (`"spring"`, `"summer"`, `"autumn"`, `"winter"`) **NEBO** float [0, 1) roční cyklus. Konzument: driver pro `SUN_TILT` (fixed π/6 v DD-38, sférická dráha = roadmap) + sezónní paleta listů v TREE.KIND sub-builderech, pokud kdy zoživou. Po DD-38 přirozený další konzument na WORLD.
+- **`SEASON`** — string (`"spring"`, `"summer"`, `"autumn"`, `"winter"`) **NEBO** float [0, 1) roční cyklus. Konzument: driver pro `SUN_TILT` (fixed π/6 v DD-38, sférická dráha = roadmap) + sezónní paleta listů v TREE.KIND sub-builderech, pokud kdy zoživou. Po DD-38 přirozený další konzument na WORLD. **→ TODO** (zralý kandidát, viz Příště sez. 32).
 - **`CLIMATE`** — string (`"northern"`, `"desert"`, `"tropical"`). Konzument: per-biome textury / surface palette pro `generateTerrain`. Po terrain pivotu (DD-32) atraktivnější než původní `BIOME_TREES[climate]`.
 - **`WIND_DIRECTION`** — float [0, 360) ve stupních. Konzument: direction-aware sway, pokud kdy vrátíme animátor stromů / dekorací.
 
@@ -59,63 +59,20 @@ Poznámka: rampy / schody řeší jen *geometrii*, splines / graf oddělí **poh
 - Editor modelu přímo v prohlížeči — formulář na vytvoření potomka třídy?
 - Nebo zatím jen úprava kódu, editor až později?
 
-## Voidspan inspirace pro factory toy *(DD-30, sez. 21 — Phase 2+ parking)*
+## Voidspan inspirace *(historický kontext, DD-31 → DD-32 wipe)*
 
-TheCubes byl pivotován na 3D analogii projektu Voidspan (sourozenecký projekt `~/source/Voidspan`, 25+ sezení designu). MVP set DD-31 vzal nejnutnější (Resource registry, Recipe matrix, Material gate, Event Log 4-znakové verbs). Tyto Voidspan koncepty jsou *parkované pro Phase 2+*:
-
-### Resource Taxonomy (Voidspan v0.1)
-- **Rarity tiers** (5 stupňů, EN/CZ): Common/Obyčejné, Uncommon/Neobvyklé, Rare/Vzácné, Exclusive/Exkluzivní, Epic/Epické. Designový baseline pro budoucí scaling — Common = `logs/stone/water`, Uncommon = `coal/iron`, Rare = budoucí drahé kovy, atd.
-- **Implikace:** drop chance v capsule recycling (Voidspan-specific, TheCubes nemá), market cena rarity-weighted, recipe gating (Engine v3 vyžaduje Titan).
-- **Logistics matrix:** Solids (dopravní pásy, pytle, sila/bedny, jednotka kg/t) vs. Fluids (potrubí/hadice, nádrže/barely, l/m³). TheCubes MVP používá generický `PATH.KIND ∈ "conveyor"|"pipeline"` jako minimální projekci — Phase 2 doplní storage subtypy (Silo/Tank/Crate).
-
-### Module Specialization Principle (Voidspan S5)
-*„Integrované multi-purpose moduly mají minimální výkon, dedikované jednoúčelové jsou řádově výkonnější."*
-- TheCubes Phase 2: 1×1×1 pila zpracuje 1 kládu/s, 2×2×2 mega-pila zpracuje 16 klád/s s lepší efektivitou (1 kláda → 0.9 prkna místo 0.8). Atraktivní upgrade curve — hráč začne s malými, později specializuje.
-
-### Multi-input recepty (Phase 2 surovinová vlna)
-Soviet Republic-style production chains. Otevírá kombinatorickou složitost:
-- `bricks` z `clay + coal` (Phase 2 přidá `clay` raw, kiln transformer)
-- `cement` z `gravel + water` (využije existující gravel + water řetězec)
-- `steel` z `iron + coal` (Phase 2 přidá `iron` raw, smelter transformer)
-- Beton z `gravel + cement + water` (3-input — testuje material gate s víc vstupy).
-
-### formatScalar (Voidspan v0.1 axiom)
-Jednotící zobrazení čísel v UI: 2 significant digits + SI prefixy (`µ/m/—/k/M/G/T`). Příklady: `0.15` → `"0.15"`, `1500` → `"1.5k"`. TheCubes MVP používá `Math.floor` → integer ks. Phase 2 polish, až bude víc surovin a vyšší totals.
-
-### Event Log polish (Phase 2)
-- Verb catalog rozšíření: `BUILD`/`DEMO` (editor v Phase C), `HAUL` (PATH transport per-tick), `RPRT` (systémové zprávy), `STAT` (Status tree threshold crossing — kdyby TheCubes přidal Status tree).
-- Filter chips (Voidspan-derived "Lazy emergence axiom"): chip se objeví až při prvním výskytu verb v sezení. UI roste s realitou.
-- Ring buffer kapacita: 500 events (Voidspan default) vs. MVP 100 — drobnost.
-
-### Záměrně **odmítnuto** (designové linie, kde se TheCubes nepodobá Voidspanu)
-- **Cosmology / lore** — Voidspan má Teegarden System, kolonisty, Capsule. TheCubes je abstraktní sandbox bez narativu.
-- **Status tree + Citizen tiers** — Voidspan se zaměřuje na *přežití kolonie* (HP, hlad, žízeň). TheCubes je *pozorování ukazatelů* bez win/loss.
-- **Protocol / QuarterMaster AI** — Voidspan má kolonijní CPU vrstvu (auto-repair, task routing). TheCubes pro MVP nepotřebuje, hráč staví a model počítá. Phase 3+ kdyby kolize.
-- **Coin / Credit měna** — TheCubes nepotřebuje monetární vrstvu, suroviny jsou samy o sobě hodnotou.
-- **W (Work) jako resource** — Voidspan má pracovníky s `power_w`. TheCubes nemá kolonisty, `productionTick` agreguje per-fasilitu bez nepřímé „work pool" abstrakce.
-- **TypeScript / Phaser / pnpm** — Voidspan má hotový stack (`apps/` workspace). TheCubes zůstává vanilla JS + Three.js + Python http.server. KISS = nemíchat technologie, jen koncepty.
+TheCubes prošel v sez. 21 (DD-30/DD-31) krátkou factory-toy fází inspirovanou sourozeneckým Voidspanem (`~/source/Voidspan`) — Resource registry, Recipe matrix, Material gate, Event Log. Sez. 25 (DD-32) celou factory vrstvu smazal a pivotoval projekt na procedural terrain. Detaily designových axiomů (rarity tiers, Module Specialization, formatScalar, odmítnuté linie jako Status tree / Coin / TypeScript) drží git history kolem `feat/factory` merge a `docs/DESIGN_DECISIONS.md` DD-30/DD-31. Pokud někdy factory toy obživne, zde je kotva.
 
 ## Performance optimalizace
 
-Sezení 26 user feedback: 30×30 terrain vykreslování pomalé (FPS ~15). %THINK sez. 28 strukturoval **4 cesty** + diagnose-first doporučení:
+**Historický changelog** (detaily v `docs/DIARY.md` + `docs/DONE.md` + DD-36/DD-37):
+Sez. 26 user feedback FPS ~15 @ 30×30. Sez. 28 atlas TCUBES (varianta A.1) → 92 FPS. Sez. 30 atlas rampy (A.2) + size 100×100 unlock + F12 reaktivní shadow → 30×30 na 123 FPS, ale 100×100 narazil na atlas ceiling (FPS 7, 47k draw calls). Sez. 31 DD-37 InstancedMesh batches (per atlas material) → 100×100 z 7 → **104 FPS** (1016 calls). Web worker pro `generateTerrain` měřením vyloučen (2.5 ms regen = ne-bottleneck).
 
-- **A. InstancedMesh per (kind, face)** — Three.js stable feature. 6× draw call per box → 1× per face per kind (24 InstancedMesh total). Hover `raycaster.instanceId → modelInstance` mapa. Per-face texture stále blocker — vyžaduje atlas nebo split.
-- **B. BatchedMesh (Three.js r172+)** — heterogenní geometrie v 1 draw call. Verze r160 v projektu, vyžadovala by bump. Modernější API ale méně příkladů, riziko bugů. Hover stejný refactor jako A.
-- **C. Mesh merge per cell (greedy meshing)** — Minecraft-style. Drastická redukce vertices (−90 %). Hover degraduje na „celý sloupec". Komplexní algoritmus (geom + UV + atlas) = 2 sezení minimum.
-- **D. Web worker pro `generateTerrain`** — off-main-thread CPU work. **Po sez. 28 měření vyloučeno:** generace 2.5 ms @ 30×30 (5 % regen) — bottleneck nikdy nebyl tady.
+**Otevřené cesty pro budoucí scale (>100×100)**:
+- **BatchedMesh (Three.js r167+)** — bump r160 → r167+ a sjednotit ~13 batchů na ~3 calls. **Sez. 32 oponován** — diminishing returns po DD-37 (10× redukce už dosažena), version bump = wide risk (ColorManagement, post-process API). Low prio, sledováno.
+- **Mesh merge / greedy meshing** — pro 200×200+. Drastická redukce vertices, ale ztráta hover granularity (celé sloupce). Zatím over-engineering.
 
-**Sez. 28 implementoval atlas pattern pro TCUBES (varianta A.1)** — single material per box přes shared geom + 6-tile atlas texture. 6× redukce draw calls bez InstancedMesh refactoru. Výsledek: 30×30 z 15 → 92 FPS. Detail v `docs/diary/2026-05-13.md` (sez. 28) + `docs/DONE.md`.
-
-**Sez. 30 dotáhl atlas pattern na rampy (varianta A.2)** — TRRAMPS/TTRAMPS/TDRAMP single-material atlas, 3 typy × 3 surfaces = 9 lazy-cached atlas materials. Generický `getRampAtlasMaterial(type, surface)` factory DRY. 30×30: FPS 92 → **123** (+34 %), calls ~5050 → 4290 (−14 %). Plus size 100×100 unlock (slider max 30 → 100) + F12 reaktivní shadow frustum. TTUNELS skipnut (0 producentů).
-
-**Sez. 30 100×100 stress test odhalil atlas ceiling** — FPS 7, calls **47 642**, tri 549 698, `geom: 8`, `mat: 7`. Sdílení geom + material konstantní, ale **1 `THREE.Mesh` = 1 draw call** v Three.js — atlas merger materials, ne instances. Pro další skok je nutná abstrakce instances v 1 draw call.
-
-**Otevřené cesty pro budoucnost** (100×100+ scale, predikce):
-- **A. InstancedMesh** → **DONE sez. 31 DD-37**. Per atlas material → 1 batch. TCUBES 4 + rampy 9 = ~13 batchů celkem. 47k calls → **~1k calls** (1016 reálně, lehce nad ~13 predikcí — Three.js zřejmě multi-draw per batch pro shadow + DOF pass). Realita FPS 7 → **104** @ 100×100 (predikce 150+ optimistická, GPU bound s 549k tri + shadow + DOF nelze překonat). Hover refactor: `meshByInstance` discriminated union `{batch,idx}|Object3D`, `setColorAt(idx, HOVER_TINT_COLOR)` overbright albedo tint. Pool strategy: **eager preallocate per regen** (3-pass count→allocate→fill, `batch.dispose()` na regen — KISS, regen je 1× per slider dotažení).
-- **B. BatchedMesh (Three.js r167+)** — bump Three.js r160 → r167+ a refactor TCUBES + rampy na jediný BatchedMesh. 13 batchů → ~3 calls. **Diminishing returns** po DD-37 (10× redukce draw calls už dosažena), low prio. Sledováno.
-- **C. Mesh merge** — pro 200×200+ cells. Drastická redukce vertices, ale ztráta hover granularity (celé sloupce). Zatím over-engineering.
-
-Per-frame draw call hygiene browser: <10k bezpečno, <5k snadno 60 FPS, <2k 120+ FPS. Sez. 28 + 30 atlas dotáhl na 4.3k @ 30×30 (123 FPS). 100×100 = 47k = nad hranicí, InstancedMesh nutný pro playability.
+Per-frame draw call hygiene: <10k bezpečno, <5k snadno 60 FPS, <2k 120+ FPS.
 
 ## Inspirace
 - PocketStory `Board` view (Three.js diorama + meeples)

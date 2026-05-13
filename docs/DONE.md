@@ -457,3 +457,65 @@ Reload `:8000`, manuální testování DAY slideru + DAY_SPEED auto-advance + Su
 ### Diff celkem
 
 `model.js` +24 (WORLD třída), `main.js` ~+90/−15 (audit + WORLD + updateSun), `index.html` +35 (slidery + CSS + wire), `docs/DESIGN_DECISIONS.md` +50 (DD-38), `docs/*` ~+150 ř. (TODO/DONE/DIARY/GLOSSARY/IDEAS).
+
+## Sezení 33 — IDEAS/TODO pruning + DD-39 atmospheric lerping + DD-40 LAMP/SpotLight + cleanup
+
+User makro `%BEGIN` → `IDEAS/TODO` jako první bod programu (sez. 32 Příště eskalovala 13/12 prah). 4 mikro-Q pruning plánu zodpovězeny `A1B A2B A3B A4B` (minimal-impact varianty). Pak `Go ahead` na Sky lerping (DD-39), tmavší noc + LAMP/SpotLight (DD-40), `.glb` user inspirace → TODO. Final user feedback `Test OK`, popisek reliefu → tooltip, lampa odebrána ze scény.
+
+### Pruning IDEAS/TODO (prah 13/12 → 0/12)
+
+- [x] **TODO drop `WCUBES`** — self-protiřečící *„nápad, možná"* (není TODO, je IDEA, už v IDEAS sekci Rozšíření modelu).
+- [x] **TODO drop `INVISIBLE`** — self-protiřečící *„možná zbytečné — stačí mateřská CUBES s NAME='marker'?"*.
+- [x] **TODO drop `CCUBES typizace`** — self-protiřečící *„překryto DD-24 shape × surface"*.
+- [x] **TODO add `## DAY-cycle (WORLD DD-38 follow-up)` sekce** se 2 body (Sky/ambient lerping + Slider DAY sync). SEASON ne v TODO per Q3B (zůstal v IDEAS s `→ TODO` značkou).
+- [x] **IDEAS Voidspan inspirace** zhuštěno z ~30 ř. na 3 ř. (DD-31 → DD-32 wipe sez. 25 zrušil factory toy, git history `feat/factory` drží detaily).
+- [x] **IDEAS Performance optimalizace** zhuštěno z ~25 ř. na ~7 ř. (changelog 1 odstavec: sez. 26 FPS 15 → sez. 28 atlas 92 → sez. 30 rampy atlas 123 → sez. 31 DD-37 InstancedMesh 100×100 z 7→104 + jen otevřené kandidáty BatchedMesh/Mesh merge).
+- [x] **IDEAS SEASON** dostal `→ TODO` značku v sekci WORLD rozšíření.
+- [x] **Audit cadence IDEAS/TODO pruning čítač** `13/12 → 0/12 (reset sez. 33)`.
+
+Net: TODO 15 → 14 položek (drop 3, add 2). IDEAS −45 ř. obsolete.
+
+### Scene cleanup
+
+- [x] **GridHelper + AxesHelper smazány** z `buildScene()` (3 ř.). Orientační pomůcky z M2/M14 ztratily relevanci po DD-32 terrain pivotu.
+- [x] **ShadowMaterial ground plane smazán** (14 ř., `PlaneGeometry(20,20)` + `ShadowMaterial opacity 0.35`, Y=−0.501). Po DD-32 wipe groundplane ztratil smysl — generated terrain má vlastní voxely.
+
+### DD-39 atmospheric lerping (sky + fog + ambient reactive na DAY)
+
+User: *„Co svítí v noci za světlo? Proč je stále vidět?"* — diagnose 3 zdrojů (AmbientLight 0.15 konstantní + scene.background SKY_COLOR konstantní + scene.fog.color SKY_COLOR konstantní). Mapuje na TODO `## DAY-cycle → Sky/ambient color lerping` z dnešního pruningu. User volba `A1A A2A A3A A4A` (2 keypointy, AMBIENT 0.04 noc, current SKY = SKY_DAY, daylight curve `max(0, sin(2π·DAY))`).
+
+- [x] **Konstanty v `main.js`** — `_skyDay = THREE.Color(0x1a1a2e)` (poledne, beze změny), `_skyNight = THREE.Color(0x000000)` (úplná čerň po user iteraci 0x05080f → 0x010207 → 0x000000), `AMBIENT_DAY = 0.15`, `AMBIENT_NIGHT = 0.005` (téměř 0 po user iteraci 0.04 → 0.015 → 0.005). `SKY_COLOR` smazán (placeholder `scene.background = THREE.Color().copy(_skyDay)`).
+- [x] **`sceneFog = THREE.Fog(_skyDay.getHex(), 30, 120)`** — placeholder, updateAtmosphere přepisuje per-frame.
+- [x] **`ambientLight` proměnná** (z inline `scene.add(new THREE.AmbientLight(...))` → `const ambientLight = ...; scene.add(ambientLight)`).
+- [x] **`updateAtmosphere()`** nová funkce po `updateSun()`: `scene.background.lerpColors(_skyNight, _skyDay, daylight)` + `sceneFog.color.copy(scene.background)` + `ambientLight.intensity = AMBIENT_NIGHT + (AMBIENT_DAY - AMBIENT_NIGHT) * daylight`. Bez alokace per-frame.
+- [x] **Render loop call** — `updateAnimations → updateWorldTime → updateSun → updateAtmosphere → updateBubbleTails → ...`.
+- [x] **Komentář v `updateSun()` aktualizován** — "0.15 ambient" → "AMBIENT_NIGHT 0.005 + tmavé pozadí, vizuálně temná silueta".
+- [x] **DD-39 zapsán** do `DESIGN_DECISIONS.md` (~60 ř.): kontext (DD-38 follow-up, 3 zdroje konstantního světla), rozhodnutí (updateAtmosphere + 2 keypointy + lerpColors + driver), důvod (třetí konzument DAY + pattern atmospheric helper + performance bez alokace), známá omezení (jen 2 keypointy bez sunset peaku, AMBIENT_NIGHT 0.005 = noc bez lampy nevizuální, žádný sezónní offset), reference (DD-38, DD-29).
+
+### DD-40 LAMP třída + SpotLight pattern
+
+User: *„Klidně ještě ztmav noc. Přidej na -3,0 kompozit lampy, ať to vynikne."* — první iterace PointLight (360°). User feedback: *„Pozor, lampa musí být three.js zdrojem světla tj. vytvářet stíny. ne?"* + *„Super, ale pod lampou je stín. Udělej ji směrovou. Třeba v tomto balíčku [PBR Street Props .glb/.zip/.usdz] je hezká lampa."* User volba `Q1A` (skip `.glb` import, voxelově) + `Q2A` (Victorian-style sloup + paže + stínítko).
+
+- [x] **`LAMP extends COMPOSITES`** v `model.js` (+11 ř.) — značkovací třída, žádné vlastní atributy (zdědí `ORIENTATION`).
+- [x] **`buildLamp(instance)`** v `main.js` (~70 ř.) — Group ze 4 částí:
+  - Sloup 0.15×2×0.15 dark iron (`MeshStandardMaterial 0x1a1a1a roughness 0.7`).
+  - Horizontální paže 0.6×0.08×0.08 z vrcholu sloupu.
+  - Visící stínítko 0.35×0.3×0.35 z konce paže, tmavé venku + emissive `0xffaa00 emissiveIntensity 0.8`. `userData.noShadow = true` (světlo uvnitř → mesh nesmí blokovat).
+  - **`SpotLight(0xffaa00, intensity=5, distance=12, angle=π/5, penumbra=0.4, decay=2)`** uvnitř stínítka, `castShadow=true`, shadow 512×512 cube map, near 0.1, far 14, bias -0.002.
+  - **`SpotLight.target = Object3D`** v Group s pos `(0.6, -3, 0)` → vertikálně dolů, rotuje s ORIENTATION ale vertikalita zachována.
+- [x] **Dispatch v `createMeshFor`** — `else if (instance instanceof LAMP)` před SPRITES.
+- [x] **Iterace PointLight → SpotLight** — PointLight 360° měl stín pod lampou (sloup blokoval paprsky dolů). SpotLight kuželové míří jen dolů, sloup mimo kužel. Plus realistická pouliční lampa.
+- [x] **Instance `lamp_0001` test + odebrána** — `(-3, 0, 0)` v `buildScene()` přidán, otestován, pak smazán per user *„Odeber lampu ze scény, v objektech ji ponechej."* Třída + builder + dispatch zachovány.
+- [x] **DD-40 zapsán** do `DESIGN_DECISIONS.md` (~75 ř.): kontext (DD-39 noc maxed, vizuální payoff), rozhodnutí (LAMP třída + Victorian builder + SpotLight + noShadow pattern + target v Group), důvod (první lokální dynamický light, generalizovatelný `noShadow` pattern, shadow setup baseline), známá omezení (shadow per PointLight/SpotLight drahá, emissive ≠ skutečné světlo, `.glb` import budoucí DD), reference (DD-26, DD-29, DD-39).
+
+### UI cleanup
+
+- [x] **Popisek reliefu → tooltip** — `<div class="tc-relief-name" id="tc-relief-name">Rolling</div>` smazán z `index.html`, CSS `.tc-relief-name` smazán, JS `reliefName.textContent = ...` přesunut na `relief.title = ...` (native browser tooltip). Default `title="Rolling"` matchne `value=3`.
+
+### Test (user)
+
+Reload `:8000`, posun DAY slideru 0.25 → 0.75 (poledne → půlnoc), test lampy + SpotLight v noci. Po každém kroku **TEST OK** verdikt.
+
+### Diff celkem
+
+`src/main.js` ~+90/−50 (atmospheric konstanty + `updateAtmosphere` + LAMP import + `buildLamp` + dispatch + render loop; cleanup GridHelper/AxesHelper/groundPlane/lamp instance), `src/model.js` +11 (LAMP třída), `index.html` ~−10 (CSS + DOM `<div>` + JS reliefName + `title=` add), `docs/DESIGN_DECISIONS.md` ~+135 (DD-39 + DD-40), `docs/*` ~+200 ř. (TODO update G0-G3 + DAY-cycle + audit cadence; DIARY index + sez. 33; GLOSSARY LAMP + atmospheric; IDEAS pruning Voidspan/Performance/SEASON).

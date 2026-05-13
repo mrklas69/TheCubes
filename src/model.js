@@ -345,6 +345,17 @@ export class COMPOSITES extends CUBES {
 }
 
 /**
+ * LAMP = pouliční lampa, voxelový sloupek + svítící hlava + PointLight.
+ * Sourozenec TREE/ROCK_PIXEL/LOG (COMPOSITES potomek). Žádné vlastní atributy
+ * — builder hard-coduje voxely; barva světla je oranžová (sodium-vapor lamp).
+ *
+ * Engine: `buildLamp(instance)` v `main.js` přidá `THREE.PointLight` jako dítě
+ * Group (drahá operace per frame kvůli shadow map). Pro budoucí scaling
+ * (~10+ lamp ve scéně) bude potřeba shadow budget management.
+ */
+export class LAMP extends COMPOSITES {}
+
+/**
  * PATH = 1D křivka (DD-25 vrstva 3 — Linie). Catmull-Rom spline rendrovaný
  * jako plochý strip mesh šířky ~0.5 j s drobným Y offsetem nad terrain
  * (proti z-fighting).

@@ -129,13 +129,6 @@
       font-size: 13px;
       font-variant-numeric: tabular-nums;
     }
-    #terrainctrl .tc-relief-name {
-      text-align: right;
-      opacity: 0.85;
-      font-style: italic;
-      font-size: 12px;
-      margin-top: 2px;
-    }
 
     /* Settings panel — levý dolní roh. Izomorfně s `#terrainctrl` (stejný
        transparent black, coral akcent header, tyrkysový accent input). */
@@ -239,10 +232,9 @@
       <div class="tc-label">Relief</div>
       <div class="tc-row">
         <span class="tc-key">0–10</span>
-        <input type="range" id="tc-relief" min="0" max="10" step="1" value="3">
+        <input type="range" id="tc-relief" min="0" max="10" step="1" value="3" title="Rolling">
         <span class="tc-val" id="tc-relief-val">3</span>
       </div>
-      <div class="tc-relief-name" id="tc-relief-name">Rolling</div>
     </div>
 
     <div class="tc-section">
@@ -319,7 +311,7 @@
       const $ = (id) => document.getElementById(id);
       const sizeX  = $("tc-size-x"),  sizeXVal  = $("tc-size-x-val");
       const sizeZ  = $("tc-size-z"),  sizeZVal  = $("tc-size-z-val");
-      const relief = $("tc-relief"),  reliefVal = $("tc-relief-val"), reliefName = $("tc-relief-name");
+      const relief = $("tc-relief"),  reliefVal = $("tc-relief-val");
       const seed   = $("tc-seed");
       const surfInputs = Object.fromEntries(
         SURFACE_KINDS.map((k) => [k, $(`tc-surf-${k}`)]),
@@ -373,8 +365,10 @@
       sizeX.addEventListener("input",  () => { sizeXVal.textContent  = sizeX.value; });
       sizeZ.addEventListener("input",  () => { sizeZVal.textContent  = sizeZ.value; });
       relief.addEventListener("input", () => {
-        reliefVal.textContent  = relief.value;
-        reliefName.textContent = RELIEF_NAMES[parseInt(relief.value, 10)];
+        reliefVal.textContent = relief.value;
+        // RELIEF_NAMES popisek je v `title` atributu — browser ho ukáže jako
+        // native tooltip při hover na slider. Sync per `input` event.
+        relief.title = RELIEF_NAMES[parseInt(relief.value, 10)];
       });
       SURFACE_KINDS.forEach((k) => {
         surfInputs[k].addEventListener("input", () => {

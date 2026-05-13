@@ -834,3 +834,87 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 - Sez. 29 (`feat/audit-29-cleanup` F4) — odstranění WORLD jako prázdného singletona. Tato DD ho vrací s 2 atributy + 2 konzumenty.
 - Sez. 31 — sun mesh + post-process (DOF/fog) — kontext, který tuto DD motivoval.
 
+## DD-39 — Atmospheric lerping: scene.background + fog.color + ambientLight.intensity reactive na world.DAY (sez. 33)
+
+**Kontext:** DD-38 (sez. 32) zavedl `world.DAY` a stmíval `DirectionalLight.intensity` (sun) podle daylight curve. Ale `AmbientLight 0.15` zůstával konstantní, `scene.background` = `SKY_COLOR` konstantní, `scene.fog.color` = `SKY_COLOR` konstantní. Důsledek: i v noci (`sin(2π·DAY) ≤ 0`, sun off) **scéna stále vidět** přes ambient fill light + viditelné modré nebe + fog blend. User: *„Co svítí v noci za světlo? Proč je stále vidět?"* — DD-38 follow-up TODO bod `Sky/ambient color lerping` (sez. 33 pruning) se stal aktuální.
+
+**Rozhodnutí sez. 33:**
+
+1. **`updateAtmosphere()`** nová funkce v `main.js` po `updateSun()`, volaná v render loopu hned po něm. Per-frame lerp **3 cílů** podle stejné `daylight` curve jako `updateSun()` (DRY):
+   ```js
+   const daylight = Math.max(0, Math.sin(world.DAY * TAU));
+   scene.background.lerpColors(_skyNight, _skyDay, daylight);
+   sceneFog.color.copy(scene.background);
+   ambientLight.intensity = AMBIENT_NIGHT + (AMBIENT_DAY - AMBIENT_NIGHT) * daylight;
+   ```
+
+2. **2 keypointy** — KISS (sunset oranžový peak roadmap):
+   - `_skyDay = THREE.Color(0x1a1a2e)` — tmavě modrofialová (poledne, beze změny od sez. 31).
+   - `_skyNight = THREE.Color(0x000000)` — úplná čerň (po user iteraci 0x05080f → 0x010207 → 0x000000).
+   - `AMBIENT_DAY = 0.15`, `AMBIENT_NIGHT = 0.005` — téměř 0 (po user iteraci 0.04 → 0.015 → 0.005).
+
+3. **Lineární lerp `lerpColors(c1, c2, alpha)`** — Three.js zapisuje do `this` instance, žádná alokace per-frame. `scene.background.lerpColors(...)` mutuje existující Color objekt, fog.color.copy() reuse pattern.
+
+4. **Driver = `max(0, sin(2π·DAY))`** — symetrický s `updateSun()` intensity. Půlnoc (DAY=0.75, sin=−1) → daylight=0. Poledne (DAY=0.25, sin=1) → daylight=1. Sunrise/sunset (DAY=0/0.5, sin=0) → daylight=0. Sun-tilt curve (`sin α * cos(SUN_TILT)`) zvažována, zamítnuta — symetrie se sun.intensity je důležitější než match na sun-mesh visibility.
+
+5. **`ambientLight` reference** — z inline `scene.add(new THREE.AmbientLight(0xffffff, 0.15))` převedena na proměnnou `const ambientLight = ...; scene.add(ambientLight)` pro per-frame mutaci. Initial `AMBIENT_DAY` (placeholder, `updateAtmosphere()` přepíše první frame).
+
+6. **`scene.background` z `SKY_COLOR` konstanty na `THREE.Color()` instance** — placeholder `scene.background = new THREE.Color().copy(_skyDay)`, `updateAtmosphere()` přepisuje per-frame.
+
+**Důvod (proč DD a ne jen feature):**
+- Třetí konzument DD-38 `world.DAY` — politika "atribut s živým konzumentem" zachována, ale **rozšiřuje** kontrakt: DAY teď řídí 1 sun position + 1 sun intensity + 3 atmospheric values.
+- Definuje pattern *„atmospheric helper po `updateSun()`"* — pokud kdy přibude další atmospheric efekt (cloud cover, weather, …), patří sem.
+- `lerpColors`/`copy` per-frame bez alokace — performance kontrakt (žádný GC tlak na atmospheric layer).
+
+**Známá omezení:**
+- **Jen 2 keypointy** — sunset/sunrise oranžová není peakována, jen lineární lerp mezi den a noc. Realistická obloha má `_skyDusk` peak kolem `daylight ≈ 0`, piecewise lerp. Roadmap TODO.
+- **AMBIENT_NIGHT = 0.005** — noc téměř úplně černá. Bez lampy (DD-40) je scéna nevizuální. Cílem je *„noc tmavá, lampy svítí"* — dramatický kontrast. Pokud kdy vznikne potřeba "noc viditelná bez lamp" (Měsíc), zvedne se ambient nebo přibude `MoonLight` jako 2. DirectionalLight.
+- **Žádný sezónní offset** — sklon `SUN_TILT` fixed v DD-38, tj. ambient curve symetrická kolem poledne i v zimě. SEASON atribut na WORLD = roadmap.
+
+**Reference:**
+- DD-38 (sez. 32) — zavedení `world.DAY` + `world.DAY_SPEED`, sun.intensity konzument. Tato DD doplňuje atmospheric layer.
+- DD-29 (sez. 20) — politika "atribut s živým konzumentem". `DAY` zde rozšiřuje rozsah konzumentů (sun + atmosphere).
+- Sez. 33 — TODO bod `Sky/ambient color lerping` (přidaný v dnešním pruningu) → DONE.
+
+## DD-40 — LAMP třída + SpotLight pattern: první lokální dynamický light (sez. 33)
+
+**Kontext:** DD-39 zavedl noc skoro úplně černou (`AMBIENT_NIGHT = 0.005`). Pro vizuální dramatický kontrast user požádal lampu na `(-3, 0, 0)`, *„ať to vynikne"*. Doposud projekt měl jen 2 globální lights — `DirectionalLight` sun (DD-29/38) + `AmbientLight` fill. **Lokální** dynamický light (PointLight / SpotLight) je nový precedent.
+
+**Rozhodnutí sez. 33:**
+
+1. **`LAMP extends COMPOSITES`** v `model.js` — značkovací třída bez vlastních atributů (zdědí `ORIENTATION` z DD-26 pro rotaci kolem Y). Builder hard-coduje voxely a SpotLight.
+
+2. **`buildLamp(instance)`** v `main.js` — Victorian-style pouliční lampa:
+   - **Sloup** 0.15×2×0.15 dark iron (`0x1a1a1a`, roughness 0.7).
+   - **Horizontální paže** 0.6×0.08×0.08 z vrcholu sloupu (X=+0.3 střed, Y=1.95).
+   - **Visící stínítko** 0.35×0.3×0.35 z konce paže (X=0.6, Y=1.7), tmavé venku + emissive `0xffaa00 emissiveIntensity 0.8` (svítí vlastním jasem i ve dne).
+   - **`SpotLight(0xffaa00, intensity=5, distance=12, angle=π/5, penumbra=0.4, decay=2)`** pozice (0.6, 1.7, 0), `castShadow=true`, shadow 512×512 cube map, near 0.1, far 14, `bias=-0.002`.
+   - **`SpotLight.target = Object3D`** v Group s position `(0.6, -3, 0)` → vertikální dolů. Target je v Group → rotuje s `ORIENTATION` ale vertikalita zachována (Y rotace nemění Y offset).
+   - Group position + rotation set z `instance.X/Y/Z` + `THREE.MathUtils.degToRad(instance.ORIENTATION)`.
+
+3. **Dispatch v `createMeshFor`** — `else if (instance instanceof LAMP) { object3d = buildLamp(instance); }` před SPRITES větev.
+
+4. **`noShadow` pattern pro mesh okolo světla** — stínítko obsahuje SpotLight uvnitř. Kdyby `shade.castShadow = true`, stínítko by blokovalo vlastní paprsky (světelný bod uvnitř shadow casteru → tma na všechny strany). Fix: `shade.userData.noShadow = true` — opt-out z `createMeshFor` traverze. **Generalizovatelný pattern:** každý mesh, který obsahuje (nebo se ho doteká) lokální light, musí `noShadow`. Sloup ne (stojí pod světlem, ne uvnitř něj — stín od sloupku směrem dolů je žádoucí).
+
+5. **SpotLight místo PointLight** — první iterace měla PointLight (360°). User: *„Pod lampou je stín, udělej ji směrovou."* PointLight + sloup = sloup blokuje paprsky dolů → tma pod lampou. SpotLight (kuželové) míří jen dolů; sloup je nahoru/strana z origin = mimo kužel. Plus pouliční lampa realistická.
+
+6. **Lampa instancována pro test, pak odebrána ze scény** — třída + builder + dispatch zachovány v kódu pro budoucí spawn (z TODO/script/editor). Sez. 33 nesplnila *„lampa permanentní"*, ale demonstrovala pattern.
+
+**Důvod (proč DD a ne jen feature):**
+- První **lokální dynamický light** v projektu — předtím jen globální `DirectionalLight` sun + `AmbientLight`. Vznik nového kontraktu "light jako součást COMPOSITES" otevírá pole pro budoucí lampy / signální světla / projektory.
+- Pattern *„světelný zdroj uvnitř meshe → mesh `noShadow`"* je generalizovatelný a stojí za zapsání. Bez něj by každá další lampa měla bug *„světlo nedosvítí ven"*.
+- `SpotLight.target` v Group → rotace s ORIENTATION → pattern reusable pro budoucí směrová světla (reflektory, projektory, neonové nápisy).
+- Shadow setup pro lokální light (512×512 cube map, near/far, bias) = baseline parametry pro budoucí lokální lights. Pro ~10+ lamp ve scéně bude potřeba shadow budget management (selektivně castShadow off).
+
+**Známá omezení:**
+- **Shadow per PointLight/SpotLight je drahý** — cube shadow map render každý frame. 1 lampa OK, 10+ lamp ve scéně už hit. Mitigation: `castShadow = false` na sekundárních lampách (jen primární jednu).
+- **`emissive` materiál stínítka neemittuje skutečné světlo** — je to jen "self-glow" textura. Skutečný zdroj je `SpotLight` uvnitř. Pokud uživatel chce lampu *„aniž by svítila na okolí, jen se sama leskla"*, vyhodit `SpotLight` a nechat jen emissive (cheap).
+- **`SpotLight.target` v Group musí být `scene.add(target)` ekvivalent** — Three.js používá `target.matrixWorld`. V Group s `add(target)` Three.js auto-updateuje child matrices, takže funguje. Pokud někdy hledáme target s `scene.getObjectById()`, dohledat ve specifické Group.
+- **`.glb`/glTF asset import není** — DD-40 zůstává voxelový. PBR Street Props pack ze sez. 33 user inspirace zachycena v TODO M8+ `.glb import pipeline` jako kandidát budoucího DD.
+
+**Reference:**
+- DD-26 (sez. 17) — `ORIENTATION` na COMPOSITES, LAMP zdědí. SpotLight.target v Group rotuje s ORIENTATION.
+- DD-29 (sez. 20) — politika "minimum life". LAMP třída má builder a dispatch i bez aktivní instance ve scéně, protože je generalizovatelný typ.
+- DD-39 (sez. 33) — atmospheric noc maxed (AMBIENT_NIGHT 0.005). Motivuje LAMP jako vizuální payoff v noci.
+- Sez. 33 — first iteration PointLight, user feedback → SpotLight upgrade. Kontext v `docs/diary/2026-05-13.md` (B) Bod 1 a (G) SpotLight upgrade.
+

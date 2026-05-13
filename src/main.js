@@ -10,7 +10,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
-import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, TTUNELS, SPRITES, COMPOSITES, PATH, TIMER, COUNTER, WORLD } from "./model.js";
+import { CUBES, BLOCKS, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, TTUNELS, SPRITES, COMPOSITES, LAMP, PATH, TIMER, COUNTER, WORLD } from "./model.js";
 import { TIME, advanceTime } from "./time.js";
 import { generateTerrain } from "./terrain.js";
 
@@ -34,8 +34,15 @@ renderer.shadowMap.type = THREE.PCFShadowMap;
 // === Scéna ===
 // Scene = kontejner pro všechny 3D objekty (kostky, světla, kamery).
 const scene = new THREE.Scene();
-const SKY_COLOR = 0x1a1a2e;
-scene.background = new THREE.Color(SKY_COLOR); // tmavě modrofialová pozadí
+// Sky/ambient paleta — keypointy pro day/night cyklus. Driver: `world.DAY`
+// (DD-38). `updateAtmosphere()` per-frame lerpuje `scene.background` + `sceneFog.
+// color` + `ambientLight.intensity` mezi NIGHT a DAY podle `max(0, sin(2π·DAY))`
+// — stejná křivka jako sun intensity (DRY s `updateSun()`).
+const _skyDay = new THREE.Color(0x1a1a2e);   // tmavě modrofialová (poledne)
+const _skyNight = new THREE.Color(0x000000); // úplná čerň (půlnoc bez Měsíce)
+const AMBIENT_DAY = 0.15;
+const AMBIENT_NIGHT = 0.005; // téměř 0 — noc skoro úplná tma, scéna spoléhá výhradně na lokální SpotLight (lampy)
+scene.background = new THREE.Color().copy(_skyDay); // placeholder, updatuje updateAtmosphere
 // Atmospheric fog — vzdálené objekty plynule blednou do barvy pozadí.
 // `THREE.Fog(color, near, far)` lineární mlha: na vzdálenosti < `near` = ostrý
 // obraz, mezi `near` a `far` = lineární přechod, > `far` = plně pozadí. Pro
@@ -43,7 +50,7 @@ scene.background = new THREE.Color(SKY_COLOR); // tmavě modrofialová pozadí
 //
 // Drž jako reference (ne přímo `scene.fog = new Fog(...)`), aby toggle on/off
 // (přes `#settings` panel) mohl restore stejnou instanci místo realokace.
-const sceneFog = new THREE.Fog(SKY_COLOR, 30, 120);
+const sceneFog = new THREE.Fog(_skyDay.getHex(), 30, 120);
 scene.fog = sceneFog;
 
 // === Kamera ===
@@ -70,7 +77,9 @@ controls.enableDamping = true;
 // Intenzita 0.15 = jen jemné "zesvětlení odvrácených stran", hlavní zdroj
 // světla je DirectionalLight níž. Vyšší hodnoty (0.3+) maskují self-shadow:
 // odvrácená strana kostky by byla moc světlá a kontrast stínu by zmizel.
-scene.add(new THREE.AmbientLight(0xffffff, 0.15));
+// Reference držena pro day/night intensity lerp v `updateAtmosphere()`.
+const ambientLight = new THREE.AmbientLight(0xffffff, AMBIENT_DAY);
+scene.add(ambientLight);
 // DirectionalLight = paralelní paprsky (jako slunce). Dává tvar kostce.
 // Pozice se aktualizuje každý frame v `updateSun()` z `world.DAY` (DD-38, sez. 32) —
 // dráha leží v rovině nakloněné 30° od svislice (≈ severní polokoule v létě).
@@ -163,14 +172,28 @@ function updateSun() {
     SUN_DISTANCE * sinA * Math.sin(SUN_TILT),
   );
   // Intensity lerp: max 0 v noci (sin záporný), plné 0.8 v poledne (sin=1).
-  // `max(0, sin)` = pásmo "noc bez DirectionalLight" → scéna spoléhá na ambient
-  // (0.15) + post-process fog/DOF (vizuálně zachytitelné jako šero, ne kompletní tma).
+  // `max(0, sin)` = pásmo "noc bez DirectionalLight". `updateAtmosphere()` stmívá
+  // ambient + sky podle stejné křivky → v noci scéna spoléhá jen na zbytkový
+  // AMBIENT_NIGHT (0.04) + tmavé pozadí, vizuálně temná silueta.
   sun.intensity = SUN_BASE_INTENSITY * Math.max(0, sinA);
   // Sun mesh follow + skip render v noci (Y<0 = pod scénou = stejně neviditelné).
   // AND s `_sunUserVisible` — pokud user vypne toggle v settings panelu, hide
   // se zachová i v poledne (toggle = user override, ne overflow flag).
   sunMesh.position.copy(sun.position).multiplyScalar(SUN_DISTANCE_SCALE);
   sunMesh.visible = _sunUserVisible && sun.position.y > 0;
+}
+
+// Day/night atmospheric lerp. Driver: `world.DAY` (DD-38), stejná `daylight`
+// křivka jako sun.intensity v `updateSun()` (DRY). 3 konzumenti:
+//   - scene.background (lerp _skyNight ↔ _skyDay) — obloha
+//   - sceneFog.color (kopie background) — vzdálené splývá s oblohou
+//   - ambientLight.intensity (lerp AMBIENT_NIGHT ↔ AMBIENT_DAY) — fill light
+// `lerpColors(c1, c2, alpha)` zapisuje do `this` instance, žádná alokace per-frame.
+function updateAtmosphere() {
+  const daylight = Math.max(0, Math.sin(world.DAY * TAU));
+  scene.background.lerpColors(_skyNight, _skyDay, daylight);
+  sceneFog.color.copy(scene.background);
+  ambientLight.intensity = AMBIENT_NIGHT + (AMBIENT_DAY - AMBIENT_NIGHT) * daylight;
 }
 
 // === Post-processing (DOF + fog) =============================================
@@ -230,21 +253,6 @@ function updateShadowFrustum(maxDim) {
   sun.shadow.camera.bottom = -half;
   sun.shadow.camera.updateProjectionMatrix();
 }
-
-// === Ground plane pro zachytávání stínů ===
-// PlaneGeometry je default v rovině XY (ležící vertikálně). Otočíme ji
-// o -90° kolem X, aby ležela v rovině XZ (horizontálně). `ShadowMaterial`
-// je speciální materiál, který je jinak **průhledný** a zobrazuje jen
-// stíny — ideální pro zachycení stínů bez zakrývání gridu pod sebou.
-// Y = -0.501 (mírně pod spodkem kostek v -0.5) eliminuje z-fight se spodními
-// plochami kostek, které také leží na Y = -0.5.
-const groundGeom = new THREE.PlaneGeometry(20, 20);
-const groundMat = new THREE.ShadowMaterial({ opacity: 0.35 });
-const ground = new THREE.Mesh(groundGeom, groundMat);
-ground.rotation.x = -Math.PI / 2;
-ground.position.y = -0.501;
-ground.receiveShadow = true;
-scene.add(ground);
 
 // === Default textura pro mateřskou CUBES (šachovnice, DD-07) ===
 // Stejný vizuální idiom jako "průhledné pozadí" v Photoshopu/GIMPu/Figmě —
@@ -1092,6 +1100,9 @@ function createMeshFor(instance) {
   if (instance instanceof PATH) {
     // 1D křivka (DD-25 vrstva 3 Linie) — strip mesh sledující POINTS.
     object3d = createPathFor(instance);
+  } else if (instance instanceof LAMP) {
+    // Pouliční lampa — sloupek + svítící hlava + PointLight. Group, float pozice.
+    object3d = buildLamp(instance);
   } else if (instance instanceof SPRITES) {
     // 2D billboard — obrázek vždy otočený ke kameře. Nevoxelový potomek,
     // pozice float bez snap-to-grid.
@@ -1879,6 +1890,81 @@ function createTTunnelFor(instance) {
 //  - `null` / nezadáno → šachovnicový billboard (fallback DD-07).
 //  - `string` → text vykreslený přes `makeBubbleTexture` jako dialog bubble.
 //
+// === buildLamp — pouliční lampa (LAMP COMPOSITES) ===
+// Victorian-style: vertikální sloup + horizontální paže + visící stínítko +
+// SpotLight uvnitř stínítka mířící kuželem dolů. Pozice float (DD-12, COMPOSITES
+// nedělá snap-to-grid). Rotace celé Group kolem Y z `instance.ORIENTATION`.
+//
+// SpotLight místo PointLight: kuželové světlo svítí jen dolů → sloup ani paže
+// neblokují vlastní paprsky (PointLight 360° měl tmu pod lampou kvůli sloupu).
+// `decay = 2` physically-correct (default r155+), proto vyšší intensity (5).
+// Shadow ano (512×512 cube map, bias -0.002 proti acne). Pro budoucí scaling
+// (~10+ lamp) zvážit `castShadow = false` na sekundárních lampách.
+function buildLamp(instance) {
+  const group = new THREE.Group();
+
+  // Sdílený kovový materiál pro sloup + paži (DRY, jedna instance).
+  const ironMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.7 });
+
+  // === Sloup === — vertikální, 2 j vysoký, tenký (10×10 cm v real-world units).
+  const poleGeom = new THREE.BoxGeometry(0.15, 2.0, 0.15);
+  const pole = new THREE.Mesh(poleGeom, ironMat);
+  pole.position.y = 1.0; // střed sloupu (origin = geometry center)
+  group.add(pole);
+
+  // === Horizontální paže === — vyčnívá z vrcholu sloupu ve směru +X (relativní;
+  // ORIENTATION otáčí celou Group). Tenká, 0.6 j dlouhá.
+  const armGeom = new THREE.BoxGeometry(0.6, 0.08, 0.08);
+  const arm = new THREE.Mesh(armGeom, ironMat);
+  arm.position.set(0.3, 1.95, 0); // X=0.3 = střed paže (0.6/2), Y=1.95 = horní hrana sloupu
+  group.add(arm);
+
+  // === Stínítko === — visí z konce paže (X=0.6). Tmavé z venku, oranžově
+  // emissive zevnitř (i v poledne svítí vlastním jasem, kontrast s šerem).
+  const shadeGeom = new THREE.BoxGeometry(0.35, 0.3, 0.35);
+  const shadeMat  = new THREE.MeshStandardMaterial({
+    color: 0x1a1a1a,
+    emissive: 0xffaa00,
+    emissiveIntensity: 0.8,
+  });
+  const shade = new THREE.Mesh(shadeGeom, shadeMat);
+  shade.position.set(0.6, 1.7, 0); // konec paže, mírně níž (visí pod paží)
+  // SpotLight je uvnitř stínítka — kdyby stínítko castovalo stín, blokovalo by
+  // vlastní světlo dolů. `noShadow` říká traverzi v `createMeshFor` opt-out.
+  shade.userData.noShadow = true;
+  group.add(shade);
+
+  // === SpotLight === — kuželové oranžové světlo dolů.
+  // Args: (color, intensity, distance, angle, penumbra, decay)
+  //   intensity 5 — vyšší než PointLight verze, decay 2 quadratic fall-off
+  //   distance 12 — za 12 j světla = 0
+  //   angle π/5 ≈ 36° — středně široký kužel
+  //   penumbra 0.4 — okraje kuželu měkce vyblednou (0=sharp, 1=full soft)
+  //   decay 2 — physically-correct (default r155+)
+  const light = new THREE.SpotLight(0xffaa00, 5, 12, Math.PI / 5, 0.4, 2);
+  light.position.set(0.6, 1.7, 0); // ve stínítku
+  light.castShadow = true;
+  light.shadow.mapSize.set(512, 512);
+  light.shadow.camera.near = 0.1;
+  light.shadow.camera.far  = 14; // ≥ distance, aby stíny nestrihly
+  light.shadow.bias = -0.002; // kompenzuje shadow acne
+  group.add(light);
+
+  // SpotLight.target = Object3D, kam svit směřuje. Musí být v scéně (Three.js
+  // používá jeho world matrix). Přidáme do group → target rotuje s lampou
+  // (ORIENTATION mate směr "dolů" relativní k lampě, ale fakticky pořád dolů,
+  // protože target.Y < light.Y a rotace Y nehne s vertikálou).
+  const target = new THREE.Object3D();
+  target.position.set(0.6, -3, 0); // 4.7 j pod stínítkem
+  group.add(target);
+  light.target = target;
+
+  // Pozice + rotace ze model instance. Group origin = pata sloupu v (X,Y,Z).
+  group.position.set(instance.X, instance.Y, instance.Z);
+  group.rotation.y = THREE.MathUtils.degToRad(instance.ORIENTATION);
+  return group;
+}
+
 // Měřítko spritu: default `Sprite.scale` je 1×1×1. Pro bubble se poměr stran
 // vypočítá z plátna (aby se text nezkreslil), pro šachovnici drží čtvercový
 // formát. Jednotka délky 3D světa = stejná jako hrana voxelu, takže bubble
@@ -2472,10 +2558,6 @@ function disposeHoverClones(root) {
 window.regenerateScene = regenerateScene;
 
 function buildScene(scene) {
-  // Vizuální orientace — GridHelper (20×20) + AxesHelper (2 j červená/zelená/modrá).
-  scene.add(new THREE.GridHelper(20, 20, 0x444444, 0x222222));
-  scene.add(new THREE.AxesHelper(2));
-
   spawnTerrain(TERRAIN_DEFAULTS);
 }
 
@@ -2800,8 +2882,10 @@ function animate() {
   updateAnimations(now);
   // WORLD tick + sun derivace (DD-38, sez. 32) — DAY_SPEED inkrementuje DAY,
   // updateSun přepočítá pozici DirectionalLight + intensity + sunMesh.
+  // updateAtmosphere lerpuje sky/fog/ambient podle stejné daylight křivky.
   updateWorldTime(dt);
   updateSun();
+  updateAtmosphere();
   // Ocásky dialogových bublin: přepočítáme až **po** animátorech, aby jsme
   // četli aktuální `object3d.position` případných pohybujících se mluvčí
   // (tbox_0002 orbituje, …).
