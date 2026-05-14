@@ -79,9 +79,9 @@ export class CUBES extends OBJECTS {
  *
  * `ORIENTATION` (DD-26 sez. 17) — float ∈ [0, 360) ve **stupních**, rotace
  * kolem Y osy. Default 0. Engine převádí `mesh.rotation.y = ORIENTATION * π/180`.
- * Pro rampy/tunely se v praxi používají násobky 90° (cardinální orientace
- * svahu / osy tunelu), ale typ je float — sdílený s COMPOSITES, kde dekorace
- * mívají náhodnou rotaci pro organický vzhled.
+ * Pro rampy se v praxi používají násobky 90° (cardinální orientace svahu),
+ * ale typ je float — sdílený s COMPOSITES, kde dekorace mívají náhodnou
+ * rotaci pro organický vzhled.
  */
 export class BLOCKS extends CUBES {
   constructor(id, name, x, y, z, description = "") {

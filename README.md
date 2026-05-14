@@ -40,24 +40,28 @@ OBJECTS (ID, NAME, DESCRIPTION, ANIMATE)
 
 **Milníky:**
 - **M1–M7** hotové (sez. 1–5): statický svět, voxelové potomky, COMPOSITES, SPRITES, TCUBES, ANIMATE dispatch.
-- **M8+** průběžně (sez. 6–38): další `ANIMATE.kind`y, SPRITES.SPEAKER (DD-16), TIMER + COUNTER (DD-17), pevné měřítko (DD-22), all-voxel pivot (DD-23), 4-vrstvá taxonomie + BLOCKS rodina (DD-25), sjednocená ORIENTATION (DD-26), PATH (DD-27), sjednocená Y konvence (DD-28), **terrain generator pivot (DD-32)**, ramp smoothing layer (DD-33 + DD-34), TDRAMP (DD-35), TCUBES atlas pipeline (DD-36, nahrazen DD-41), **InstancedMesh batch pipeline (DD-37)** + sun mesh + post-process (fog + DOF/BokehPass) + settings panel, **WORLD re-introduce (DD-38)** s DAY/DAY_SPEED + sun denní cyklus, **atmospheric lerping (DD-39, rozšířen DD-48)**, **LAMP/SpotLight (DD-40)**, **lowpoly vertex-color pipeline (DD-41)**, **G2 Climate WORLD.LATITUDE × HUMIDITY (DD-42)** + DAY mapping fix (DD-43), **G3 SURFACES driver-derived (DD-44)** + fBm/ridge³ heightmap (DD-45), **smoothstep bimodální heightmap pro r ≥ 6 (DD-46)**, **G6 climate-driven surface state (snow + LIQUID prototype flood-fill, ice) (DD-47)** + **atmospheric color extensions (sun piecewise + sky 3-keypoint + water wave) (DD-48)**.
+- **M8+** průběžně (sez. 6–45): další `ANIMATE.kind`y, SPRITES.SPEAKER (DD-16), TIMER + COUNTER (DD-17), pevné měřítko (DD-22), all-voxel pivot (DD-23), 4-vrstvá taxonomie + BLOCKS rodina (DD-25), sjednocená ORIENTATION (DD-26), PATH (DD-27), sjednocená Y konvence (DD-28), **terrain generator pivot (DD-32)**, ramp smoothing layer (DD-33 + DD-34), TDRAMP (DD-35), TCUBES atlas pipeline (DD-36, nahrazen DD-41), **InstancedMesh batch pipeline (DD-37)** + sun mesh + post-process (fog + DOF/BokehPass) + settings panel, **WORLD re-introduce (DD-38)** s DAY/DAY_SPEED + sun denní cyklus, **atmospheric lerping (DD-39, rozšířen DD-48)**, **LAMP/SpotLight (DD-40)**, **lowpoly vertex-color pipeline (DD-41)**, **G2 Climate WORLD.LATITUDE × HUMIDITY (DD-42)** + DAY mapping fix (DD-43), **G3 SURFACES driver-derived (DD-44)** + fBm/ridge³ heightmap (DD-45), **smoothstep bimodální heightmap pro r ≥ 6 (DD-46)**, **G6 climate-driven surface state (snow + LIQUID prototype flood-fill, ice) (DD-47)** + **atmospheric color extensions (sun piecewise + sky 3-keypoint + water wave) (DD-48)**, **DD-49 procedurální DECOR (5 KIND + biome density + snow caps) + DD-50 SEASON driver (4-enum, temperate snow/ice modifier)**, **DD-51 seasonal foliage cycle (LEAF_AUTUMN oak/bush v autumn, winter defoliation) + DD-52 slope-aware DECOR Y**, **Fáze 6 DECOR KIND extension** (palm/cactus/flower/stump/log + `_dead` postfix + AUTUMN_PALETTE 4-color hue + seasonal density modifier + receive shadow opt-out), **DD-54 LIQUID class jako 5. vrstva DD-25 extension: Tekutiny** (sibling BLOCKS/COMPOSITES/PATH pod CUBES, atributy LEVEL/TEMPERATURE/BOUNDING_BOX/CELLS, skeleton prototype single-cell) + HSL hue shift sky/sun (DD-48 follow-up).
 
-Detail v `docs/DIARY.md` (chronologie sezení), `docs/DESIGN_DECISIONS.md` (DD-01 až DD-52).
+Detail v `docs/DIARY.md` (chronologie sezení), `docs/DESIGN_DECISIONS.md` (DD-01 až DD-54; DD-53 attempt + revert).
 
-**Plán (po sez. 41):**
-- **Priorita pro sez. 42 (perf trigger):**
-  - **InstancedMesh refactor pro DECOR** — per (KIND × varianta) `InstancedMesh` batch, ~20k Object3D → ~10-15 draw calls. Trigger: sez. 41 multi-decor `MAX_ATTEMPTS=2` zkusil → ~8 FPS regrese, rolled back. Otevírá cestu k hustému pralesu bez perf hit. Komplikace: per-instance scale/rotation v `instanceMatrix`, flatShading seam (switch na vertex-color pipeline pro DECOR).
-- **Otevřené (volitelný směr pro sez. 42+):**
-  - **Fáze 6 DECOR KIND extension** — `palm` (tropical.wet), `cactus` (subtropical/temperate.dry), `stump`/`log` (woodland clean-up), `flower` (temperate.wet louka), `_dead` postfix.
-  - Slider DAY sync z value při auto-advance (drobnost UX).
-  - LIQUID 1. třída entita (DD-25 vrstva 4) — DD-47 sez. 38 dnes single-mesh per cell prototype. Plná: OOP třída pod CUBES, atribut LEVEL/TEMPERATURE/FLOW_DIRECTION + STEAM/FOG rozšíření (IDEAS „Voda ve všech skupenstvích").
-  - **Klastrování water cells do bbox** (connected components flood-fill, jeden plane na jezero) — DD-47 follow-up perf optimalizace pro velké scény (100×100 polar mid ~500 cells → 5-20 jezer).
-  - HSL hue shift pro sky lerp (DD-48 follow-up — current RGB-linear přechází přes desaturovanou hnědou).
-  - Mraky/srážky (déšť, sníh padá z mraků; particle system base infrastruktura, IDEAS sez. 38).
+**Plán (po sez. 45):**
+
+> **User verdikt sez. 41:** *„Generátor scény považuji za dokončený."* Sez. 42–45 = post-close polish (perf HUD opt, Fáze 6 DECOR close 9/9, atmospheric extensions, LIQUID class skeleton).
+
+- **Aktivní směry (kandidáti pro sez. 46+):**
+  - **WORLD/atmosféra rozšíření** — sky/sun season tint (DD-50 follow-up plný scope), snow accumulation animace přes DAY_SPEED × SEASON, polar season variace (summer ablation), snow patches calibration, ice canvas texture, per-cluster water wave fáze (závisí na BFS clustering).
+  - **LIQUID BFS clustering + multi-Y split** *(DD-54 sub-prah)* — split components dle `(water_y, frozen)` key (drží z-fight invariant z DD-53 revert lesson). Pro polar mid 100×100 sráží ~500 water cells na ~5-20 jezer. Trigger: user signal „100×100 jezera blikají" nebo perf need.
+  - **Fyzika kapalin extensions** *(DD-54 budoucí hooks)* — TEMPERATURE numeric °C (permafrost/lava), FLOW_DIRECTION (rivers/streams paralel PATH POINTS), VISCOSITY (voda/láva/ropa/kyselina), LEVEL animace (tide/flood/sezonní tání). Wait pro user signal.
+  - Slider DAY sync z value při auto-advance (drobnost UX, DD-38 známé omezení).
+  - BARK_DEAD darker palette varianta + palm trunk curve (Fáze 6 sub-prahy ze sez. 43).
+- **Speculative (wait-for-signal):**
+  - **InstancedMesh refactor pro DECOR** — per (KIND × varianta) `InstancedMesh` batch, ~20k Object3D → ~10-15 draw calls. Sez. 42 user pivot na 20×20 dioráma target use case downgrade z `[!]` na speculative.
+  - BatchedMesh refactor (r167+ API, ~13 → ~3 calls) — diminishing returns po DD-37.
+  - `ExtrudeGeometry` pro rampy — nahrazuje 3 custom BufferGeometry buildery, diminishing returns po DD-41.
   - Roadmap relief 9..10 (valley carving / ridge noise — DD-46 řeší r ≥ 6 bimodal, r > 8 stále clamp na 8).
-  - Procedural paths + tunely v generovaném terénu (viz TODO).
-  - `.glb`/glTF asset import pipeline (otevírá Stickman integraci a hezčí lampu — odložené, DD-49 procedurální cesta zafixovaná).
-  - BatchedMesh refactor (r167+, 13 → ~3 calls) — diminishing returns, low prio.
+  - Procedural paths + tunely v generovaném terénu (TTUNELS class drop sez. 38, vrátit z gitu při potřebě).
+  - `.glb`/glTF asset import pipeline (otevírá Stickman integraci a hezčí lampu).
+  - Mraky/srážky (particle system base infrastruktura, IDEAS sez. 38).
 
 ## Stack
 

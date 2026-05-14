@@ -33,7 +33,7 @@ Atmosferický overlay nad terénem. Vizuální vrstva (= nemodifikuje terén, je
 
 User nápad: **systematická voda jako entita s skupenstvími**. Rozšíření modelu:
 
-- **LIQUID** *(DD-25 vrstva 4 — již otevřený TODO kandidát)* — voda jako 1. třída entity, ne surface. Atributy: `LEVEL` (hladina), `TEMPERATURE`, `FLOW_DIRECTION`. → **DONE částečně (DD-47 sez. 38):** flood-fill priority (Wang & Liu) generuje vodu jako entity (1×1 plane per cell, `_waterMat`), boundary overflow drain, frozen flag per cell. Plně 1. třída entita (OOP class pod CUBES + `LEVEL/TEMPERATURE/FLOW_DIRECTION` atributy + klastry do bbox) zůstává sub-prah.
+- **LIQUID** *(DD-25 **5. vrstva extension: Tekutiny**, DD-54 sez. 45)* — voda jako 1. třída entity, ne surface. Atributy: `LEVEL` (hladina), `TEMPERATURE`, `BOUNDING_BOX`, `CELLS`. → **DONE skeleton (DD-54 sez. 45):** `class LIQUID extends CUBES` (sibling BLOCKS/COMPOSITES/PATH pod CUBES, paralel PATH pattern). Sez. 45 prototype: 1 LIQUID = 1 water cell (single-cell skeleton; spawn loop v `main.js` wrapuje `terrain.water[]` raw records). DD-47 sez. 38 původní flood-fill priority (Wang & Liu) zachován jako data source. Sub-prahy: BFS connected-components clustering + multi-Y split (1 LIQUID = N connected cells sdílejících `water_y` + `frozen`), fyzika kapalin extensions (TEMPERATURE numeric °C, FLOW_DIRECTION rivers/streams paralel PATH POINTS, VISCOSITY lava/oil/acid, LEVEL animace tide/flood).
 - **ICE** — pevné skupenství. Možnosti:
   - (a) Surface kind v `SURFACE_Y_OFFSET` — vizuálně led, mechanicky shodné s grass/stone.
   - (b) Vlastní třída pod BLOCKS (`ICUBES`?) s reflective material + slip mechanika (až přijde pohyblivá entita).

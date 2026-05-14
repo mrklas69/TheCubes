@@ -4,7 +4,7 @@
 
 > Hotové úkoly: `docs/DONE.md`. Designová rozhodnutí: `docs/DESIGN_DECISIONS.md`.
 >
-> **Recent DONE (sez. 34-45):** Terrain G0..G6 cesta (DD-41 lowpoly vertex-color → DD-42 LATITUDE/HUMIDITY → DD-44 BIOME_SURFACES → DD-45 fBm/ridge³ → DD-46 smoothstep bimodal → DD-47 snow + LIQUID prototype). WORLD: DD-38 DAY/DAY_SPEED, DD-48 atmospheric, DECOR_DENSITY_MULT (sez. 43). DECOR: DD-49 procedural composites, DD-50 SEASON, DD-51 LEAF_AUTUMN + winter defoliation, DD-52 slope-aware Y na rampách, Fáze 6 close (sez. 43+44 = 9/9 položek). **Sez. 45:** DD-54 LIQUID class (**5. vrstva DD-25 extension: Tekutiny**, skeleton prototype single-cell pod CUBES), `%BEGIN` target use case addendum (krok 2.5 v PROMPTS.md), HSL hue shift sky/sun (`_lerpHsl` helper, DD-48 follow-up). Detail v `DONE.md` a `DESIGN_DECISIONS.md`.
+> **Recent DONE (sez. 34-46):** Terrain G0..G6 cesta (DD-41 lowpoly vertex-color → DD-42 LATITUDE/HUMIDITY → DD-44 BIOME_SURFACES → DD-45 fBm/ridge³ → DD-46 smoothstep bimodal → DD-47 snow + LIQUID prototype). WORLD: DD-38 DAY/DAY_SPEED, DD-48 atmospheric, DECOR_DENSITY_MULT (sez. 43). DECOR: DD-49 procedural composites, DD-50 SEASON, DD-51 LEAF_AUTUMN + winter defoliation, DD-52 slope-aware Y na rampách, Fáze 6 close (sez. 43+44 = 9/9 položek). **Sez. 45:** DD-54 LIQUID class (**5. vrstva DD-25 extension: Tekutiny**, skeleton prototype single-cell pod CUBES), `%BEGIN` target use case addendum (krok 2.5 v PROMPTS.md), HSL hue shift sky/sun (`_lerpHsl` helper, DD-48 follow-up). **Sez. 46:** `%AUDIT:CODE` threshold trigger — 10 fixů LIQUID/DD-54 drift v src/terrain.js × 2 + README + IDEAS + GLOSSARY/README sync DD-50..54 + M8+ řádek + Plán sekce post-sez. 45 refresh + main.js komentáře + model.js TTUNELS reference drop. Cadence reset 7/8 → 0/8. Detail v `DONE.md` a `DESIGN_DECISIONS.md`.
 
 ## Otevřené M8+
 
@@ -74,6 +74,6 @@ Kandidáti bez explicit user signal — drží se jako kotvy, neaktivní:
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — **7/8** *(sez. 40+41+42+43+44+45 jen impl/skeleton)*. **Next: sez. 46 = MUSÍ AUDIT (threshold)**.
-- **`%AUDIT:DOCS`** — **6/10** *(sez. 40-45 jen impl)*. Next: ~sez. 49.
-- **IDEAS/TODO pruning** — **2/12** *(sez. 43 full pruning DONE)*. Next: ~sez. 55.
+- **`%AUDIT:CODE`** — **0/8** *(sez. 46 RESET — threshold trigger satisfied, 10 fixů LIQUID/DD-54 drift + README/GLOSSARY sync; viz DONE.md)*. Next: ~sez. 54.
+- **`%AUDIT:DOCS`** — **7/10** *(sez. 40-46 jen impl/audit-code)*. Next: ~sez. 49.
+- **IDEAS/TODO pruning** — **3/12** *(sez. 43 full pruning DONE)*. Next: ~sez. 55.

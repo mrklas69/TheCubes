@@ -135,7 +135,8 @@ const RELIEF_FREQUENCY = [0.00, 0.12, 0.14, 0.16, 0.18, 0.20, 0.18, 0.15, 0.12];
 // `grass` / `stone` — na povrchu (h beze změny).
 // `sand` — depression, o 1 voxel níž (poušť / údolí).
 // **Sez. 38 (DD-47):** `water` surface dropped — voda jako surface kind smazán.
-// Voda se vrátí později jako LIQUID 1. třída entita (DD-25 vrstva 4), ne surface.
+// Voda žije jako LIQUID 1. třída entita (DD-54 sez. 45, **5. vrstva DD-25 extension:
+// Tekutiny** — Bloky/Voxely/Linie/Objekty/Tekutiny), ne surface.
 const SURFACE_Y_OFFSET = {
   grass: 0,
   stone: 0,
@@ -1046,7 +1047,7 @@ export const BIOME_NAMES = {
 //   LATITUDE → stone vs. sand mix (polar = stone-heavy; tropical = málo stone)
 //
 // **Sez. 38 (DD-47):** `water` sloupec smazán — drop water surface kind
-// (viz `SURFACE_Y_OFFSET` výš). Voda se vrátí jako LIQUID 1. třída entity.
+// (viz `SURFACE_Y_OFFSET` výš). Voda žije jako LIQUID 1. třída entity (DD-54).
 // Původní `water` % přerozděleny: fertile biomy (tropical/subtropical/temperate
 // wet/mid) → grass (více vegetace bez "water sinks"); polar wet/mid → stone/sand
 // (skály + ledové pouště v Arktidě běžnější než jezera).

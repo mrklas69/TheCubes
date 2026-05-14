@@ -1187,3 +1187,62 @@ BFS connected-components clustering (= 1 LIQUID = N connected cells sdílející
 - IDEAS/TODO pruning — **2/12**. Next: ~sez. 55.
 
 DD-54 = **5. DD ze sez. 41-45 sady** (DD-51 sez. 41, DD-52 sez. 41, [DD-53 attempt + revert sez. 42], DD-54 sez. 45). Sez. 42-44 bez nových DD (perf diagnostic + Fáze 6 pre-approved TODO impl).
+
+---
+
+## Sez. 46 — `%AUDIT:CODE` threshold trigger (10 fixů LIQUID/DD-54 drift + README/GLOSSARY sync)
+
+Audit cadence sub-prah `%AUDIT:CODE` 7/8 (sez. 40-45 jen impl/skeleton) — **mandatory threshold trigger v sez. 46**. Fokus z Příště sez. 45: LIQUID terminologie po DD-54, dead code (post-DD-41 atlas residue, pre-DD-54 `createWaterPlane`), DD-25 5. vrstva extension dokumentace, conceptual integrity, memory drift cross-check (sez. 45 Censure carryover).
+
+### Nálezy — 4 K + 4 D + 2 S
+
+**Kritické (drift):**
+- K1 `src/terrain.js:138` komentář DD-25 vrstva 4 → 5. vrstva DD-25 extension (DD-54), "vrátí se" → "žije".
+- K2 `src/terrain.js:1049` "vrátí se" → "žije jako LIQUID 1. třída entity (DD-54)".
+- K3 `README.md:53` LIQUID entry — drift vrstva 4 → 5. vrstva + status (sub-prah → DD-54 skeleton hotové).
+- K4 `docs/IDEAS.md:36` LIQUID entry — vrstva 4 → 5. vrstva + DD-47 částečně → DD-54 skeleton DONE + sub-prahy.
+
+**Doporučené (sync):**
+- D1 `docs/GLOSSARY.md:3` hlavička sez. 39 → sez. 45 timeline doplnit DD-50/51/52/53/54.
+- D2 `README.md:43` M8+ řádek doplnit DD-49..54 + Fáze 6 + HSL.
+- D3 `README.md:45` „DD-01 až DD-52" → „DD-01 až DD-54 (DD-53 attempt + revert)".
+- D4 `README.md:47-60` Plán sekce přepis post-sez. 45 + user verdikt close.
+
+**Kosmetické:**
+- S1 `src/main.js:2114` + `src/main.js:2485` komentáře refresh phrasingu (Sez. 38 LIQUID prototype → DD-54).
+- S2 `src/model.js:82-83` ORIENTATION drop „/tunelů" reference (TTUNELS smazaná sez. 38).
+
+### Batch fix přes 6 src/docs souborů
+
+User: **„Oprav vše!"** = volba A (K1-K4 + D1-D4 + S1-S2). 10 paralelních Edits, post-fix `Grep "vrstva 4"` napříč src/ + README + IDEAS = **No matches found** ✓.
+
+### Pozitivní (Kudos!)
+
+- Žádný `console.log` v src/ (6× `console.warn` defensive zachovány).
+- Žádný `createWaterPlane` v src/ (DD-54 rename clean, jen v immutable docs historie).
+- Žádné dead files (`.bak`/`.tmp`/`.old`/`.DS_Store`) ani empty dirs.
+- Atlas residue v src/ = jen 2ř. historický komentář (záměrné navigation).
+- LIQUID sibling order v `model.js` ř. 397 (mezi BLOCKS 86 / SPRITES 235 / COMPOSITES 273 / PATH 353) = **conceptual integrity DD-54 v kódu** držena.
+- Memory drift cross-check: 5 memory entries s DD-49+ reference, všechny clean (project_model_hierarchy + MEMORY.md fixed sez. 45, ostatní 3 nezasažené). 15/20 entries DD-49+ nezmiňují = bez rizika.
+
+### Cadence reset
+
+- `%AUDIT:CODE` — **7/8 → 0/8** (threshold trigger satisfied). Next: ~sez. 54.
+- `%AUDIT:DOCS` — 6/10 → 7/10 (sez. 46 audit-code tick, ne plný DOCS audit).
+- IDEAS/TODO pruning — 2/12 → 3/12 (sez. 46 přiměřený pruning v rámci AUDIT:CODE = IDEAS LIQUID rewrite + Plán sekce wipe).
+
+### Soubory dotčeny
+
+- `src/terrain.js` ~6 / −5 ř. (K1+K2).
+- `src/main.js` ~4 / −3 ř. (S1×2).
+- `src/model.js` ~3 / −3 ř. (S2).
+- `docs/IDEAS.md` ~1 / −1 ř. (K4 rewrite).
+- `docs/GLOSSARY.md` ~1 / −1 ř. (D1 hlavička).
+- `README.md` ~18 / −16 ř. (D2 + D3 + K3 + D4).
+- `docs/TODO.md` ~3 / −3 ř. (Recent DONE 34-45 → 34-46 + cadence reset).
+- `docs/DIARY.md` +1 ř. (nový samostatný řádek sez. 46 — pivot od mega-řádku 41-45 patternu).
+- `docs/diary/2026-05-14.md` + Sezení 46 sekce.
+- `docs/DONE.md` + tato sekce.
+- Memory `MEMORY.md` index description sync.
+
+Žádný nový DD (audit pass = procedural maintenance).

@@ -2111,8 +2111,8 @@ function createBlock(kind, x, y, z) {
 // Led: transparent 0.85 (větší zákal), nízká reflexe (metalness 0.05, roughness
 // 0.55 = matnější), světle modro-bílá. User feedback sez. 38: led má **menší
 // reflexi a větší zákal** než voda.
-// Vrácené sez. 38 jako LIQUID prototype (= flood-fill basin entity, ne biome
-// surface DD-47 dropped pattern). Reference k post-DD-47 entitě v IDEAS.md.
+// Materiály pro LIQUID 1. třída entity (DD-54 sez. 45, prototype od DD-47 sez. 38:
+// flood-fill basin entity, ne biome surface — DD-47 dropped pattern).
 const _waterMat = new THREE.MeshStandardMaterial({
   color:        0x3a7090,
   transparent:  true,
@@ -2482,7 +2482,7 @@ window.BIOME_SURFACES = BIOME_SURFACES;
 window.surfacesForBiome = surfacesForBiome;
 // DD-47 (sez. 38) — snowSpec helper pro UI panel (`#terrainctrl` `readParams()`).
 window.snowSpecForLatitude = snowSpecForLatitude;
-// Sez. 38 LIQUID prototype — waterSpec helper (flood-fill voda dle climate).
+// DD-47 (sez. 38) — waterSpec helper (flood-fill voda dle climate). Konzumuje LIQUID 1. třída entity od DD-54.
 window.waterSpecForClimate = waterSpecForClimate;
 // Sez. 40 DD-49 — decorSpec helper + DECOR_DENSITY tabulka pro UI/dev.
 window.decorSpecForClimate = decorSpecForClimate;
