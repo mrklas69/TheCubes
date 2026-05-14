@@ -4,7 +4,15 @@
 
 > Hotové úkoly: `docs/DONE.md`. Designová rozhodnutí: `docs/DESIGN_DECISIONS.md`.
 >
-> **Recent DONE (sez. 34-47):** Terrain G0..G6 cesta (DD-41 lowpoly vertex-color → DD-42 LATITUDE/HUMIDITY → DD-44 BIOME_SURFACES → DD-45 fBm/ridge³ → DD-46 smoothstep bimodal → DD-47 snow + LIQUID prototype). WORLD: DD-38 DAY/DAY_SPEED, DD-48 atmospheric, DECOR_DENSITY_MULT (sez. 43). DECOR: DD-49 procedural composites, DD-50 SEASON, DD-51 LEAF_AUTUMN + winter defoliation, DD-52 slope-aware Y na rampách, Fáze 6 close (sez. 43+44 = 9/9 položek). **Sez. 45:** DD-54 LIQUID class (**5. vrstva DD-25 extension: Tekutiny**, skeleton prototype single-cell pod CUBES), `%BEGIN` target use case addendum (krok 2.5 v PROMPTS.md), HSL hue shift sky/sun (`_lerpHsl` helper, DD-48 follow-up). **Sez. 46:** `%AUDIT:CODE` threshold trigger — 10 fixů LIQUID/DD-54 drift. Cadence reset 7/8 → 0/8. **Sez. 47:** SEASON expansion 6-pack (DD-50 plný scope): sky tint + sun tint v `updateAtmosphere`/`updateSun` přes `_applyHslShift` helper + SEASON_SKY_DELTA / SUN_SEASON_DELTA tabulky, sun horizon extend do −15°, polar season variace v `snowSpecForLatitude` + `waterSpecForClimate` (POLAR_SNOW/FREEZE_BY_SEASON tabulky) + refactor mode `"temperate"` → `"patches"` (sloučení polar+temperate), slider DAY sync 4 Hz, ice canvas texture (Canvas2D 30 white blobs). Žádný nový DD. Detail v `DONE.md` a `DESIGN_DECISIONS.md`.
+> **Recent DONE (sez. 34-48):** Terrain G0..G6 cesta (DD-41 lowpoly vertex-color → DD-42 LATITUDE/HUMIDITY → DD-44 BIOME_SURFACES → DD-45 fBm/ridge³ → DD-46 smoothstep bimodal → DD-47 snow + LIQUID prototype). WORLD: DD-38 DAY/DAY_SPEED, DD-48 atmospheric, DECOR_DENSITY_MULT (sez. 43). DECOR: DD-49 procedural composites, DD-50 SEASON, DD-51 LEAF_AUTUMN + winter defoliation, DD-52 slope-aware Y na rampách, Fáze 6 close (sez. 43+44 = 9/9). **Sez. 45:** DD-54 LIQUID class skeleton. **Sez. 46:** `%AUDIT:CODE` 10 fixů LIQUID drift. **Sez. 47:** SEASON expansion 6-pack (DD-50 plný scope). **Sez. 48 M-Genesis cleanup (DD-55):** K1+D1+D2 YAGNI drop SPRITES/PATH/TIMER/COUNTER/TIME/ANIMATE (~580 ř.) + atlas IIFE compute waste + UI Sun toggle + komentář drift fix. Model 13 → 8 tříd, `src/main.js` −1047 ř. (−29.5 %). Commit `46f686d`. Detail v `DONE.md` a `DESIGN_DECISIONS.md`.
+
+## M-Genesis arc (aktivní, sez. 48+)
+
+- [x] **Fáze 1: `%AUDIT:CODE` + cleanup** (sez. 48) — K1a-K1e + D1 + D2 + Sun toggle drop. DD-55 + commit `46f686d`.
+- [~] **Fáze 2: `%AUDIT:DOCS`** (sez. 48) — drift sync všech docs po cleanup + DD-55 entry + diary sez. 48.
+- [ ] **Fáze 3: IDEAS/TODO/DONE pruning** — close cut. Pruning cadence trigger 5/12.
+- [ ] **Fáze 4: `%CALIBRATE`** — port z PocketStory + projektová definice v `docs/PROMPTS.md` + run (meta-audit AI spolupracovníka + řídících docs).
+- [ ] **Fáze 5: Close ceremonie** — README `## Status` update na v1.0 + git tag `v1.0-terrain` (annotated push) + IDEAS.md brain-dump pro post-close arc (FindPath multi-modal + generátor/transformátor/konzument supply chain).
 
 ## Otevřené M8+
 
@@ -73,6 +81,6 @@ Kandidáti bez explicit user signal — drží se jako kotvy, neaktivní:
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — **1/8** *(sez. 47 tick — SEASON expansion, sez. 46 reset)*. Next: ~sez. 54.
-- **`%AUDIT:DOCS`** — **8/10** *(sez. 40-47 jen impl/audit-code)*. Next: ~sez. 49.
-- **IDEAS/TODO pruning** — **4/12** *(sez. 43 full pruning DONE + sez. 46/47 přiměřený pruning)*. Next: ~sez. 55.
+- **`%AUDIT:CODE`** — **0/8** *(sez. 48 user-driven trigger + reset — K1+D1+D2 cleanup)*. Next: ~sez. 56.
+- **`%AUDIT:DOCS`** — **0/10** *(sez. 48 trigger + reset — M-Genesis arc Fáze 2)*. Next: ~sez. 58.
+- **IDEAS/TODO/DONE pruning** — **5/12** *(sez. 48 partial sync, plné pruning v Fázi 3)*. Next: M-Genesis arc Fáze 3.

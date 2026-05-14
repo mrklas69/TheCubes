@@ -1555,3 +1555,75 @@ Skeleton splňuje **DRY** (LIQUID koncept v jednom místě, ne raw records mixed
 - Memory: [[project-target-use-case]], [[feedback-target-use-case-check]].
 - Sez. 45 user note: „Třeba někdy dojde na fyziku kapalin." — schválení LIQUID jako samostatné vrstvy s budoucí extension hooks (TEMPERATURE °C / FLOW / VISCOSITY).
 
+## DD-55 — M-Genesis cleanup scope locked (sez. 48)
+
+**Rozhodnutí:** Po DD-32 (sez. 24) terrain generator pivotu a polish arc (sez. 42–47) je terrain generator iterace v1.0 hotová. Sez. 48 formálně **uzavírá scope aktivního modelu na 8 tříd** drop M1-M5 milestone artefaktů bez živého konzumenta v terrain scope. Per memory `feedback-test-nic-overthinked-nelze-odebrat` (user 2026-05-14): *„Mi naopak máme nějakou základní verzi (iteraci), ve které nic nechybí a nic (zbytečného, přemyšleného (overthinked)) nelze odebrat/zjednodušit."* DD-55 je realizace toho cílu pro M-Genesis arc.
+
+**Kontext:** `%AUDIT:CODE` sez. 48 identifikoval ~580 ř. infrastruktury v `src/main.js` + ~80 ř. v `src/model.js` + 30 ř. `src/time.js` pro M1-M5 patterny (SPRITES/PATH/TIMER/COUNTER/TIME/ANIMATE) bez `new Class(...)` instance napříč src/. Per DD-32 politika *„atribut přibude jen s živým konzumentem"* (sez. 29 prvně aplikovaná pro WORLD wipe + sez. 32 re-introduce s živými konzumenty) by se měla aplikovat symetricky i na třídy/dispatch mechanismy, ne jen atributy.
+
+**Aktivní scope po DD-55 (model.js, 8 tříd):**
+
+```
+OBJECTS (ID, NAME, DESCRIPTION)
+ ├── CUBES (X, Y, Z float; Y konvence per typ — DD-28)
+ │    ├── BLOCKS (1C grid, Y = grid center, ORIENTATION — DD-26)
+ │    │    ├── CCUBES (COLOR)
+ │    │    ├── TCUBES (lowpoly vertex-color — DD-41)
+ │    │    ├── TRRAMPS
+ │    │    ├── TTRAMPS
+ │    │    └── TDRAMP
+ │    ├── COMPOSITES
+ │    │    ├── LAMP (DD-40)
+ │    │    └── DECOR (DD-49+DD-51 Fáze 6)
+ │    └── LIQUID (DD-54, **4. vrstva DD-25 extension po PATH dropu**)
+ └── WORLD (singleton — DD-38/DD-42/DD-50)
+```
+
+**Smazáno sez. 48 (K1+D1+D2 + Sun toggle drop):**
+
+- **K1a `ANIMATE` dispatch (~80 ř.)** — `ANIMATE` atribut z OBJECTS, `ANIMATORS` registry, 4 kindy `rotate`/`orbit_stadium`/`pulse`/`drift` + `animate*` funkce, `registerAnimator`, `updateAnimations`, `animators[]`, scratch vektory `TAU`/`_up`/`_dir`/`_a`, `oscPhase`, `ANIMATE` infotip case + filter. DD-15 reference v immutable logu.
+- **K1b `SPRITES` třída + bubble tail (~250 ř.)** — `class SPRITES extends CUBES` + atributy `ASSET`/`SPEAKER`/`SPEAKER_OFFSET_Y`, `createSpriteFor`, `makeBubbleTexture` (canvas dialog bubble), `resolveSpeakerTarget` + `buildBubbleTail` + `updateBubbleTail` + `updateBubbleTails` + `bubbleTails[]` registry, SPRITES branch v `createMeshFor` + hover skip. DD-13/DD-16 reference v immutable logu.
+- **K1c `PATH` třída + Catmull-Rom strip (~70 ř.)** — `class PATH extends CUBES` + `POINTS`/`KIND`, `createPathFor` (Catmull-Rom curve3 + strip BufferGeometry), PATH constants (PATH_WIDTH/SEGMENTS/Y_OFFSET/UV_REPEAT), `pathTexture(kind)` cache, PATH branch v `createMeshFor` + POINTS infotip case. DD-27 reference v immutable logu.
+- **K1d `TIMER` + `COUNTER` + `ACTIONS` (~150 ř.)** — třídy `class TIMER extends OBJECTS` + `class COUNTER extends OBJECTS`, `registerTimer`, `registerCounter`, `tickHandlers[]` registry, `ACTIONS` dispatch table (`toggle`/`set`), `dispatchAction`, `registerBehavior` (TIMER/COUNTER branches), HUD `#hud` + `#time` DOM element + CSS. DD-17 reference v immutable logu.
+- **K1e `TIME` singleton (~30 ř.)** — `src/time.js` soubor smazán (export `TIME` + `advanceTime()`), import z main.js, `setInterval(advanceTime + updateTickHandlers, 1000)` block. DD-04/DD-05 reference v immutable logu.
+- **D1 atlas IIFE compute waste (~50 ř.)** — 3× ramp `*_GEOM_CACHE` IIFE smaž `remapU(uv, faceIdx)` helper + UV array + UV params z `addQuad`/`addTri` signatures + UV args z call sites + `setAttribute("uv", ...)` na finálním geom + `deleteAttribute("uv")` v `getRampGeom`. Rename `TRRAMP_GEOM_CACHE`/`TTRAMP_GEOM_CACHE`/`TDRAMP_GEOM_CACHE` → `_TRRAMP_RAW_GEOM`/`_TTRAMP_RAW_GEOM`/`_TDRAMP_RAW_GEOM`. DD-41 follow-up (TODO ř. 70 known dluh).
+- **D2 atlas komentář drift (3 fixy)** — main.js 3 komentáře *„single-material atlas mapováním (DD-36)"*, *„1 atlas material"*, *„(geom, atlas mat)"*, *„patří atlasu / sdílené factory"* → DD-41 lowpoly vertex-color wording.
+- **UI Sun toggle drop** *(user follow-up v sez. 48)* — `set-sun` checkbox v index.html, `addEventListener("change", setSun)`, `_sunUserVisible` flag v main.js, `setSun(on)` z `window.settings` API. Slunce nyní vždy ON s auto-hide pod horizontem (`sun.position.y > SUN_HORIZON_Y_MIN`, sez. 47 −15° threshold). KISS: toggle pro „eye candy on/off" měl mizivou hodnotu, sun auto-hide v noci stačí.
+
+**Velikosti:**
+
+| Soubor | Před | Po | Δ |
+|---|---|---|---|
+| `src/main.js` | 2968 ř. | 2091 ř. | **−877 ř. (−29.5 %)** |
+| `src/model.js` | 532 ř. | 404 ř. | −128 ř. |
+| `src/time.js` | 30 ř. | (smazán) | −30 ř. |
+| `index.html` | 521 ř. | 516 ř. | −5 ř. |
+| **Celkem JS+HTML** | 4051 ř. | 3011 ř. | **−1040 ř. (−25.7 %)** |
+
+**Důvody (KISS argumentace):**
+
+1. **„Atribut s živým konzumentem" politika** (DD-29 → DD-32 sez. 29 + DD-38 sez. 32 reintro): původně aplikovaná na atributy WORLD. Sez. 48 rozšiřuje na celé třídy/dispatch mechanismy. Argumentace symmetric: třída + builder + register + dispatch je „infrastruktura"; pokud nemá konzumenta, je to *infrastruktura ve službě hypotetické budoucnosti* = porušení DD-29 ducha.
+2. **DD-32 terrain pivot scope** (sez. 24): M1-M5 patterny vznikly **pro sandbox cube playground** (statický svět s hodinami, dialog bubbles, animated balloons). Po DD-32 je projekt **procedural terrain sandbox**, kde scéna se generuje proceduralně z `generateTerrain` (DD-32) + parametrického klima driver (DD-42/44). Žádný spawn loop nepoužívá SPRITES (dialog) / PATH (cesta) / TIMER (event) / COUNTER (HUD) / ANIMATE (per-frame). Posledních 24 sezení (24–47) všechny patterny obcházejí.
+3. **`%AUDIT:CODE` cadence trigger** (sez. 48 user-driven, ne cadence threshold): user explicit vize *„základní iterace, ve které nic nechybí a nic overthinked nelze odebrat"*. Polish arc sez. 42–47 byl content-add; sez. 48 je první subtractive sezení v M-Genesis arc.
+4. **Git history zachování** (precedent TTUNELS class drop sez. 38, audit D2): smazané patterny **dostupné v git historii** (sez. 4–9 commits + sez. 48 commit `46f686d` jako audit trail). Revert je legitimní future pattern když přibude konzument (např. Stickman integrace → `ANIMATE` mode slot dle DD-18; gameplay vrstva → TIMER + COUNTER + ACTIONS pro discrete events).
+5. **Conceptual integrity** (CLAUDE.md princip): po cleanup model = *„all about terrain"*. 8 tříd v jednotném scope (OBJECTS/CUBES → BLOCKS/COMPOSITES/LIQUID/WORLD), žádné dispatch mechanismy bez konzumenta, žádné atributy bez konzumenta.
+
+**Důsledky:**
+
+- **DD-25 4-vrstvá taxonomie** se aktualizuje (immutable text DD-25 zachován, ale wording „4. vrstva = Objekty, 5. vrstva = Tekutiny" se po PATH dropu zjednodušuje na *„Bloky / Voxely / Objekty / Tekutiny"* = 4 vrstvy. DD-54 immutable text *„5. vrstva DD-25 extension"* zachován, ale fakticky jde nyní o 4. vrstvu — viz update poznámka v GLOSSARY).
+- **DD-16 SPEAKER pattern** + **DD-15 ANIMATE pattern** + **DD-17 TIMER+ACTION pattern** = immutable lessons v DD logu. Pokud někdy přibude konzument, pattern je čitelný z DD entries, ne nutně z aktivního kódu.
+- **Stickman integrace** (sibling project `./source/Stickman`, memory `reference-stickman-project`) bude potřebovat ANIMATE dispatch zpět — revert z git history (sez. 4-9 commits) nebo nový impl per use case.
+- **Asset import pipeline** (TODO M8+) — pokud budoucí glTF Loader entity bude potřebovat ANIMATE pro skeletal anim, revert z git history.
+- `src/composites/{toolkit,builders}.js` zachovány = aktivní DECOR pipeline (DD-49).
+
+**References:**
+
+- DD-04 / DD-05 / DD-13 / DD-15 / DD-16 / DD-17 / DD-27 — immutable patterny pro smazané M1-M5 artefakty.
+- DD-25 (sez. 16) — 4-vrstvá taxonomie. Po sez. 48 PATH drop se LIQUID (DD-54 5. vrstva extension) fakticky stává 4. vrstvou. Immutable text DD-25 zachován.
+- DD-29 → DD-32 sez. 29 + DD-38 sez. 32 — politika „atribut/třída s živým konzumentem". DD-55 rozšiřuje politiku ze samotných atributů na celé dispatch mechanismy.
+- TODO ř. 70 *„Atlas IIFE raw geom strip UV at source"* — D1 cleanup realized.
+- `%AUDIT:CODE` sez. 48 (cadence threshold 1/8, ale user-driven trigger): 7 audit kategorií, 8 KEEP/DROP nálezů.
+- Git commit `46f686d` (sez. 48 M-Genesis cleanup commit) — audit trail pro `git log` traceability.
+- Memory: [[feedback-test-nic-overthinked-nelze-odebrat]], [[feedback-end-implies-push]].
+- Sez. 48 user verdikt na cleanup decision: *„PLNÝ K1 cut (K1a-K1e)" + „Teď hned"* + *„Slunce vždy ON"*.
+

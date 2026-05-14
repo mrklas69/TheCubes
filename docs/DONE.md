@@ -1318,3 +1318,67 @@ Bug v polar logice review: `altThreshold = 0` znamená Pass 1 chytá všechny ce
 - Memory `MEMORY.md` description sync.
 
 Žádný nový DD (A4=A — sky tint a polar variace = DD-50 plný scope follow-up implementation; sub-prah byl explicit v DD-50 entry, dnes plněn).
+
+## Sezení 48 (2026-05-14) — M-Genesis cleanup K1+D1+D2 + UI Sun toggle drop
+
+**Kontext:** Po sez. 47 SEASON expansion close user verdikt: *„Generátor považuji za dokončený před 5 sezeními, ale stálo to za to."* Sez. 48 start M-Genesis arc s otázkou *„dosažení prvního klíčového milníku — základní iterace, ve které nic nechybí a nic overthinked nelze odebrat"*. AI návrh `%THINK` + 3-fázový plán (audit code → audit docs → ceremonie). User volby: Q1 = label „v1.0 M-Genesis", Q2 = ano k AUDIT:CODE/DOCS/pruning/CALIBRATE/README, Q3 = direction (FindPath multi-modal + generátor/transformátor/konzument supply chain, late post-close arc), Q4 = ceremonii. Fáze 1 start: `%AUDIT:CODE` trigger (cadence 1/8, ale user-driven override legitimní).
+
+### Fáze 1: `%AUDIT:CODE` + cleanup
+
+- [x] **K1 cut: drop M1-M5 milestone artefakty bez živého konzumenta v terrain scope.** User volba: PLNÝ K1 cut (K1a-K1e) + commit teď.
+  - [x] **K1a ANIMATE dispatch** *(~80 ř.)* — `ANIMATORS` registry, 4 kindy `rotate`/`orbit_stadium`/`pulse`/`drift` + `animateRotate`/`animateOrbitStadium`/`animatePulse`/`animateDrift` funkce, `registerAnimator`, `updateAnimations`, `animators[]` registry, scratch vektory (`TAU`/`_up`/`_dir`/`_a`), `oscPhase` helper, `ANIMATE` atribut z OBJECTS constructor + JSDoc, `ANIMATE` infotip case + filter v `formatValue`/`renderTooltip`. DD-15 reference v immutable logu.
+  - [x] **K1b SPRITES + bubble tail (SPEAKER pattern)** *(~250 ř.)* — `class SPRITES extends CUBES` z model.js + `ASSET`/`SPEAKER`/`SPEAKER_OFFSET_Y` atributy, `createSpriteFor`, `makeBubbleTexture` (canvas dialog bubble 512×150 + zaoblený obdélník + text), `resolveSpeakerTarget` + `buildBubbleTail` (ConeGeometry 0.06×1×4) + `updateBubbleTail` + `updateBubbleTails` + `bubbleTails[]` registry, `_speakerTarget` scratch, SPRITES branch v `createMeshFor` + hover skip. DD-13/DD-16 reference v immutable logu.
+  - [x] **K1c PATH + Catmull-Rom strip** *(~70 ř.)* — `class PATH extends CUBES` z model.js + `KIND`/`POINTS` atributy, `createPathFor` (CatmullRomCurve3 + 64 sample strip BufferGeometry + UV scale 8×), `PATH_WIDTH`/`PATH_SEGMENTS`/`PATH_Y_OFFSET`/`PATH_UV_REPEAT` constants, `PATH_TEX_NAMES` + `_pathTexCache` + `pathTexture(kind)`, PATH branch v `createMeshFor` + POINTS infotip case. DD-27 reference v immutable logu.
+  - [x] **K1d TIMER + COUNTER + ACTIONS** *(~150 ř.)* — `class TIMER extends OBJECTS` + `class COUNTER extends OBJECTS` z model.js, `registerTimer`, `registerCounter` (dynamický HUD řádek), `tickHandlers[]` registry, `ACTIONS` dispatch table (`toggle`/`set`) + `dispatchAction`, `registerBehavior` (TIMER/COUNTER branches), `updateTickHandlers`. HUD `#hud` `<div>` + `#time` `<span>` z index.html + CSS (`#hud { ... }`, `#hud .label`, `#hud > div`). DD-17 reference v immutable logu.
+  - [x] **K1e TIME singleton** *(~30 ř.)* — `src/time.js` soubor smazán (export `TIME` + `advanceTime()` funkce), import `import { TIME, advanceTime } from "./time.js";` z main.js, `setInterval(() => { advanceTime(); updateTickHandlers(); }, 1000)` block. DD-04/DD-05 reference v immutable logu.
+- [x] **D1 atlas IIFE compute waste** *(~50 ř., TODO ř. 70 known dluh)* — 3× ramp `*_GEOM_CACHE` IIFE refactor: drop `remapU(uv, faceIdx)` helper, drop `uvs = []` array, drop UV params z `addQuad(p0..p3, n)` / `addTri(p0..p2, n)` signatures, drop `uv0..uv3` args z 5× call sites per IIFE, drop `setAttribute("uv", ...)` na finálním BufferGeometry. Rename `TRRAMP_GEOM_CACHE` / `TTRAMP_GEOM_CACHE` / `TDRAMP_GEOM_CACHE` → `_TRRAMP_RAW_GEOM` / `_TTRAMP_RAW_GEOM` / `_TDRAMP_RAW_GEOM`. Update v `getRampGeom` (drop `geom.deleteAttribute("uv")`). DD-41 follow-up.
+- [x] **D2 atlas komentář drift** *(3 fixy)* — main.js komentáře *„single-material atlas mapováním (DD-36)"*, *„1 atlas material"*, *„(geom, atlas mat) páru"*, *„patří atlasu / sdílené factory"* → DD-41 lowpoly vertex-color wording.
+- [x] **UI Sun toggle drop** *(user follow-up)* — User: *„Ještě raději dodám: Slunce vždy ON."* `<input type="checkbox" id="set-sun">` z index.html settings panelu, `addEventListener("change", setSun)` z `<script>`, `let _sunUserVisible = true;` flag v main.js, `setSun(on)` z `window.settings` API. `sunMesh.visible = sun.position.y > SUN_HORIZON_Y_MIN` (drop `_sunUserVisible &&`). Auto-hide pod horizontem stačí (sez. 47 −15° threshold).
+- [x] **Komentáře cleanup** — drop SPRITES/PATH references z main.js (`faceMaterialFor` komentář, `Pozn. pro SPRITES`, hover sekce, `meshByInstance` discriminated union komentář).
+- [x] **Browser smoke test** — terrain renderuje, hover funguje, slidery DAY/Climate/SEASON regenerují, settings DOF/Fog toggles funguje. User ack.
+
+### Velikosti
+
+| Soubor | Před | Po | Δ |
+|---|---|---|---|
+| `src/main.js` | 2968 ř. | 2091 ř. | **−877 ř. (−29.5 %)** |
+| `src/model.js` | 532 ř. | 404 ř. | −128 ř. |
+| `src/time.js` | 30 ř. | (smazán) | −30 ř. |
+| `index.html` | 521 ř. | 516 ř. | −5 ř. |
+| **Celkem JS+HTML aktivní kód** | 4051 ř. | 3011 ř. | **−1040 ř. (−25.7 %)** |
+
+### Hierarchie modelu po cleanup
+
+```
+OBJECTS (ID, NAME, DESCRIPTION)
+ ├── CUBES (X, Y, Z float)
+ │    ├── BLOCKS → CCUBES / TCUBES / TRRAMPS / TTRAMPS / TDRAMP
+ │    ├── COMPOSITES → LAMP / DECOR
+ │    └── LIQUID (DD-54 4. vrstva po PATH dropu)
+ └── WORLD (singleton)
+```
+
+13 tříd → **8 tříd**.
+
+### Rozhodnutí
+
+- **DD-55 M-Genesis cleanup scope locked** (immutable) — `docs/DESIGN_DECISIONS.md`.
+- **Single commit** `46f686d` na main + push (per memory `feedback-end-implies-push`).
+
+### Reference
+
+- `docs/DESIGN_DECISIONS.md` — DD-55 plný kontext + výčet drop + důvody.
+- `docs/diary/2026-05-14.md` — sezení 48 detailní průběh.
+- Commit `46f686d` — audit trail pro `git log` traceability.
+- Memory: `[[feedback-test-nic-overthinked-nelze-odebrat]]` (nová), `[[feedback-end-implies-push]]`.
+
+### Fáze 2: `%AUDIT:DOCS` (sez. 48)
+
+- [x] GLOSSARY drift cleanup — drop SPRITES/PATH/TIMER/COUNTER/TIME/ANIMATE sekce, sync UI Settings (2 checkbox), Sun mesh, Vizuální zdroje (3 → 2), LIQUID 5.→4. vrstva, header sez. 45 → sez. 48 + DD-55.
+- [x] README Status + Milníky + Hierarchie + Plán — sez. 41 → sez. 48 M-Genesis cleanup, hierarchie diagram update, „Smazáno sez. 48" sekce, M-Genesis arc 5-fázový plán.
+- [x] CLAUDE.md Key Files — model.js/main.js popis sync s 8 tříd modelem, time.js row drop, DD range na DD-55, %CALIBRATE projektová zmínka.
+- [x] DESIGN_DECISIONS.md DD-55 — plný immutable entry s K1+D1+D2 + Sun toggle drop + 5 KISS důvodů + references.
+- [x] TODO Recent DONE + cadence sync — sez. 34-48, M-Genesis arc 5-fázový plán jako aktivní úkoly.
+- [x] DONE sez. 48 entry — tato sekce.
+- [ ] DIARY index + sez. 48 file — bude součást tohoto commitu.
+- [ ] IDEAS sync sez. 48 — TIMER/COUNTER/WORLD ř. 53 update.

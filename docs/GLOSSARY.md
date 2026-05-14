@@ -1,6 +1,6 @@
 # Glossary
 
-Canonical terminologie projektu TheCubes. Stav po sez. 45 (DD-32 terrain sandbox pivot, DD-33 ramp smoothing layer, DD-34 orientation mapping centralizace, DD-35 TDRAMP class, DD-36 TCUBES atlas pipeline *(nahrazeno DD-41)*, DD-37 InstancedMesh batch pipeline, DD-38 WORLD re-introduce s DAY/DAY_SPEED *(sun position math superseded DD-43, atmospheric lerp 2-keypoint superseded DD-48)*, DD-39 atmospheric lerping *(2-keypoint nahrazen 3-keypoint DD-48)*, DD-40 LAMP/SpotLight pattern, DD-41 lowpoly vertex-color pipeline, DD-42 G2 Climate WORLD LATITUDE×HUMIDITY + sun tilt driver, DD-43 DAY mapping standardizace 0.5=poledne, DD-44 G3 SURFACES driver-derived per biome *(BIOME_SURFACES 4-col → 3-col v DD-47 drop water)*, DD-45 fBm+ridge³ heightmap pro high relief, DD-46 smoothstep bimodální heightmap pro r≥6, DD-47 G6 climate-driven surface state *(drop water surface kind, snow distribution per LATITUDE, water LIQUID prototype flood-fill, ice materials)*, DD-48 atmospheric color extensions *(sun color 3-keypoint piecewise + sky 3-keypoint dusk + adaptive fog + ice + water wave anim)*, DD-49 krajinné COMPOSITES *(plná impl sez. 40: generická `DECOR` třída + 5 procedurálních builderů spruce/oak/bush/rock/grass_tuft + biome-aware density driver)*, **DD-50 WORLD.SEASON driver** *(4-enum spring/summer/autumn/winter, temperate snow patchThreshold + water freezeRatio per season)*, **DD-51 seasonal foliage cycle** *(LEAF_AUTUMN oak/bush v autumn, winter defoliation: oak.snowed = kmen-only, bush.snowed = skip entity; spruce season-invariant; DECOR.SEASON 9. atribut)*, **DD-52 slope-aware DECOR Y** *(`ramps[].slopeDir` unit vector + lineární `slopeT` interp v `decorate()`)*, DD-53 *(attempt + revert sez. 42 — water bbox clustering, z-fight artifact, rollback per 20×20 target use case)*, **DD-54 LIQUID class jako 5. vrstva DD-25 extension: Tekutiny** *(sez. 45, `class LIQUID extends CUBES` sibling BLOCKS/COMPOSITES/PATH pod CUBES, atributy LEVEL/TEMPERATURE/BOUNDING_BOX/CELLS, skeleton prototype single-cell instance, plný BFS clustering = sub-prah)*). Smazané třídy a koncepty (FACILITY rodina + factory toy, severská dioráma s pixel-voxel COMPOSITES, VOXEL_MODEL infrastruktura) žijí v immutable diary jako historický kontext — zde se neuvádějí.
+Canonical terminologie projektu TheCubes. Stav po sez. 48 M-Genesis cleanup (DD-32 terrain sandbox pivot, DD-33/34/35 ramp smoothing layer + TDRAMP, DD-36 TCUBES atlas pipeline *(nahrazeno DD-41)*, DD-37 InstancedMesh batch pipeline, DD-38 WORLD re-introduce s DAY/DAY_SPEED *(sun position math superseded DD-43, atmospheric lerp 2-keypoint superseded DD-48)*, DD-39 atmospheric lerping *(2-keypoint nahrazen 3-keypoint DD-48)*, DD-40 LAMP/SpotLight pattern, DD-41 lowpoly vertex-color pipeline, DD-42 G2 Climate WORLD LATITUDE×HUMIDITY + sun tilt driver, DD-43 DAY mapping standardizace 0.5=poledne, DD-44 G3 SURFACES driver-derived per biome, DD-45 fBm+ridge³ heightmap pro high relief, DD-46 smoothstep bimodální heightmap pro r≥6, DD-47 G6 climate-driven surface state *(drop water surface kind, snow distribution per LATITUDE, water flood-fill, ice materials)*, DD-48 atmospheric color extensions, DD-49 krajinné COMPOSITES *(DECOR + 5 builderů + biome-aware density driver)*, DD-50 WORLD.SEASON driver *(4-enum)*, DD-51 seasonal foliage cycle, DD-52 slope-aware DECOR Y, DD-53 *(attempt + revert sez. 42 — water bbox clustering)*, DD-54 LIQUID class *(4. vrstva DD-25 extension: Tekutiny; po sez. 48 PATH dropu posunuto z 5. na 4. vrstvu)*, **DD-55 M-Genesis cleanup scope locked** *(sez. 48, K1+D1+D2 — drop SPRITES/PATH/TIMER/COUNTER/TIME/ANIMATE bez živého konzumenta + atlas IIFE compute waste + UI Sun toggle, model 13 → 8 tříd)*). Smazané třídy a koncepty (FACILITY rodina + factory toy, severská dioráma, VOXEL_MODEL infrastruktura, M1-M5 milestone artefakty SPRITES/PATH/TIMER/COUNTER/TIME/ANIMATE) žijí v immutable diary + git historii jako historický kontext.
 
 **Identita projektu po DD-32 (sez. 24) + DD-44 (sez. 36):** model-first **procedurální terrain sandbox** s OOP modelem jako runtime. User nastavuje parametry krajiny (size, relief 0..10, seed) + Climate (LATITUDE × HUMIDITY) přes UI panel; surface mix je driver-derived z Climate (DD-44, `BIOME_SURFACES` lookup); `generateTerrain` v `src/terrain.js` produkuje 3D scénu z hierarchie BLOCKS. Předchozí identitní vrstvy (factory toy DD-30/DD-31, severská dioráma DD-25/DD-27) zafixované v git historii jako uzavřené kapitoly.
 
@@ -8,7 +8,7 @@ Canonical terminologie projektu TheCubes. Stav po sez. 45 (DD-32 terrain sandbox
 
 ### Kořenové třídy
 
-- **OBJECTS** — kořenová třída všeho v modelu. Atributy: `ID varchar(32)`, `NAME varchar(64)`, `DESCRIPTION varchar(1024)`, `ANIMATE` (default `null`, viz níž). Všechny třídy (vizuální i nevizuální) dědí z OBJECTS.
+- **OBJECTS** — kořenová třída všeho v modelu. Atributy: `ID varchar(32)`, `NAME varchar(64)`, `DESCRIPTION varchar(1024)`. Všechny třídy (vizuální i nevizuální) dědí z OBJECTS. *(Sez. 48 cleanup: `ANIMATE` atribut dropnut spolu s ANIMATE dispatch — bez konzumenta v terrain scope.)*
 - **CUBES** — potomek OBJECTS pro cokoli s polohou v prostoru. Atributy navíc: `X`, `Y`, `Z` (float, DD-12 — sdílený souřadný systém; voxelové potomky si pozici v rendereru zaokrouhlí). Default vizualizace = voxel krychle se šachovnicí (DD-07), potomci override. Pojem „cube" je projektová značka, ne technická klasifikace.
 
 ### Bloky (BLOCKS rodina, DD-25)
@@ -30,14 +30,15 @@ V BLOCKS rodině v praxi jen násobky 90° (cardinální orientace svahu / osy t
 
 ### Ostatní potomky CUBES
 
-- **SPRITES** — potomek CUBES vizualizovaný jako 2D billboard (obrázek vždy otočený ke kameře). Atributy: `ASSET` (`null` → fallback šachovnice; `string` → canvas-generovaná dialogová bublina s textem v zaobleném obdélníku), `SPEAKER` (volitelný cíl dynamického 3D ocásku — instance nebo `{x,y,z}` literál, viz DD-16), `SPEAKER_OFFSET_Y` (vertikální offset nad cílovou instanci, default 0.5). Použití: dialog bubble, label, 2D entita. Pozice float (DD-12), sprite stíny neumí (záměr). *(M5 + M8+ dynamický ocásek.)*
-- **COMPOSITES** *(abstract)* — potomek CUBES určený pro 3D mesh ze složek (`Group` s více meshi). Po DD-32 (sez. 24) bez pixel-voxel potomků (TREE/GRASS_TUFT/ROCK_PIXEL/LOG smazány, VOXEL_MODEL infrastruktura smazána sez. 29). První znovu-aktivní potomek je **LAMP** (sez. 33, DD-40). Pozice spojitá (float), bez snap-to-grid; Y = world surface (DD-28).
+- **COMPOSITES** *(abstract)* — potomek CUBES určený pro 3D mesh ze složek (`Group` s více meshi). Po DD-32 (sez. 24) bez pixel-voxel potomků (TREE/GRASS_TUFT/ROCK_PIXEL/LOG smazány, VOXEL_MODEL infrastruktura smazána sez. 29). Aktivní potomci: **LAMP** (sez. 33, DD-40) a **DECOR** (sez. 40, DD-49). Pozice spojitá (float), bez snap-to-grid; Y = world surface (DD-28).
 - **LAMP** *(sez. 33, DD-40)* — pouliční lampa Victorian-style. COMPOSITES potomek bez vlastních atributů (zdědí `ORIENTATION` pro rotaci kolem Y). Builder `buildLamp` vyrobí Group: dark-iron sloup 2 j + horizontální paže 0.6 j + visící emissive stínítko + `THREE.SpotLight` uvnitř stínítka (kuželové oranžové světlo dolů, `castShadow=true`, 512×512 cube shadow map). Pattern *„světelný zdroj uvnitř meshe → mesh `userData.noShadow = true`"* aby mesh okolo nebloval vlastní paprsky. Třída + builder + dispatch v `createMeshFor` zachovány i bez aktivní instance ve scéně (sez. 33 testovala, pak odebrala).
 - **DECOR** *(sez. 39 kotva DD-49, sez. 40 implementace, sez. 41 DD-51 seasonal cycle + DD-52 slope-aware Y)* — generická COMPOSITES třída pro krajinné dekorace (stromy/keře/kameny/tráva). Atributy: `KIND` (string lookup do `DECOR_BUILDERS`), `SEED` (number, deterministic varianty per instance), `SCALE` (default 1.0), `SNOWED` (boolean, propagované z `cells[i].snowed` v `decorate()` — builder dle flagu přebarví vegetaci/top rock na `SNOW_WHITE`), `SEASON` *(DD-51 sez. 41, string default `"summer"`)* — propagovaný z `world.SEASON` přes `decorSpec.season` → `decorations[].season` → builder `opts.season`. Builder pattern: `buildSpruce/Oak/Bush/Rock/GrassTuft(group, { seed, scale, snowed, season })` mutuje prázdný `THREE.Group` faceted lowpoly primitivy (CylinderGeom / ConeGeom / IcosahedronGeom(0)) se sdíleným `MeshLambertMaterial({ flatShading: true })` per color. Shared toolkit (`src/composites/toolkit.js`): `lowpolyMat` per-color singleton + `getGeomCache` per-(KIND × part) geometry singleton + 7 paleta konstanty (`BARK_BROWN`/`LEAF_GREEN`/`LEAF_AUTUMN`/`ROCK_GRAY`/`GRASS_GREEN`/`BUSH_GREEN`/`SNOW_WHITE`) + re-export `mulberry32` z terrain.js. **Seasonal foliage cycle (DD-51):** oak/bush (listnaté) spring/summer → LEAF_GREEN/BUSH_GREEN, autumn → LEAF_AUTUMN (oranžová), winter (snowed) → defoliated (oak = kmen-only, bush = skip entity v `decorate()` filter); spruce season-invariant (jehličnan); priorita v builderu `snowed > autumn > default`. Biome-aware spawn: `DECOR_DENSITY[latitude][humidity]` lookup v `terrain.js` (wet 0.80→0.20 lineární škála po lat; sez. 41 oak/spruce × 2 pro hustší prales), `DECOR_BASE_SCALE` per-KIND faktor (vegetace/rock `1/3` sez. 41, grass_tuft `1.0×`), `decorate(cells, ramps, latitude, humidity, season, seed)` Krok 7 v `generateTerrain` → `decorations[]` pole. **Y konvence (DD-52 sez. 41):** non-ramp cell `decY = y_top + 0.5` (top face); ramp cell `decY = y_top + 1.0 + slopeT` kde `slopeT = (jitterX·dx + jitterZ·dz) / (|dx|+|dz|)` z `ramps[].slopeDir`. 5 KIND impl: `spruce`/`oak`/`bush`/`rock`/`grass_tuft`. Sub-prah Fáze 6: `stump`/`log`/`palm`/`cactus`/`flower`/`_dead` postfix/density UI control/InstancedMesh refactor (priorita sez. 42 po perf trigger). *(Vrátí decoration vrstvu COMPOSITES po DD-32 wipe sez. 24 pixel-voxel TREE/GRASS_TUFT/ROCK_PIXEL/LOG.)*
 
-### Tekutiny (LIQUIDS 5. vrstva DD-25 extension, DD-54, sez. 45)
+### Tekutiny (LIQUIDS 4. vrstva DD-25 extension, DD-54, sez. 45)
 
-- **LIQUID** — tekutina (jezero, řeka, ...). Potomek CUBES (= `LIQUIDS` abstract base třída zatím nezavedena, čeká na druhého sourozence — paralel PATH/LINES pattern per DD-27 vzoru *„abstract base až s 2. konkrétním potomkem"*). 1 instance = 1 connected basin. **Sez. 45 prototype skeleton:** 1 LIQUID = 1 water cell (single-cell instance), plný BFS connected-components clustering = sub-prah. Atributy:
+> **Sez. 48 cleanup:** PATH třída (DD-27, 3. vrstva LINES) dropla jako M1 artefakt bez konzumenta. LIQUID se z původní 5. vrstvy posouvá na 4. (DD-25 nyní: Bloky / Voxely / Objekty / Tekutiny). DD-54 immutable text zachovává „5. vrstva DD-25 extension" wording — viz DD-55 sez. 48 update poznámku.
+
+- **LIQUID** — tekutina (jezero, řeka, ...). Potomek CUBES (= `LIQUIDS` abstract base třída zatím nezavedena, čeká na druhého sourozence — pattern „abstract base až s 2. konkrétním potomkem" per DD-27 vzoru). 1 instance = 1 connected basin. **Sez. 45 prototype skeleton:** 1 LIQUID = 1 water cell (single-cell instance), plný BFS connected-components clustering = sub-prah. Atributy:
   - `LEVEL` — Y hladiny (sémanticky čitelnější alias pro `Y`; reálně `Y = LEVEL`). Skeleton drží oba kvůli budoucí extension (mesh Y může mít nudge offset proti z-fightu, `LEVEL` zůstává čistá logická hladina).
   - `TEMPERATURE` — `"frozen"` | `"liquid"` enum. Material decision v `createLiquidPlane` (`_iceMat` vs. `_waterMat`). Budoucí: numerický °C pro permafrost / lávu.
   - `BOUNDING_BOX` — `{ w, d }` axis-aligned XZ extent v 1C jednotkách. Prototype vždy `{ w: 1, d: 1 }`.
@@ -45,18 +46,8 @@ V BLOCKS rodině v praxi jen násobky 90° (cardinální orientace svahu / osy t
 
   Spawn: `terrain.water[]` raw records (`{x, y, z, frozen, w, d}` z `generateTerrain` Krok 6 Wang & Liu 2006 priority flood) → `buildScene` spawn loop v `main.js` wrappuje do `new LIQUID(id, "Tekutina", x, level, z, temperature, bbox, cells)` + `createLiquidPlane(liquid)` → scene.add. Per DD-11 model/engine separation: `terrain.js` nezná `model.js`, drží raw records. Internal materiály `_waterMat`/`_iceMat`/`_waterGeom`/`_waterMeshes` zachovány (= implementation locality, rename na `_liquid*` až přibude 2. sourozenec). Budoucí extension hooks („fyzika kapalin"): `FLOW_DIRECTION` (rivers/streams paralel PATH POINTS), `VISCOSITY` (lava/oil/acid), `LEVEL` animace (tide/flood/sezonní tání). *(DD-54 sez. 45.)*
 
-### Linie (LINES vrstva 3, DD-25)
-
-- **PATH** — 1D křivka jako plochý strip mesh. Potomek CUBES (= LINES rodina abstract base třída zatím nezavedena, čeká na druhého sourozence TRACK). Atributy:
-  - `KIND` (string, default `"dirt"`) — řídí texturu povrchu. Aktuálně implementován jen `"dirt"` (procedurální štěrková textura `:path-dirt`).
-  - `POINTS` (pole `[x, y, z]` kontrolních bodů ve world coords). `instance.X/Y/Z` se nepoužívá (cesta žije v world coords; constructor volá `super(0, 0, 0, ...)`).
-
-  Engine `createPathFor`: `THREE.CatmullRomCurve3` (typ `catmullrom`, tension 0.5), 64 vzorků, generuje strip BufferGeometry s positions/uvs/indices. Šířka 0.5 j, Y offset +0.005 j proti z-fightingu, repeating texture UV scale 8× podél délky. **Rovný směr v krajních bodech** — Three.js v non-closed Catmull-Rom curvě používá v krajních bodech reflexi sousedního, tj. tangenta v `P[0]` = `P[1] − P[0]`; pokud `P[0].Z = P[1].Z`, tangenta je čistě podél X (= rovný vstup/výstup). *(Sez. 17 DD-27.)*
-
 ### Nevizuální potomky OBJECTS
 
-- **TIMER** — atributy: `INTERVAL` (počet ticků mezi firem) a `ACTION = { kind, target, attr, value? }`. První skutečná reakce na `TIME.tick` (DD-04 dostal use case). Engine dispatch `ACTIONS[kind]` — aktuálně `toggle` (flip bool) a `set` (nastavit hodnotu). Registrace přes `registerBehavior(instance)` (symetrický sibling `scene.add(createMeshFor(...))` pro vizuální entity). Viz DD-17. *(M8+.)*
-- **COUNTER** — atributy `VALUE` (int, default 0) a `INCREMENT` (int, default 1, může být záporné). Engine při `registerBehavior` dynamicky přidá řádek do HUD elementu `#hud` a v tick handleru mutuje `VALUE += INCREMENT`. Demonstruje **HUD observability** — nevizuální ≠ neviditelný, COUNTER je čitelný vedle `TIME`. *(M8+.)*
 - **WORLD** — singleton DO (Data Object) pro globální atributy scény. Bez `X/Y/Z` (DD-01 demonstrace separace vizuální/modelová entita). Aktuální atributy:
   - `DAY ∈ [0,1)` (fáze 24h cyklu, **DD-43 mapping**: `0=půlnoc`, `0.25=východ`, `0.5=poledne` *(default)*, `0.75=západ`). Supersede DD-38 původní `0.25=poledne` mapping.
   - `DAY_SPEED ∈ ℝ` (cykly za sekundu; default `0.001` = ~17 min/cyklus, sez. 40 user wish).
@@ -65,21 +56,6 @@ V BLOCKS rodině v praxi jen násobky 90° (cardinální orientace svahu / osy t
   - `SEASON ∈ {spring, summer, autumn, winter}` *(DD-50, sez. 40; sez. 47 plný scope)* — roční období. Default `summer` (bezsezonní stav). Konzumenti: `snowSpecForLatitude(lat, season)` modifikuje temperate `patchThreshold` (zima 60 % snow, summer 0 %) i polar (winter 100 %, summer 60 % — ablation, sez. 47); `waterSpecForClimate(lat, hum, season)` modifikuje temperate `freezeRatio` (zima 0.7 ice, summer 0.0) i polar (winter 1.0, summer 0.4, sez. 47). Tropical/subtropical season-invariant. Plus sky+sun HSL tint v `updateAtmosphere`/`updateSun` pro temperate LATITUDE (sez. 47).
 
   Engine konzumenti: `updateSun()` derivuje pozici DirectionalLight + intensity + sun mesh z `DAY` × `LATITUDE`; `updateAtmosphere()` lerpuje sky/fog/ambient z `DAY` (DD-39); `updateWorldTime(dt)` inkrementuje `DAY` o `dt * DAY_SPEED`; `buildScene()`/`regenerateScene()` derivují `surfaces` parametr `generateTerrain` z `LATITUDE × HUMIDITY` přes `surfacesForBiome()` (DD-44). Politika *„atribut přibude jen s živým konzumentem"* držena (DD-29 → DD-38 → DD-42 → DD-44). Sez. 20 zavedl s `WIND_STRENGTH`; sez. 29 audit ho odstranil po DD-32 wipe `tree_sway`; sez. 32 vrátil s `DAY`/`DAY_SPEED` (DD-38); sez. 35 přidal `LATITUDE`/`HUMIDITY` (DD-42) + DAY mapping fix (DD-43); sez. 36 přidal `BIOME_SURFACES` druhého konzumenta (DD-44). Dev exposure: `window.world`. *(M8+.)*
-
-## Čas
-
-- **TIME** — globální čítač tiků. Monotonně rostoucí nezáporné celé číslo. Určené pro **diskrétní události** — first use case `TIMER` (DD-17, sez. 9).
-- **tick** — jedno zvýšení TIME o 1. Tikne jednou za sekundu. Po inkrementu engine volá `updateTickHandlers()` — fire zaregistrovaných `tickHandlers[]` (TIMER instance).
-- **ACTION** — recept diskrétní akce `{ kind, target, attr, value? }` vystřelený TIMER-em. Engine dispatch `ACTIONS[kind]` — izomorfně s `ANIMATE` (DD-15). Aktuální `kind`y: `toggle` (flip bool), `set` (přiřadit hodnotu). Viz DD-17.
-- **ANIMATE** — atribut `OBJECTS` s receptem plynulého pohybu: `null` (default, statický) nebo objekt `{ kind: "<string>", ...params }`. Engine v render loopu volá `updateAnimations(tSeconds)` s wall-clockem (`performance.now() / 1000`), lookup `ANIMATORS[anim.kind]` dispatchuje na konkrétní per-frame funkci. Viz DD-15. Po DD-32 wipe (sez. 24) zůstávají `kind`y: `rotate`, `orbit_stadium`, `pulse`, `drift` (bez aktivních klientů ve scéně, ale připravené). Tři osy mutace: **díly** (`userData.parts`), **transformace** (`object3d.rotation` / `position`), **materiál** (`material.emissive*`). *(M7.)*
-- **base** — `object3d.userData.base = { x, y, z }` — snapshot počáteční polohy instance, pořízený při `registerAnimator`. Transformační animátory (`orbit_stadium`, `drift`) z něj čtou referenční bod (střed dráhy).
-
-### Aktivní `ANIMATE.kind`y
-
-- **rotate** — rovnoměrná rotace celého Object3D kolem zadané osy. Parametry `axis` (`"x"`/`"y"`/`"z"`, default `"y"`) a `period` (doba jednoho otočení v sekundách). Generický — mutuje `object3d.rotation` přímo, funguje napříč třídami.
-- **orbit_stadium** — uzavřená oválná dráha (atletický ovál = 2 rovné úseky + 2 půlkruhy) v rovině XZ kolem `userData.base`. Parametry `length` (L, rovná část; dlouhá osa X), `radius` (R, poloměr oblouku; krátká osa 2R), `period` (T, doba oběhu). Heading (`rotation.y`) sleduje tečnu dráhy.
-- **drift** — lineární pohyb po jedné ose s **wrap-around** — když objekt opustí pás šířky `range`, vrátí se z opačné strany (skok). Parametry: `axis` (default `"x"`), `speed` (j/s, default 1.0), `range` (default 16). Pozice obíhá v intervalu `[base − range/2, base + range/2]`.
-- **pulse** — emisivní pulsace materiálu. Sinusově mění `material.emissiveIntensity` mezi `min` a `max` s danou `period`. Parametry: `period` (s), `min` (default 0), `max` (default 1.0), `color` (optional 0xRRGGBB). Volitelná dvojice `opacityMin`/`opacityMax` — pokud aspoň jeden zadán, engine zapne `transparent = true` a synchronně mění i `material.opacity`. Tiché skip pro materiály bez `emissive` (SpriteMaterial, ShadowMaterial, pole materiálů).
 
 ## Terrain generator (DD-32, sez. 25)
 
@@ -135,11 +111,10 @@ Komplexita O(N log N), pro 100×100 = 10k cells trivial.
 
 ## Vizuální zdroje
 
-TheCubes scéna se buduje ze tří vizuálních zdrojů:
+Po sez. 48 cleanup TheCubes scéna se buduje ze dvou vizuálních zdrojů:
 
 - **Voxelová podlaha / terrain** → procedurální **BLOCKS rodina** (TCUBES + TRRAMPS/TTRAMPS/TDRAMP) s lowpoly vertex-color paletou (DD-41).
-- **Dekorativní cesty** → **PATH** strip mesh (Catmull-Rom + procedural texture).
-- **Dialog / štítek / UI** → **SPRITES**.
+- **Krajinné dekorace + lampy + tekutiny** → **COMPOSITES** rodina (LAMP, DECOR) a **LIQUID** (PlaneGeometry water/ice).
 
 ### Lowpoly vertex-color pipeline (DD-41, sez. 34)
 
@@ -151,7 +126,7 @@ TheCubes scéna se buduje ze tří vizuálních zdrojů:
 
 **flatShading: false (důležitý fix).** BoxGeometry + ramp BufferGeometries už mají per-face normály v `geometry.attributes.normal` (vertices nesdílené přes faces) → flat look vzniká z geometrie. `flatShading: true` na materiálu by nutilo shader spočítat normálu z `dFdx/dFdy` derivatives → u **InstancedMesh** cross-instance precision drift = tenké šedé/černé seam linky mezi sousedy (DD-41 known fix sez. 34).
 
-**Slow path** (`_faceMaterialCache` Map v `faceMaterialFor`): non-terrain TCUBES (CCUBES default šachovnice DD-07, PATH, water plane, COMPOSITES). Jediná zachovaná cache po DD-41 — terrain TCUBES/rampy jdou batch path (DD-37) s jedním sdíleným `_lowpolyMat`, žádná per-kind cache potřeba. Perf HUD `mat` čítač = `_faceMaterialCache.size` jen.
+**Slow path** (`_faceMaterialCache` Map v `faceMaterialFor`): non-terrain TCUBES (CCUBES default šachovnice DD-07, water plane, COMPOSITES). Jediná zachovaná cache po DD-41 — terrain TCUBES/rampy jdou batch path (DD-37) s jedním sdíleným `_lowpolyMat`, žádná per-kind cache potřeba.
 
 **Engine-internal maps** (sez. 38 audit dodatek, [[D4]]): kritická infrastruktura, kterou onboard-čtenář potřebuje znát.
 - `_terrainBatches` (`main.js`) — `Map<string, InstancedMesh>` klíčované `"tcubes:<kind>"` / `"<typ>:<surface>"` → batch dispatched z `pushInstanceToBatch`. Sez. 31 DD-37 pipeline backbone.
@@ -172,14 +147,7 @@ JS-generované pixel-art textury 16×16 px. Sdílené přes `NAMED_TEXTURE_FACTO
 - `:grass-top` — travnatý povrch (paleta `GRASS_*`, patches).
 - `:stone` — kamenná textura (paleta `STONE_*`).
 - `:sand` — písčitá textura (paleta `SAND_*`).
-- `:path-dirt` — štěrková cesta (sez. 17). Kropenatý šum ~240 záplat 1–2 px šedých odstínů + hnědý ton. Použito v PATH.
-- `:rail-top` — kolejnice (template, není použitá v aktuální scéně — kandidát pro budoucí TRACK třídu).
-
-Pravidlo BLOCKS rodiny: **vrch `:grass-top`, jinak `:dirt`** napříč grass blok / TRRAMPS / TTRAMPS / TDRAMP (severská konvence sez. 17). Pozn.: po DD-41 (sez. 34) terrain BLOCKS textury nepoužívají — `:named-texture` paleta žije už jen ve slow path (CCUBES default + PATH).
-
-### Canvas SPRITES
-
-2D obrazy generované v JS (CanvasTexture, billboard otočený ke kameře přes `THREE.Sprite`). Volitelně přidružený 3D ocásek (THREE.Mesh jehlan, dynamicky sledující SPEAKER, DD-16). Použití: SPRITES třída — dialogové bubliny s textem (`ASSET = "string"`).
+Pravidlo BLOCKS rodiny: **vrch `:grass-top`, jinak `:dirt`** napříč grass blok / TRRAMPS / TTRAMPS / TDRAMP (severská konvence sez. 17). Pozn.: po DD-41 (sez. 34) terrain BLOCKS textury nepoužívají — `:named-texture` paleta žije už jen ve slow path (CCUBES default šachovnice DD-07). Po sez. 48 cleanup `:path-dirt` a `:rail-top` bez konzumenta (PATH dropla); zachovány v factory tabulce pro budoucí re-use.
 
 ## Měřítko a Y konvence (DD-22 + DD-28)
 
@@ -190,14 +158,14 @@ Pravidlo BLOCKS rodiny: **vrch `:grass-top`, jinak `:dirt`** napříč grass blo
 | Třída / rodina | `instance.Y` semantics | Pro stojící na grass podlaze (gy=−1) |
 |---|---|---|
 | **BLOCKS** (CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP) | grid Y voxelu (= mesh **center**) | `Y = 0` (1C blok nad podlahou) |
-| SPRITES, PATH | libovolný Y (free 3D space) | dle obsahu |
+| **COMPOSITES** (LAMP, DECOR), **LIQUID** | spojité Y (float, decY z `decorate()` na top voxelu) | dle scatter / flood-fill |
 
 **BLOCKS = grid-Y** (1C grid-aligned bloky terénu, snap-to-int v rendereru DD-12 vynucuje konvenci automaticky — uživatel uvažuje „blok je ve sloupci gy=0").
 
 ## Pojmy
 
-- **Texture** — 2D obraz aplikovaný na **plochu** meshe. Použití: PATH strip (Catmull-Rom texturovaný proužek), SPRITES billboardy (dialogy/štítky), šachovnice na mateřské CUBES (DD-07 placeholder pro neznámý kind), procedurální `:named-texture` slow path (CCUBES/COMPOSITES). Terrain TCUBES + rampy textury **nepoužívají** od DD-41 (sez. 34, lowpoly vertex-color pipeline).
-- **Sprite** — 2D obraz vždy otočený **ke kameře** (billboard). Použití: SPRITES třída.
+- **Texture** — 2D obraz aplikovaný na **plochu** meshe. Použití: šachovnice na mateřské CUBES (DD-07 placeholder pro neznámý kind), procedurální `:named-texture` slow path (CCUBES/COMPOSITES), ice canvas texture (`_iceTexture`, sez. 47). Terrain TCUBES + rampy textury **nepoužívají** od DD-41 (sez. 34, lowpoly vertex-color pipeline).
+- **Sprite** — 2D obraz vždy otočený **ke kameře** (billboard). Po sez. 48 cleanup SPRITES třída + canvas bubbles dropnuté (bez konzumenta v terrain scope).
 - **Voxel** — krychlová jednotka. 1 TC voxel = 1 m (= 1 instance CCUBES/TCUBES).
 - **Pixel-art** — vizuální styl s viditelnými „pixely". Dosahujeme přes `NearestFilter` na `CanvasTexture` (nezablurovaná interpolace) + nízké rozlišení (16×16 typicky). Sdílí se mezi procedurálními texturami (`:dirt`/`:grass-top`/…) a atlas pipeline (DD-36).
 - **Biome** — kind terénního povrchu (`grass`/`dirt`/`stone`/`sand` + DD-47 `_snow` postfix varianty per kind) — klastr v biome map noise. Klastruje se nízkofrekvenčním šumem do souvislých oblastí, ne per-cell randomly. *Water dropped po DD-47* — voda nyní entity LIQUID prototype přes priority flood, ne surface kind.
@@ -206,30 +174,31 @@ Pravidlo BLOCKS rodiny: **vrch `:grass-top`, jinak `:dirt`** napříč grass blo
 
 ## UI
 
-- **HUD** (head-up display) — překryvný panel v levém horním rohu pro globální stavy (`TIME` + dynamické řádky pro COUNTER instance).
-- **Perf HUD** *(sez. 28)* — diagnostický overlay v pravém horním rohu, throttled report 1×/s: **FPS** (rolling avg přes vteřinu), **calls** (`renderer.info.render.calls` per frame), **tri** (`renderer.info.render.triangles`), **geom** (`renderer.info.memory.geometries`), **mat** (velikost `_faceMaterialCache` Map = počet unikátních sdílených slow-path materiálů). Permanent UI, ne dev-only — observability pro budoucí perf refactory.
+- **Perf HUD** *(sez. 28)* — diagnostický overlay v pravém horním rohu, throttled report 1×/s: **FPS** (rolling avg přes vteřinu), **calls** (`renderer.info.render.calls` per frame), **tri** (`renderer.info.render.triangles`), **geom** (`renderer.info.memory.geometries`). Permanent UI, ne dev-only — observability pro budoucí perf refactory. *(Sez. 48 cleanup: `#hud` panel s `TIME` + COUNTER řádky dropnutý, perf HUD jediný permanentní HUD overlay.)*
 - **Terrain control panel** (`#terrainctrl`, sez. 26) — UI panel pravý dolní roh, řídí `generateTerrain` parametry: slidery size sx/sz (3..30), relief (0..10) s názvy stupňů, 4 surface slidery (auto-normalize), seed input. Trigger `change` event → `regenerateScene` (filter `userData.terrain` flag, remove + spawn).
 - **Infotip** — hover panel zobrazený po najetí myší na 3D reprezentaci instance. Obsah: název třídy + všechny vlastní atributy instance. Generický přes `Object.entries` — funguje pro libovolnou třídu dědící z OBJECTS. Viz DD-08.
 - **Hover highlight** — zvýraznění objektu pod kurzorem. Dva mechanismy podle reprezentace instance (DD-37 sez. 31):
   - **Batch case** (terrain bloky/rampy v `InstancedMesh`) — `setColorAt(idx, HOVER_TINT_COLOR)` overbright albedo tint `(1.6, 0.8, 0.2)` = sytá oranžová. `Float32Array` v `InstancedBufferAttribute` nemá clamp → values > 1.0 = projasnění.
-  - **Single-mesh case** (PATH, SPRITES, slow-path TCUBES, water, budoucí COMPOSITES) — žluté emissive světélkování (`mat.emissive = 0x404020`) přes lazy clone-on-first-hover (materials klonujeme per mesh, originály v `userData.hoverOrigMat`, klony s yellow emissive v `userData.hoverHotMat`).
-- **Sun mesh** *(sez. 31)* — drobná bílá koule reprezentující slunce. `SphereGeometry(1.5, 16, 16)` + `MeshBasicMaterial(color: 0xffffff, fog: false)` (unlit = svítí vlastní bílou nezávisle na DirectionalLight; `fog: false` jinak by mlha rozpustila). Pozice `sun.position × SUN_DISTANCE_SCALE` (statická). Toggle přes `#settings`.
+  - **Single-mesh case** (slow-path TCUBES, water, COMPOSITES jako LAMP/DECOR) — žluté emissive světélkování (`mat.emissive = 0x404020`) přes lazy clone-on-first-hover (materials klonujeme per mesh, originály v `userData.hoverOrigMat`, klony s yellow emissive v `userData.hoverHotMat`).
+- **Sun mesh** *(sez. 31)* — drobná bílá koule reprezentující slunce. `SphereGeometry(1.5, 16, 16)` + `MeshBasicMaterial(color: 0xffffff, fog: false)` (unlit = svítí vlastní bílou nezávisle na DirectionalLight; `fog: false` jinak by mlha rozpustila). Pozice `sun.position × SUN_DISTANCE_SCALE`. Auto-hide pod horizontem (`sunMesh.visible = sun.position.y > SUN_HORIZON_Y_MIN`, sez. 47 −15° threshold; sez. 48 drop user toggle = slunce vždy ON s auto-hide).
 - **Atmospheric fog** *(sez. 31)* — `THREE.Fog(_skyDay.getHex(), 30, 120)` lineární mlha matchne `scene.background`. Vzdálené objekty plynule blednou. Drží se reference `sceneFog` pro toggle restore. Barva reactive na `world.DAY` (DD-39 — kopie z `scene.background` per-frame). Toggle přes `#settings`.
 - **Atmospheric lerping** *(sez. 33, DD-39)* — `updateAtmosphere()` per-frame lerp 3 cílů podle `daylight = max(0, sin(2π·world.DAY))`: `scene.background.color` (`lerpColors(_skyNight, _skyDay, daylight)`), `sceneFog.color` (`copy(scene.background)`), `ambientLight.intensity` (`AMBIENT_NIGHT..AMBIENT_DAY`). Třetí konzument DD-38 `world.DAY` po `updateSun()`. Konstanty: `_skyDay = 0x1a1a2e`, `_skyNight = 0x000000` (úplná čerň), `AMBIENT_DAY = 0.15`, `AMBIENT_NIGHT = 0.005` (téměř 0). Bez sunset oranžového peaku — 2 keypointy lineární lerp, sunset roadmap.
 - **DOF (Depth of Field)** *(sez. 31)* — post-processing efekt rozostření mimo ohnisko. `EffectComposer` pipeline: `RenderPass` (scéna + depth) → `BokehPass` (Gaussian blur dle depth, `focus` / `aperture: 0.0005` / `maxblur: 0.005`) → `OutputPass` (sRGB color-space correction). Focus dynamic v animate(): `bokehPass.uniforms.focus.value = camera.position.distanceTo(controls.target)`. Toggle přes `#settings`.
-- **Settings panel** (`#settings`, sez. 31) — UI panel levý dolní roh (4. roh: HUD top-left, perfhud top-right, terrainctrl bottom-right). 3 checkbox toggles (DOF, Fog, Slunce, default ON). Wire na `window.settings = { setDOF, setFog, setSun }` API. Izomorfní CSS s ostatními panelu — coral akcent header, tyrkysový accent checkbox.
+- **Settings panel** (`#settings`, sez. 31) — UI panel levý dolní roh. 2 checkbox toggles (DOF, Fog, default ON) + slidery DAY/DAY_SPEED + Climate. Wire na `window.settings = { setDOF, setFog, setDay, setDaySpeed, setLatitude, setHumidity, setSeason }` API. *(Sez. 48 cleanup: `set-sun` checkbox + `setSun` API + `_sunUserVisible` flag dropnuté — slunce vždy ON s auto-hide pod horizontem.)*
 - **Šachovnicová textura** — vizuální idiom „vizuál není definován" (jako průhledné pozadí v PS/GIMP). Default vizualizace instance mateřské třídy `CUBES`. Potomci override. Viz DD-07.
 - **Klávesové ovládání kamery** *(sez. 14)* — WASD pan v rovině scény, Q/E rotace kolem cíle, Y/X zoom. Per-frame v render loopu, smooth dle `dt`. `heldKeys` Set + window keydown/keyup/blur listener.
 
 ## Milníky
 
-- **M1** *(sez. 1)* — statická 3D scéna s jednou kostkou, ovládatelná kamera, tikající TIME v HUDu, hover infotip.
+> **M-Genesis arc (sez. 48–~52, in progress)** — terrain generator iterace v1.0. DD-55 sez. 48 cleanup zafixoval scope = 8 tříd (OBJECTS / CUBES → BLOCKS/COMPOSITES/LIQUID / WORLD). M1-M5 milestone artefakty (SPRITES/PATH/TIMER/COUNTER/TIME/ANIMATE) dropnuté jako YAGNI bez konzumenta v terrain scope; v git historii (sez. 4-9 commits) dostupné pro pozdější revert (Stickman integrace, gameplay vrstva). M-Genesis close ceremonie + git tag v1.0 = Fáze 5 v probíhajícím arc (`%AUDIT:CODE` → `%AUDIT:DOCS` → pruning → `%CALIBRATE` → ceremonie).
+
+- **M1** *(sez. 1)* — statická 3D scéna s jednou kostkou, ovládatelná kamera, hover infotip. *(TIME/HUD dropnuté sez. 48 cleanup.)*
 - **M2** *(sez. 2)* — orientační pomůcky (GridHelper, AxesHelper, smazány sez. 14) + první potomek `CUBES` (tehdy `TERRAIN`, dnes `CCUBES`) + 3×3 grid.
 - **M3** *(sez. 3)* — COMPOSITES (DD-23 přepsán na pixel-voxel, sez. 24 smazán), float souřadný systém (DD-12), terminologie potomků (DD-13).
 - **M4** *(sez. 3)* — stínovací systém (shadow map, PCF soft).
-- **M5** *(sez. 4)* — SPRITES (dialog bubble, canvas-generovaný text).
-- **M6** *(sez. 4)* — TCUBES (per-face textury). DD-14 zafixoval dispatch podle typu atributu.
-- **M7** *(sez. 5)* — Chování v čase: atribut `ANIMATE` na OBJECTS (DD-15), dispatch v enginu.
+- **M5** *(sez. 4)* — SPRITES (dialog bubble, canvas-generovaný text). *(Dropnuté sez. 48 cleanup — bez konzumenta po DD-32 terrain pivot.)*
+- **M6** *(sez. 4)* — TCUBES (per-face textury → DD-41 lowpoly vertex-color). DD-14 zafixoval dispatch podle typu atributu.
+- **M7** *(sez. 5)* — Chování v čase: atribut `ANIMATE` na OBJECTS (DD-15), dispatch v enginu. *(Dropnuté sez. 48 cleanup — 4 kindy rotate/orbit_stadium/pulse/drift bez aktivního klienta po DD-32 pivot. Připravený revert pro Stickman integraci.)*
 - **M8+** *(sez. 6–28, průběžně)*:
   - *Sez. 6+7:* `rotate`, `orbit_stadium`, `pulse`, `drift` animátory.
   - *Sez. 8:* dynamický 3D ocásek SPRITES (DD-16 — `SPEAKER` + `SPEAKER_OFFSET_Y`).

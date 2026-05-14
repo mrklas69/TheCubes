@@ -6,14 +6,18 @@ Model-first **procedurální terrain sandbox** s OOP modelem jako runtime *(DD-3
 
 ## Status
 
-**Aktuálně:** `main` po sez. 41 (DD-51 seasonal foliage cycle + DD-52 slope-aware decor Y). DD-32 Fáze 0–3 + **InstancedMesh refactor (DD-37, sez. 31)** + **WORLD DAY/DAY_SPEED (DD-38, sez. 32)** + **atmospheric lerp DD-39 + LAMP/SpotLight DD-40 (sez. 33)** + **lowpoly vertex-color pipeline DD-41 (sez. 34, nahrazuje DD-36 atlas)** + **G2 Climate WORLD.LATITUDE × HUMIDITY DD-42 + DAY mapping DD-43 (sez. 35)** + **G3 SURFACES driver-derived per biome DD-44 + fBm/ridge³ heightmap DD-45 (sez. 36)** + **smoothstep bimodální heightmap pro r ≥ 6 DD-46 (sez. 37)** + **G6 climate-driven surface state (drop water surface, snow per LATITUDE, water LIQUID prototype flood-fill, ice) DD-47 + atmospheric color extensions (sun piecewise + sky 3-keypoint dusk + water wave) DD-48 (sez. 38)** + **DD-49 plná impl: procedurální DECOR (5 KIND spruce/oak/bush/rock/grass_tuft + biome-aware density + snow caps + wet 80%→20% škála) + DD-50 SEASON driver (4-enum, temperate snow/ice modifier per season) + 6 kalibrací (sez. 40)** + **DD-51 seasonal foliage cycle (LEAF_AUTUMN paleta oak/bush v autumn + winter defoliation: oak.snowed = kmen-only, bush.snowed = skip entity, spruce season-invariant) + DD-52 slope-aware decor Y (ramps[].slopeDir + lineární `slopeT` interp v `decorate()`) + 2 kalibrace (decor scale 0.5→1/3, oak/spruce density ×2; sez. 41)** hotové. 100×100 terrain playable @ FPS ~104, denní cyklus + klima driver pro biomy + sníh/jezera/led + sezonní variace (vč. listnatého foliage cycle) + procedurální dekorace s slope-aware Y přes UI. **User verdikt sez. 41:** „Generátor scény považuji za dokončený."
+**Aktuálně:** `main` po **sez. 48 M-Genesis cleanup (DD-55)**. Terrain generator iterace v1.0 hotová — DD-32..DD-54 (kompletní mapa v `docs/DESIGN_DECISIONS.md`) + sez. 48 K1+D1+D2 YAGNI cleanup: drop SPRITES/PATH/TIMER/COUNTER/TIME/ANIMATE (M1-M5 milestone artefakty bez živého konzumenta v terrain scope) + atlas IIFE compute waste + UI Sun toggle. **Model 13 → 8 tříd** (OBJECTS / CUBES → BLOCKS/COMPOSITES/LIQUID / WORLD). `src/main.js` −1047 ř. (−29.5 %), celkem −1040 ř. JS+HTML aktivního kódu.
+
+100×100 terrain playable @ FPS ~104, denní cyklus + klima driver pro biomy + sníh/jezera/led + sezonní variace (foliage cycle + sky/sun tint) + procedurální dekorace s slope-aware Y přes UI.
+
+**User verdikt sez. 41:** *„Generátor scény považuji za dokončený."* Sez. 42–47 polish arc (perf HUD, Fáze 6 DECOR, atmospheric extensions, LIQUID class skeleton, SEASON 6-pack). Sez. 48+ **M-Genesis arc** = cleanup + audit cycle + close ceremonie + git tag v1.0.
 
 Předchozí identitní vrstvy (factory toy DD-30/DD-31, severská dioráma DD-25/DD-27) jsou **zafixované v git historii** (`main`, commity sez. 14–23) jako uzavřené kapitoly — DD-32 je revoke z aktivního vývoje, ne smaz historického záznamu.
 
-**Hierarchie modelu (po sez. 38, post-DD-47 TTUNELS drop):**
+**Hierarchie modelu (po sez. 48 M-Genesis cleanup):**
 
 ```
-OBJECTS (ID, NAME, DESCRIPTION, ANIMATE)
+OBJECTS (ID, NAME, DESCRIPTION)
  ├── CUBES (X, Y, Z float; Y konvence per typ — DD-28)
  │    ├── BLOCKS (1C grid, Y = grid center, ORIENTATION ∈ [0, 360) — DD-26)
  │    │    ├── CCUBES (COLOR)
@@ -21,39 +25,53 @@ OBJECTS (ID, NAME, DESCRIPTION, ANIMATE)
  │    │    ├── TRRAMPS (ORIENTATION; DD-41 lowpoly)
  │    │    ├── TTRAMPS (ORIENTATION; DD-41 lowpoly)
  │    │    └── TDRAMP (ORIENTATION — DD-35; DD-41 lowpoly + DD-47 _snow varianta)
- │    ├── SPRITES (ASSET, SPEAKER, SPEAKER_OFFSET_Y)
  │    ├── COMPOSITES
- │    │    └── LAMP (Victorian-style, SpotLight uvnitř — DD-40)
- │    └── PATH (KIND, POINTS — LINES vrstva 3, DD-27)
- ├── TIMER (INTERVAL, ACTION)
- ├── COUNTER (VALUE, INCREMENT)
- └── WORLD (DAY, DAY_SPEED, LATITUDE, HUMIDITY — singleton DO, DD-38 + DD-42)
+ │    │    ├── LAMP (Victorian-style, SpotLight uvnitř — DD-40)
+ │    │    └── DECOR (KIND, SEED, SCALE, SNOWED, SEASON, DEAD — DD-49+DD-51 Fáze 6)
+ │    └── LIQUID (LEVEL, TEMPERATURE, BOUNDING_BOX, CELLS — DD-54 4. vrstva DD-25)
+ └── WORLD (DAY, DAY_SPEED, LATITUDE, HUMIDITY, SEASON, DECOR_DENSITY_MULT — singleton)
 ```
 
-**Smazáno DD-32 z aktivního modelu** (zůstává v git historii sez. 21–23): `FACILITY` rodina + 3 potomci, registry `RESOURCES_DEF`/`RECIPES_DEF`/`FACILITY_DEF`, PATH atributy `SOURCE`/`SINK`/`RESOURCE`/`THROUGHPUT`, `world.RESOURCES` agregát.
+**Smazáno DD-32 z aktivního modelu** (zůstává v git historii sez. 21–23): `FACILITY` rodina + 3 potomci, registry `RESOURCES_DEF`/`RECIPES_DEF`/`FACILITY_DEF`, `world.RESOURCES` agregát.
 
 **Smazáno DD-32 z dekorace** (zůstává v git historii sez. 14–17): `SCENE_LAYOUT` ploché pole, severská dioráma (tunely + rampy + cesta), `populateNorthernScene`, COMPOSITES `TREE`/`GRASS_TUFT`/`ROCK_PIXEL`/`LOG` + builders, animátor `tree_sway`, procedurální `:grass-top` textura.
 
-**Smazáno sez. 29 audit cleanup** (zůstává v git historii sez. 14, 20): `VOXEL_MODEL` třída + `buildVoxelModel` + OBJLoader/MTLLoader + `tools/` + `assets/` (MagicaVoxel pipeline bez konzumenta po DD-32); `WORLD` singleton + `WIND_STRENGTH` + `TIME_SCALE` (dead state po smaz `tree_sway` a `productionTick`). **WORLD vrácen sez. 32 (DD-38)** s 2 novými atributy (`DAY` + `DAY_SPEED`) a 2 živými konzumenty (sun mesh + render tick) — politika *„atribut přibude jen s živým konzumentem"* zachována.
+**Smazáno sez. 29 audit cleanup** (zůstává v git historii sez. 14, 20): `VOXEL_MODEL` třída + `buildVoxelModel` + OBJLoader/MTLLoader + `tools/` + `assets/` (MagicaVoxel pipeline bez konzumenta po DD-32). **WORLD vrácen sez. 32 (DD-38)** s `DAY` + `DAY_SPEED` (sun mesh + render tick) — politika *„atribut přibude jen s živým konzumentem"* zachována.
 
-**Aktivní `ANIMATE.kind`y:** `rotate`, `orbit_stadium`, `pulse`, `drift` (bez aktivních klientů ve scéně, ale připravené).
+**Smazáno sez. 48 M-Genesis cleanup (DD-55)** (zůstává v git historii sez. 4–9 commits): M1-M5 milestone artefakty bez živého konzumenta v terrain scope:
+- `SPRITES` třída + `createSpriteFor` + canvas bubble texture + bubble tail (SPEAKER pattern DD-16)
+- `PATH` třída + `createPathFor` (Catmull-Rom strip mesh, DD-27 LINES vrstva 3)
+- `TIMER` + `COUNTER` třídy + `registerBehavior` + `tickHandlers` + `ACTIONS` dispatch (DD-17)
+- `TIME` singleton (`src/time.js` soubor) + `advanceTime()` + setInterval block
+- `ANIMATE` atribut + `ANIMATORS` registry + 4 kindy `rotate`/`orbit_stadium`/`pulse`/`drift` + `registerAnimator` + `updateAnimations` (DD-15)
+- HUD `#hud` + `#time` element (vč. CSS)
+- UI Sun toggle (`set-sun` checkbox + `setSun` API + `_sunUserVisible` flag) — slunce vždy ON s auto-hide
+
+Plus **D1 atlas IIFE compute waste** (3× ramp `_GEOM_CACHE` UV+remapU drop, DD-41 follow-up) a **D2 atlas komentář drift** (DD-36 → DD-41 sync). Reference: DD-55 + commit `46f686d`.
 
 **Milníky:**
-- **M1–M7** hotové (sez. 1–5): statický svět, voxelové potomky, COMPOSITES, SPRITES, TCUBES, ANIMATE dispatch.
-- **M8+** průběžně (sez. 6–45): další `ANIMATE.kind`y, SPRITES.SPEAKER (DD-16), TIMER + COUNTER (DD-17), pevné měřítko (DD-22), all-voxel pivot (DD-23), 4-vrstvá taxonomie + BLOCKS rodina (DD-25), sjednocená ORIENTATION (DD-26), PATH (DD-27), sjednocená Y konvence (DD-28), **terrain generator pivot (DD-32)**, ramp smoothing layer (DD-33 + DD-34), TDRAMP (DD-35), TCUBES atlas pipeline (DD-36, nahrazen DD-41), **InstancedMesh batch pipeline (DD-37)** + sun mesh + post-process (fog + DOF/BokehPass) + settings panel, **WORLD re-introduce (DD-38)** s DAY/DAY_SPEED + sun denní cyklus, **atmospheric lerping (DD-39, rozšířen DD-48)**, **LAMP/SpotLight (DD-40)**, **lowpoly vertex-color pipeline (DD-41)**, **G2 Climate WORLD.LATITUDE × HUMIDITY (DD-42)** + DAY mapping fix (DD-43), **G3 SURFACES driver-derived (DD-44)** + fBm/ridge³ heightmap (DD-45), **smoothstep bimodální heightmap pro r ≥ 6 (DD-46)**, **G6 climate-driven surface state (snow + LIQUID prototype flood-fill, ice) (DD-47)** + **atmospheric color extensions (sun piecewise + sky 3-keypoint + water wave) (DD-48)**, **DD-49 procedurální DECOR (5 KIND + biome density + snow caps) + DD-50 SEASON driver (4-enum, temperate snow/ice modifier)**, **DD-51 seasonal foliage cycle (LEAF_AUTUMN oak/bush v autumn, winter defoliation) + DD-52 slope-aware DECOR Y**, **Fáze 6 DECOR KIND extension** (palm/cactus/flower/stump/log + `_dead` postfix + AUTUMN_PALETTE 4-color hue + seasonal density modifier + receive shadow opt-out), **DD-54 LIQUID class jako 5. vrstva DD-25 extension: Tekutiny** (sibling BLOCKS/COMPOSITES/PATH pod CUBES, atributy LEVEL/TEMPERATURE/BOUNDING_BOX/CELLS, skeleton prototype single-cell) + HSL hue shift sky/sun (DD-48 follow-up).
 
-Detail v `docs/DIARY.md` (chronologie sezení), `docs/DESIGN_DECISIONS.md` (DD-01 až DD-54; DD-53 attempt + revert).
+- **M1–M7** hotové (sez. 1–5): statický svět, voxelové potomky, COMPOSITES, SPRITES, TCUBES, ANIMATE dispatch. *(SPRITES + ANIMATE dropnuté sez. 48 M-Genesis cleanup, viz „Smazáno sez. 48".)*
+- **M8+** průběžně (sez. 6–48): doplňky před terrain pivotem (sez. 6–23) + **terrain generator pivot (DD-32, sez. 24)** + dlouhý arc DD-33..DD-54 (ramp smoothing, atlas → lowpoly, WORLD re-introduce + atmospheric, climate driver, fBm heightmap, snow/water/ice, atmospheric color extensions, procedural DECOR + SEASON driver, LIQUID class skeleton). Kompletní mapa s odkazy na DD v `docs/DESIGN_DECISIONS.md`.
+- **M-Genesis arc (sez. 48+, in progress)** — terrain generator iterace v1.0 close. Sez. 48 **K1+D1+D2 YAGNI cleanup (DD-55)** scope locked. Pokračování: `%AUDIT:DOCS` (sez. 48) → IDEAS/TODO/DONE pruning → `%CALIBRATE` → close ceremonie + git tag **v1.0**.
 
-**Plán (po sez. 45):**
+Detail v `docs/DIARY.md` (chronologie sezení), `docs/DESIGN_DECISIONS.md` (DD-01 až DD-55; DD-53 attempt + revert).
 
-> **User verdikt sez. 41:** *„Generátor scény považuji za dokončený."* Sez. 42–45 = post-close polish (perf HUD opt, Fáze 6 DECOR close 9/9, atmospheric extensions, LIQUID class skeleton).
+**Plán (M-Genesis arc, sez. 48+):**
 
-- **Aktivní směry (kandidáti pro sez. 46+):**
-  - **WORLD/atmosféra rozšíření** — sky/sun season tint (DD-50 follow-up plný scope), snow accumulation animace přes DAY_SPEED × SEASON, polar season variace (summer ablation), snow patches calibration, ice canvas texture, per-cluster water wave fáze (závisí na BFS clustering).
-  - **LIQUID BFS clustering + multi-Y split** *(DD-54 sub-prah)* — split components dle `(water_y, frozen)` key (drží z-fight invariant z DD-53 revert lesson). Pro polar mid 100×100 sráží ~500 water cells na ~5-20 jezer. Trigger: user signal „100×100 jezera blikají" nebo perf need.
-  - **Fyzika kapalin extensions** *(DD-54 budoucí hooks)* — TEMPERATURE numeric °C (permafrost/lava), FLOW_DIRECTION (rivers/streams paralel PATH POINTS), VISCOSITY (voda/láva/ropa/kyselina), LEVEL animace (tide/flood/sezonní tání). Wait pro user signal.
-  - Slider DAY sync z value při auto-advance (drobnost UX, DD-38 známé omezení).
-  - BARK_DEAD darker palette varianta + palm trunk curve (Fáze 6 sub-prahy ze sez. 43).
+> **User verdikt sez. 41:** *„Generátor scény považuji za dokončený."* Sez. 42–47 polish arc (perf HUD opt, Fáze 6 DECOR close 9/9, atmospheric extensions, LIQUID class skeleton, SEASON 6-pack). Sez. 48 M-Genesis cleanup start (DD-55).
+
+- **Aktivní M-Genesis arc (sez. 48+):**
+  - ✅ **Fáze 1: `%AUDIT:CODE` + cleanup** (sez. 48) — K1+D1+D2 + Sun toggle drop. Commit `46f686d`.
+  - 🔄 **Fáze 2: `%AUDIT:DOCS`** (sez. 48) — drift sync + DD-55 entry + diary.
+  - **Fáze 3: IDEAS/TODO/DONE pruning** — close cut.
+  - **Fáze 4: `%CALIBRATE`** — meta-audit AI/řídících docs (port z PocketStory + projektová definice).
+  - **Fáze 5: Close ceremonie** — README v1.0 status + git tag `v1.0-terrain` + IDEAS brain-dump pro post-close arc (FindPath multi-modal + generátor/transformátor/konzument supply chain).
+- **Post-close kandidáti (open):**
+  - **WORLD/atmosféra rozšíření** — snow accumulation animace přes DAY_SPEED × SEASON, sky tint kalibrace, ice texture per-cluster variation, smooth sun fade pod horizontem.
+  - **LIQUID BFS clustering + multi-Y split** *(DD-54 sub-prah)* — split components dle `(water_y, frozen)` key. Trigger: user signal nebo perf need.
+  - **Fyzika kapalin extensions** *(DD-54 budoucí hooks)* — TEMPERATURE numeric °C, FLOW_DIRECTION (rivers), VISCOSITY (lava/oil/acid), LEVEL animace.
+  - **BARK_DEAD darker palette varianta** + **palm trunk curve** (Fáze 6 sub-prahy ze sez. 43).
 - **Speculative (wait-for-signal):**
   - **InstancedMesh refactor pro DECOR** — per (KIND × varianta) `InstancedMesh` batch, ~20k Object3D → ~10-15 draw calls. Sez. 42 user pivot na 20×20 dioráma target use case downgrade z `[!]` na speculative.
   - BatchedMesh refactor (r167+ API, ~13 → ~3 calls) — diminishing returns po DD-37.
