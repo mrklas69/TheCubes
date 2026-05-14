@@ -267,6 +267,11 @@ scene.add(sunMesh);
 const world = new WORLD("world_0001", "Svět", "Globální atributy scény (DD-38).");
 window.world = world;
 
+// Plný kruh v radiánech — pojmenovaná konstanta, aby `world.DAY * TAU` šel
+// číst jako „kolik radiánů odpovídá frakci dne" (DAY ∈ [0, 1), DAY · TAU dává
+// úhel slunce na sférické dráze). Math.PI * 2 = 2π.
+const TAU = Math.PI * 2;
+
 // Auto-advance DAY ze rychlosti DAY_SPEED. Při speed=0 (default) je pauza —
 // user mutuje DAY manuálně přes slider/console. Modulo `% 1` zaručí cyklic.
 // Pozn.: záporný DAY_SPEED by jel opačně (před-poledne → východ → půlnoc → ...),
