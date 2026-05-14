@@ -24,6 +24,14 @@ Pokud pracovní strom je čistý, stash je no-op a `git pull --ff-only` stačí.
 - `docs/GLOSSARY.md` — aktuální terminologie
 - `docs/DESIGN_DECISIONS.md` — schválená rozhodnutí (DD-XX)
 
+**(2.5) Target use case check** *(pokud relevantní):*
+
+Pokud sezení směřuje k **perf/stress test directionu** (FPS optimalizace, draw call reduction, shadow opt, InstancedMesh refactor, frustum culling, …), **PŘED nabídnutím směru se zeptej**: *„Jaká velikost gridu a climate priority je reálný workflow?"*
+
+**Proč:** Per sez. 42 Censure — AI po celý perf diagnostic dive pracovala na 100×100 max stress jako implicit target, dokud user explicitně nezasáhl *„20×20 je real, neořezávat"*. Memory: [[project-target-use-case]] + [[feedback-target-use-case-check]]. Bez target check riskujeme rabbit hole + opts kompromitující visual quality pro irelevantní stress case.
+
+**Skip krok**, pokud sezení směřuje k content/feature/refactor/audit/docs — target use case je relevant pouze pro perf-driven rozhodnutí.
+
 **(3.) Shrnutí:**
 Vypiš sekci **Příště** z posledního diáře jako první bod programu a navrhni, čím začneme.
 

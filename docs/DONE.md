@@ -1066,3 +1066,124 @@ Pak `allowedEntries = Object.entries(seasonalWeights).filter(...)` (rename sourc
 Sez. 44 audit cadence 6/8 (`%AUDIT:CODE`) / 5/10 (`%AUDIT:DOCS`) / 1/12 (IDEAS/TODO pruning). AUDIT:CODE due ~sez. 46.
 
 **Fáze 6 close 9/9** — DECOR cyklus DD-49→DD-52 + Fáze 6 KIND extension (10 KIND-ů, dead flag, autumn paletka, density UI, sezonní modifier, shadow opt-out) konzistentní. Sub-prahy zachovány (`BARK_DEAD` darker, palm trunk curve).
+
+## Sezení 45 — Triple batch A+B+C (DD-54 LIQUID class + HSL + %BEGIN addendum)
+
+### A. `%BEGIN` projektový addendum — Target use case check
+
+Krok **(2.5)** vložen do `docs/PROMPTS.md` projektový `%BEGIN` mezi (2) Kontext a (3) Shrnutí. Conditional: pokud sezení směřuje k **perf / stress test directionu** (FPS optimalizace, draw call reduction, shadow opt, InstancedMesh refactor, frustum culling), AI se PŘED nabídnutím směru zeptá *„Jaká velikost gridu a climate priority je reálný workflow?"*. Skip pokud content / feature / refactor / audit / docs direction.
+
+Memory links: `[[project-target-use-case]]` (20×20 dioráma je real workflow, 100×100 = academic stress) + `[[feedback-target-use-case-check]]` (sez. 42 Censure: AI musí ptát se před perf benchmarkem).
+
+Sez. 42 Censure carryover (2 sezení dluh) splacen. Žádný DD (= dokumentační pravidlo).
+
+### B. HSL hue shift sky/sun — `_lerpHsl` helper
+
+DD-48 follow-up, žádný nový DD. RGB lerp pro orange↔blue prochází přes desaturovanou hnědou (purplish RGB midpoint má low S+L). HSL lerp drží S+L lineární, hue rotuje po shorter circular path → orange→blue ide přes purple = Rayleigh-correct dusk.
+
+Implementace v `src/main.js` po sun colors konstantách:
+
+```js
+const _hslA = { h: 0, s: 0, l: 0 };
+const _hslB = { h: 0, s: 0, l: 0 };
+function _lerpHsl(target, a, b, t) {
+  a.getHSL(_hslA);
+  b.getHSL(_hslB);
+  let dh = _hslB.h - _hslA.h;
+  if (dh > 0.5) dh -= 1;
+  else if (dh < -0.5) dh += 1;
+  const h = (_hslA.h + dh * t + 1) % 1;
+  const s = _hslA.s + (_hslB.s - _hslA.s) * t;
+  const l = _hslA.l + (_hslB.l - _hslA.l) * t;
+  target.setHSL(h, s, l);
+}
+```
+
+Scratch HSL objekty (`_hslA`/`_hslB` ploché objekty) pro zero per-frame alokaci (volá se 4× per frame: 2× sun + 2× sky). Shorter-path algoritmus: pokud `|h2 - h1| > 0.5`, wrap přes 0/1 hranici.
+
+Pro `_skyDusk` (hue ~0.003 orange, 0x5f3433) → `_skyDay` (hue ~0.667 blue, 0x1a1a2e): diff = 0.664 > 0.5 → wrap dh = -0.336 = jde přes magenta/purple = ✓ Rayleigh.
+
+Sun colors (warm peach 0xffd4c6 → cream 0xfff3d4 → white 0xffffff) jsou white-dominated, HSL≈RGB v praxi, ale uniform pipeline = DRY (4× `lerpColors → _lerpHsl`).
+
+User test: „HSL test OK".
+
+### C. DD-54 LIQUID class — 5. vrstva DD-25 extension: Tekutiny
+
+#### Memory drift detection (Censure! AI → AI?)
+
+Před implementací AI cross-checknula user Q2=B („vrstva 4 pod CUBES per memory") proti `docs/DESIGN_DECISIONS.md` DD-25 4-vrstvá taxonomie:
+
+1. **Bloky** = BLOCKS family
+2. **Voxely** = COMPOSITES family
+3. **Linie** = LINES family (deklarováno, PATH dnes přímo pod CUBES)
+4. **Objekty** = ASSETS family (postavy/zvířata/stroje)
+
+**Vrstva 4 = Objekty, ne tekutiny.** Memory `project_model_hierarchy` description měla „DD-25 vrstva 4 LIQUID class" napříč ~3 sezení = drift. Pokud by AI Q2=B vzala literálně, DD-54 by zavedlo chybnou taxonomii do immutable DD logu.
+
+Re-Q1 user: A=LIQUID je nová **5. vrstva** (paralel BLOCKS/COMPOSITES/LINES/ASSETS), B=trust memory P2 (vrstva 4 = Objekt, konceptuálně questionable), C=jiný. **User: A1A „Třeba někdy dojde na fyziku kapalin."** = schválení 5. vrstva + signal pro budoucí extension hooks.
+
+#### Class signature
+
+`class LIQUID extends CUBES` v `src/model.js` (sibling BLOCKS/COMPOSITES/PATH pod CUBES, paralel PATH pattern bez abstract `LIQUIDS` base dokud nepřibude 2. sourozenec — DD-27 vzor *„abstract base až s 2. konkrétním potomkem"*).
+
+```js
+new LIQUID(id, name, x, level, z, temperature, bbox, cells, description)
+```
+
+Atributy (sez. 45 prototype skeleton, single-cell):
+
+- **`LEVEL`** — Y hladiny (sémanticky čitelnější alias pro `Y` z CUBES). Skeleton drží oba (`Y = LEVEL` zrcadlení) kvůli budoucí extension — mesh Y může mít nudge offset proti z-fightu, `LEVEL` zůstane čistá logická hladina.
+- **`TEMPERATURE`** — `"frozen"` | `"liquid"` enum. Material decision v `createLiquidPlane` (`_iceMat` vs. `_waterMat`). Budoucí extension: numerický °C pro permafrost gradient / lávu (YAGNI v sez. 45 per DD-29 *„atributy jen s živým konzumentem"*).
+- **`BOUNDING_BOX`** — `{ w, d }` axis-aligned XZ extent v 1C jednotkách. Pro prototype vždy `{ w: 1, d: 1 }`.
+- **`CELLS`** — `[{ x, z }, ...]` cells obsazené tímto LIQUID. Pro prototype vždy `[{ x, z }]` (1 prvek). Pro DRY identifikaci / clear-path.
+
+**Žádný `FLOW_DIRECTION` ve skeletonu** — rivers/streams sub-prah, atribut by byl placeholder bez konzumenta (porušení DD-29 politiky).
+
+#### Spawn integrace
+
+`src/main.js`:
+- Import `LIQUID` z `model.js`.
+- `createWaterPlane(w)` **renamed** `createLiquidPlane(liquid)`. Čte `liquid.X/Y/Z` (z CUBES base), `liquid.TEMPERATURE` (dispatch `_iceMat` vs. `_waterMat`), `liquid.BOUNDING_BOX.w/d` (scale).
+- `buildScene` spawn loop: `terrain.water[]` raw records → `new LIQUID(...)` per record → `createLiquidPlane(liquid)` → scene.add. ID `liquid_NNNN` zero-pad (paralel `decor_NNNN`).
+
+Per DD-11 model/engine separation: `terrain.js` nezná `model.js`, drží raw records (`{x, y, z, frozen, w, d}`). LIQUID construction žije v engine spawn loopu.
+
+#### Internal materiály zachovány
+
+`_waterMat` / `_iceMat` / `_waterGeom` / `_waterMeshes` Set zachovány (= implementation locality, KISS). Rename na `_liquid*` = sub-prah až přibude lava/oil 2. sourozenec a paralelní rename si vynutí 2. material set.
+
+#### Plný clustering = sub-prah
+
+BFS connected-components clustering (= 1 LIQUID = N connected cells sdílejících `water_y` + `frozen`) ne v skeletonu. Důvod:
+
+- DD-53 attempt sez. 42 + **revert** — bbox over varied water_y → mean Y → boundary cells z-fight (visual artifact). Memory `[[project-target-use-case]]`.
+- Per target use case 20×20 dioráma per-cell rendering je visually correct + zero perf cost. 100×100 stress test je academic edge case.
+- Plný refactor = sub-prah, čeká na user signal („100×100 jezera blikají" nebo nový perf need). Mitigace pro budoucnost: split components dle `(water_y, frozen)` key (drží z-fight invariant).
+
+#### Soubory dotčeny
+
+- `src/model.js` +~55 / −~1 ř. (LIQUID class + docstring 30+ ř s budoucími extension hooks).
+- `src/main.js` +~25 / −~12 ř. (import + createLiquidPlane signature change + spawn loop wrap + _lerpHsl helper + 4× lerpColors→_lerpHsl).
+- `docs/PROMPTS.md` +~14 ř. (A. krok 2.5).
+- `docs/DESIGN_DECISIONS.md` +~55 ř. (DD-54 entry — rozhodnutí, kontext, class signature, atributy, prototype scope, důvod skeleton ne clustering, důsledek, sub-prahy, extension hooks, references DD-25/27/47/53, memory links, user note „fyzika kapalin").
+- `docs/TODO.md` ~−6 / +~5 ř. (drop hotové LIQUID/HSL/%BEGIN sub-prahy + Recent DONE 34-44→34-45 + LIQUID sekce DD-25 vrstva 4 → DD-25 5. vrstva DD-54 + add BFS clustering + fyzika kapalin extensions follow-up + audit cadence ticky 6→7/5→6/1→2).
+- `docs/DIARY.md` +~1 ř. (sez. 45 append k 2026-05-14 multi-session line).
+- `docs/diary/2026-05-14.md` +~140 ř. (Sezení 45 sekce).
+- `docs/DONE.md` +tato sekce.
+- Memory `project_model_hierarchy.md` description sync + tree LIQUID node pod CUBES + DD-54 entry v Klíčových rozhodnutích.
+- Memory `MEMORY.md` index description sync (LIQUID + DD-54 + sub-prahy update).
+
+`node --check` na `src/model.js` + `src/main.js`: OK (visual test user-side post HSL + post LIQUID).
+
+### Vizuální verifikace (user)
+
+- **HSL test:** „HSL test OK, voda i led vypadají v pořádku." Dusk transition přes purple-magenta viditelný v poledne → východ slunce (DAY slider). Sky hue rotation Rayleigh-correct, sun colors invariant (warm-to-warm).
+- **LIQUID skeleton test:** „Test OK, voda i led vypadají v pořádku." Vizuálně identický s DD-47 prototype (same materiály per-cell), jen pod LIQUID class wrapper. Conceptual debt repaid bez visual regrese.
+
+### Audit cadence po sez. 45
+
+- `%AUDIT:CODE` — **7/8** (sez. 40-45 jen impl/skeleton). **MUSÍ AUDIT v sez. 46 (threshold trigger)**.
+- `%AUDIT:DOCS` — **6/10**.
+- IDEAS/TODO pruning — **2/12**. Next: ~sez. 55.
+
+DD-54 = **5. DD ze sez. 41-45 sady** (DD-51 sez. 41, DD-52 sez. 41, [DD-53 attempt + revert sez. 42], DD-54 sez. 45). Sez. 42-44 bez nových DD (perf diagnostic + Fáze 6 pre-approved TODO impl).

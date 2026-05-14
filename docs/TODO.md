@@ -4,7 +4,7 @@
 
 > Hotové úkoly: `docs/DONE.md`. Designová rozhodnutí: `docs/DESIGN_DECISIONS.md`.
 >
-> **Recent DONE (sez. 34-44):** Terrain G0..G6 cesta (DD-41 lowpoly vertex-color → DD-42 LATITUDE/HUMIDITY → DD-44 BIOME_SURFACES → DD-45 fBm/ridge³ → DD-46 smoothstep bimodal → DD-47 snow + LIQUID prototype). WORLD: DD-38 DAY/DAY_SPEED, DD-48 atmospheric, DECOR_DENSITY_MULT (sez. 43). DECOR: DD-49 procedural composites, DD-50 SEASON, DD-51 LEAF_AUTUMN + winter defoliation, DD-52 slope-aware Y na rampách, Fáze 6 close (sez. 43+44 = 9/9 položek: 5 nových KINDs + `dead` flag + density UI + AUTUMN_PALETTE hue per strom + sezonní density modifier + receive shadow opt-out). Detail v `DONE.md` a `DESIGN_DECISIONS.md`.
+> **Recent DONE (sez. 34-45):** Terrain G0..G6 cesta (DD-41 lowpoly vertex-color → DD-42 LATITUDE/HUMIDITY → DD-44 BIOME_SURFACES → DD-45 fBm/ridge³ → DD-46 smoothstep bimodal → DD-47 snow + LIQUID prototype). WORLD: DD-38 DAY/DAY_SPEED, DD-48 atmospheric, DECOR_DENSITY_MULT (sez. 43). DECOR: DD-49 procedural composites, DD-50 SEASON, DD-51 LEAF_AUTUMN + winter defoliation, DD-52 slope-aware Y na rampách, Fáze 6 close (sez. 43+44 = 9/9 položek). **Sez. 45:** DD-54 LIQUID class (**5. vrstva DD-25 extension: Tekutiny**, skeleton prototype single-cell pod CUBES), `%BEGIN` target use case addendum (krok 2.5 v PROMPTS.md), HSL hue shift sky/sun (`_lerpHsl` helper, DD-48 follow-up). Detail v `DONE.md` a `DESIGN_DECISIONS.md`.
 
 ## Otevřené M8+
 
@@ -31,16 +31,17 @@
 - [ ] **`BARK_DEAD` darker palette varianta** *(sez. 43 sub-prah)* — `_dead` flag teď použije `BARK_BROWN` (= same jako live trunk), oak/spruce snowed vs. dead vypadá podobně (oba kmen-only). Pro visual differentiation darker hex (e.g. `0x4a3520`) by oddělil "dead skeleton" od "winter bare".
 - [ ] **Palm trunk curve** *(sez. 43 sub-prah)* — reálná palma má mírně zakřivený kmen. Současný `buildPalm` rovný Cylinder. Subdivision na 2-3 segmenty s mírným offsetem by dal realističtější profil. Komplikace: per-instance variability vs. shared geom cache.
 
-### LIQUID class (DD-25 vrstva 4)
+### LIQUID class (DD-25 5. vrstva, DD-54)
 
-- [ ] **`LIQUID` třída** — DD-47 prototype dnes single-mesh per cell (= "prototype LIQUID"). Plná 1. třída entita = OOP class pod CUBES, atributy LEVEL/TEMPERATURE/FLOW_DIRECTION/BOUNDING_BOX. 1 LIQUID instance = 1 jezero. Klastry s vlastními ANIMATE.
-- [ ] **Klastrování spojitých water cells do bounding boxů** — flood-fill connected components, jeden plane na celé jezero místo 1×1 per cell. Pro polar mid 100×100 (~500 water cells) by srazil na ~5-20 jezer. **Sez. 42 DD-53 attempt + revert** (visual artifact: bbox over varied water_y → mean Y mezi → boundary cells z-fight). Pro 20×20 target use case marginal benefit, per-cell render always-correct. Plný refactor = sub-prah pro LIQUID class (per-bbox ice texture noise pro variability, hybrid threshold ≥5 cells = bbox jinak per-cell, split component by water_y level, **Three.js gotcha:** PlaneGeometry vertex.Z=0 + mesh.rotation = scale.y → POST-rotation depth, ne scale.z).
+> **Sez. 45 DONE — skeleton prototype:** DD-54 `class LIQUID extends CUBES` (sibling BLOCKS/COMPOSITES/PATH pod CUBES, paralel PATH pattern). Atributy LEVEL/TEMPERATURE/BOUNDING_BOX/CELLS. 1 LIQUID = 1 water cell (BOUNDING_BOX={w:1,d:1}). `createLiquidPlane(liquid)` renamed entry point. Viz DONE.md + DD-54.
+
+- [ ] **BFS connected-components clustering + multi-Y split** *(DD-54 follow-up, sub-prah)* — `terrain.js` Krok 6.5 post-flood-fill: visited Set + queue, split components dle `(water_y, frozen)` key (= unikátní kombinace → samostatná LIQUID instance, drží z-fight invariant). Pro polar mid 100×100 (~500 water cells) by srazil na ~5-20 jezer. **Sez. 42 DD-53 attempt + revert** (visual artifact: bbox over varied water_y → mean Y → boundary z-fight). Pro 20×20 target use case marginal benefit, per-cell render always-correct. Plný refactor čeká na user signal „100×100 jezera blikají" nebo perf need. Sub-prahy: per-bbox ice texture noise (canvas), hybrid threshold ≥5 cells = bbox jinak per-cell. **Three.js gotcha:** PlaneGeometry vertex.Z=0 + mesh.rotation = scale.y → POST-rotation depth, ne scale.z.
+- [ ] **Fyzika kapalin extensions** *(DD-54 budoucí hooks, user note sez. 45 „třeba někdy dojde na fyziku kapalin")* — `TEMPERATURE` numeric °C (gradient frozen↔melting, permafrost, sezonní tání), `FLOW_DIRECTION` (rivers/streams paralel PATH POINTS sekvence, spustí 2. sourozenec → abstract `LIQUIDS` base class per DD-27 vzoru), `VISCOSITY` (voda/láva/ropa/kyselina), `LEVEL` animace (tide cyklus, monsoon flood). Bez explicit user signal držet jako kotvy.
 
 ## WORLD / atmosféra
 
 - [ ] **Slider DAY sync z value** — periodic update (throttle ~4×/s) z `world.DAY` zpět do DOM `#set-day` inputu, aby při auto-advance (`DAY_SPEED > 0`) slider neztuhl. Známé omezení z DD-38, kosmetické.
-- [ ] **HSL hue shift pro sky/sun** *(DD-48 follow-up)* — current lerp RGB-linear. Mezi `_skyDusk` (teplá) a `_skyDay` (tmavě modrá) RGB prochází přes desaturovanou hnědou. HSL lerp by dal hue rotation (orange → blue přes purple — fyzikálně realističtější Rayleigh).
-- [ ] **Per-cluster wave fáze** *(DD-48 follow-up)* — současný water wave je global synchroní (všechny meshe stejná fáze). Pro realistic „každé jezero vlastní vlnka" potřeba per-cluster offset (seed-based).
+- [ ] **Per-cluster wave fáze** *(DD-48 follow-up)* — současný water wave je global synchroní (všechny meshe stejná fáze). Pro realistic „každé jezero vlastní vlnka" potřeba per-cluster offset (seed-based). Závislost: BFS clustering (DD-54 sub-prah) — bez clusteringu by per-cluster = per-cell = velké pole náhodných fází bez „lake" sémantiky.
 - [ ] **Sky/sun color season modifier** *(DD-50 follow-up plný scope)* — DD-48 `_skyDay` / `_skyDusk` keypoints jsou season-invariant. Sezonní subtle tint (winter colder modřejší, summer warmer žlutější).
 - [ ] **Snow accumulation animace přes DAY_SPEED** *(DD-50 follow-up plný scope)* — temporal evolution (sníh roste v zimě, taje na jaře) přes WORLD.DAY × SEASON interpolation.
 - [ ] **Snow noise patches calibration** *(DD-47 follow-up)* — temperate snow dnes sort+rank top 30 % s `altBias = 0.3`. Pokud user feedback „moc/málo sněhu v mírném pásmu", tweak: `snowSpec.patchThreshold` (0.7 = 30 %) a/nebo `snowSpec.altBias` (0.3). Možná `freezeRatio` per HUMIDITY (wet temperate = víc sněhu než mid).
@@ -49,7 +50,6 @@
 
 ## Sez. 42 sub-prahy (perf + meta)
 
-- [ ] **`%BEGIN` projekt-specific addendum — target use case check** *(per sez. 42 Censure! AI → AI)*. Pokud sezení směřuje k perf/stress test directionu, %BEGIN by mělo defaultně ptát „co user opravdu chce optimalizovat / hrát?" (= velikost grid, climate priority). Sez. 42 AI musela perf diagnostic dive po několika měřeních dokud user nezasáhl „20×20 je real, 100×100 je stress". `docs/PROMPTS.md %BEGIN` rozšířit o krok „(2.5) Target use case check (pokud relevantní)".
 - [ ] **Shadow opt sub-prah** — shadow tighten alone neproduktuje perf win (denser texel paradox). Pokud někdy budeme řešit shadow cost, KOMBINOVAT shadow camera tighten + mapSize reduction. Memory: [[feedback_shadow_tighten_paradox]].
 - [ ] **Perf HUD distance LOD pro DECOR** — manual `mesh.visible = false` pro DECOR distanceTo(camera) > 30. Per-frame iteration 5k entries (cheap). Sub-prah pro hypotetický 100×100 stress playability (= NE priorita per target use case 20×20).
 
@@ -74,6 +74,6 @@ Kandidáti bez explicit user signal — drží se jako kotvy, neaktivní:
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — **6/8** *(sez. 40+41+42+43+44 jen impl)*. Next: ~sez. 46.
-- **`%AUDIT:DOCS`** — **5/10** *(sez. 40+41+42+43+44 jen impl)*. Next: ~sez. 49.
-- **IDEAS/TODO pruning** — **1/12** *(sez. 43 full pruning DONE — 4 passes)*. Next: ~sez. 55.
+- **`%AUDIT:CODE`** — **7/8** *(sez. 40+41+42+43+44+45 jen impl/skeleton)*. **Next: sez. 46 = MUSÍ AUDIT (threshold)**.
+- **`%AUDIT:DOCS`** — **6/10** *(sez. 40-45 jen impl)*. Next: ~sez. 49.
+- **IDEAS/TODO pruning** — **2/12** *(sez. 43 full pruning DONE)*. Next: ~sez. 55.

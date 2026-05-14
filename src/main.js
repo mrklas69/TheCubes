@@ -10,7 +10,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
-import { CUBES, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, SPRITES, LAMP, DECOR, PATH, TIMER, COUNTER, WORLD } from "./model.js";
+import { CUBES, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, SPRITES, LAMP, DECOR, PATH, LIQUID, TIMER, COUNTER, WORLD } from "./model.js";
 import { DECOR_BUILDERS } from "./composites/builders.js";
 import { TIME, advanceTime } from "./time.js";
 import { generateTerrain, maxReliefForSize, BIOME_NAMES, BIOME_SURFACES, surfacesForBiome, snowSpecForLatitude, waterSpecForClimate, decorSpecForClimate, DECOR_DENSITY, SEASONS } from "./terrain.js";
@@ -183,6 +183,30 @@ const SUN_DISTANCE_SCALE = 5;
 const _sunColorSunrise = new THREE.Color(0xffd4c6);  // lerp(white, 0xff7040, 0.3)
 const _sunColorMid     = new THREE.Color(0xfff3d4);  // lerp(white, 0xffd870, 0.3)
 const _sunColorNoon    = new THREE.Color(0xffffff);
+
+// HSL hue interpolation (sez. 45, DD-48 follow-up). Three.js Color má
+// `.getHSL()` + `.setHSL()`, ale chybí native HSL lerp. RGB lerp pro orange↔blue
+// prochází přes desaturovanou hnědou (purplish RGB midpoint má low S+L). HSL lerp
+// drží S+L lineární, hue rotuje po shorter circular path → orange→blue ide přes
+// purple (Rayleigh-correct dusk), místo přes hnědou.
+// Shorter-path algoritmus: pokud |h2 - h1| > 0.5, wrap (přejdi přes 0/1 hranici).
+// Pro hue 0.003 (orange) → 0.667 (blue): direct = +0.664 (přes green/cyan, špatně),
+// wrap = -0.336 (přes magenta/purple, ✓). Default Three.js helper s tímhle nepočítá.
+// Scratch objects pro zero alokace per-frame (volá se 4× per frame: 2× sun + 2× sky).
+const _hslA = { h: 0, s: 0, l: 0 };
+const _hslB = { h: 0, s: 0, l: 0 };
+function _lerpHsl(target, a, b, t) {
+  a.getHSL(_hslA);
+  b.getHSL(_hslB);
+  let dh = _hslB.h - _hslA.h;
+  if (dh > 0.5) dh -= 1;
+  else if (dh < -0.5) dh += 1;
+  // `(x + 1) % 1` zaručí [0, 1) i pro záporné meziprůměry (JS % vrací záporky).
+  const h = (_hslA.h + dh * t + 1) % 1;
+  const s = _hslA.s + (_hslB.s - _hslA.s) * t;
+  const l = _hslA.l + (_hslB.l - _hslA.l) * t;
+  target.setHSL(h, s, l);
+}
 const sunMesh = new THREE.Mesh(
   new THREE.SphereGeometry(1.5, 16, 16),
   // `fog: false` = slunce ignoruje scene.fog; jinak by se bílá koule s rostoucí
@@ -237,11 +261,13 @@ function updateSun() {
   const daylight = Math.max(0, negCosA);
   sun.intensity = SUN_BASE_INTENSITY * daylight;
   // Color piecewise lerp (sez. 38) — sunrise/sunset červánková, mid žlutá, poledne bílá.
-  // `lerpColors(c1, c2, t)` zapisuje do `this` instance, žádná per-frame alokace.
+  // HSL lerp (sez. 45, DD-48 follow-up) — `_lerpHsl` viz výše. Pro sun barvy
+  // (warm peach → cream → white) je hue rotace minimální, ale držíme uniformní
+  // pipeline napříč sun+sky lerps (DRY + izomorfně s `updateAtmosphere`).
   if (daylight < 0.5) {
-    sun.color.lerpColors(_sunColorSunrise, _sunColorMid, daylight * 2);
+    _lerpHsl(sun.color, _sunColorSunrise, _sunColorMid, daylight * 2);
   } else {
-    sun.color.lerpColors(_sunColorMid, _sunColorNoon, (daylight - 0.5) * 2);
+    _lerpHsl(sun.color, _sunColorMid, _sunColorNoon, (daylight - 0.5) * 2);
   }
   // Sun mesh follow + skip render v noci (Y<0 = pod scénou = stejně neviditelné).
   // AND s `_sunUserVisible` — pokud user vypne toggle v settings panelu, hide
@@ -264,13 +290,16 @@ function updateSun() {
 // Ambient intensity zůstává driven `daylight` (= max(0, negCosA)) — fill light
 // se v noci propadne na AMBIENT_NIGHT, dusk fáze už lift na ~AMBIENT_NIGHT
 // (= shoduje se s "obloha se rozjasňuje, ale slunce ještě neosvětluje").
-// `lerpColors(c1, c2, alpha)` zapisuje do `this` instance, žádná alokace per-frame.
+// HSL lerp (sez. 45, DD-48 follow-up) přes `_lerpHsl` — pro `_skyDusk → _skyDay`
+// (hue orange ~0.003 → blue ~0.667, diff > 0.5) wrap přes magenta/purple =
+// Rayleigh-correct, místo RGB direct přes desaturovanou hnědou. Pro `_skyNight
+// → _skyDusk` HSL≈RGB (black hue undefined, lerp drží S/L linear).
 function updateAtmosphere() {
   const negCosA = -Math.cos(world.DAY * TAU);
   if (negCosA < 0) {
-    scene.background.lerpColors(_skyNight, _skyDusk, negCosA + 1);
+    _lerpHsl(scene.background, _skyNight, _skyDusk, negCosA + 1);
   } else {
-    scene.background.lerpColors(_skyDusk, _skyDay, negCosA);
+    _lerpHsl(scene.background, _skyDusk, _skyDay, negCosA);
   }
   sceneFog.color.copy(scene.background);
   const daylight = Math.max(0, negCosA);
@@ -2113,18 +2142,22 @@ const WATER_WAVE_PERIOD = 9.0;   // s (klidný swell, sez. 38 user 3× pomalejš
 const WATER_WAVE_OMEGA  = 2 * Math.PI / WATER_WAVE_PERIOD;
 const _waterMeshes = new Set();  // jen non-frozen water; zase clear v regenerateScene
 
-function createWaterPlane(w) {
-  // `w.frozen` flag rozhoduje materiál: ice (polar all, temperate ~30 %) vs.
-  // water (otherwise). Plane v rovině XZ po rotaci kolem X osy.
-  const mesh = new THREE.Mesh(_waterGeom, w.frozen ? _iceMat : _waterMat);
+// Vytvoří mesh pro LIQUID instanci (DD-54, sez. 45). Přijímá `LIQUID` data
+// objekt — čte `TEMPERATURE` (material decision), `X/LEVEL/Z` (pozice),
+// `BOUNDING_BOX` (scale). Plane v rovině XZ po rotaci kolem X osy.
+// Internal materiály/geom stále `_waterMat`/`_iceMat`/`_waterGeom` — KISS,
+// rename na `_liquid*` = sub-prah až přibude lava/oil sourozenec.
+function createLiquidPlane(liquid) {
+  const frozen = liquid.TEMPERATURE === "frozen";
+  const mesh = new THREE.Mesh(_waterGeom, frozen ? _iceMat : _waterMat);
   mesh.rotation.x = -Math.PI / 2;
-  mesh.position.set(w.x, w.y, w.z);
-  mesh.scale.set(w.w ?? 1, 1, w.d ?? 1);
+  mesh.position.set(liquid.X, liquid.Y, liquid.Z);
+  mesh.scale.set(liquid.BOUNDING_BOX.w, 1, liquid.BOUNDING_BOX.d);
   mesh.receiveShadow = true;
-  // Water wave anim registrace: stash base Y + add do `_waterMeshes` Set.
-  // Ice se ne-anim (rigid surface) — vynechán ze Setu.
-  if (!w.frozen) {
-    mesh.userData.waterBaseY = w.y;
+  // Wave anim registrace: stash base Y + add do `_waterMeshes` Set.
+  // Frozen (ice) se ne-anim (rigid surface) — vynechán ze Setu.
+  if (!frozen) {
+    mesh.userData.waterBaseY = liquid.Y;
     _waterMeshes.add(mesh);
   }
   return mesh;
@@ -2330,11 +2363,27 @@ function spawnTerrain(params) {
     if (batch.instanceColor) batch.instanceColor.needsUpdate = true;
   }
 
-  // Water plane(y) (sez. 38, post-DD-47 LIQUID prototype) — single-mesh per
-  // water cell. `frozen` flag rozhoduje materiál (water vs. ice).
+  // LIQUID instance per water cell (sez. 45, DD-54 5. vrstva DD-25 extension).
+  // Sez. 45 prototype: 1 LIQUID = 1 water cell (single-cell skeleton, bbox
+  // `{w:1, d:1}`, CELLS `[{x,z}]` single). Plný BFS clustering = sub-prah.
+  // Per DD-11 model/engine separation: `terrain.water[]` jsou raw data
+  // records (`{x, y, z, frozen, w, d}`), LIQUID construction patří sem do
+  // engine spawn loopu, ne do `terrain.js`.
   // userData.terrain = true → flag pro regenerateScene cleanup.
+  let liquidIdx = 0;
   for (const w of terrain.water ?? []) {
-    const mesh = createWaterPlane(w);
+    // Zero-pad ID `liquid_NNNN` (paralel `decor_NNNN`); per DD-29 atribut
+    // `name` zachovává sémantickou identitu („Jezero"/„Led" by mohlo přijít
+    // až s LIQUID KIND atributem, dnes monolit).
+    const id = `liquid_${String(liquidIdx++).padStart(4, "0")}`;
+    const liquid = new LIQUID(
+      id, "Tekutina",
+      w.x, w.y, w.z,
+      w.frozen ? "frozen" : "liquid",
+      { w: w.w ?? 1, d: w.d ?? 1 },
+      [{ x: w.x, z: w.z }],
+    );
+    const mesh = createLiquidPlane(liquid);
     mesh.userData.terrain = true;
     scene.add(mesh);
   }

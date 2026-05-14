@@ -359,6 +359,52 @@ export class PATH extends CUBES {
 }
 
 /**
+ * LIQUID = tekutina (jezero, řeka, ...). **5. vrstva DD-25 extension** (sez. 45,
+ * DD-54): Bloky / Voxely / Linie / Objekty / **Tekutiny**. Sibling BLOCKS /
+ * COMPOSITES / PATH pod CUBES (paralel PATH pattern — bez abstract rodiny dokud
+ * nepřibude 2. sourozenec, pak `LIQUIDS` base class podle DD-27 vzoru).
+ *
+ * 1 instance = 1 connected basin (= seznam cells sdílejících hladinu + skupenství).
+ * **Sez. 45 prototype:** single-cell instance (1 LIQUID = 1 water cell). Plný
+ * BFS connected-components clustering je sub-prah — čeká na user signal
+ * „100×100 jezera blikají" nebo perf need. Per target use case 20×20 dioráma
+ * (memory `project-target-use-case`) je per-cell render visually correct
+ * a bbox clustering by zaváděl z-fight artifakty (DD-53 attempt + revert lesson).
+ *
+ * Atributy:
+ *   - `LEVEL` — Y hladiny (sémanticky čitelnější alias pro `Y` z CUBES). Drží
+ *     oba kvůli budoucí extensions (např. mesh Y se může nudgnout proti
+ *     z-fightu, `LEVEL` zůstane čistá logická hladina).
+ *   - `TEMPERATURE` — `"frozen"` | `"liquid"` enum. Material decision (`_iceMat`
+ *     vs. `_waterMat` v main.js). Budoucí extension: numerický °C pro permafrost
+ *     gradient / lávu / termální zóny (YAGNI v sez. 45).
+ *   - `BOUNDING_BOX` — `{ w, d }` axis-aligned XZ extent v 1C jednotkách. Pro
+ *     prototype skeleton vždy `{ w: 1, d: 1 }`. Plný clustering by dal bbox
+ *     přes connected cells.
+ *   - `CELLS` — `[{ x, z }, ...]` cells obsazené tímto LIQUID. Pro prototype
+ *     skeleton vždy `[{ x, z }]` (1 prvek). Pro DRY identifikaci / clear-path.
+ *
+ * Žádný `FLOW_DIRECTION` ve skeletonu — rivers/streams jsou sub-prah, atribut
+ * by byl placeholder bez konzumenta (porušení DD-29 politiky „nové atributy
+ * jen s živým konzumentem").
+ *
+ * Budoucí extension hooks („fyzika kapalin"):
+ *   - TEMPERATURE numeric °C → gradient frozen↔melting, permafrost
+ *   - FLOW_DIRECTION → rivers, streams (paralel PATH `POINTS` sekvence)
+ *   - VISCOSITY → různé tekutiny (voda, láva, ropa, kyselina)
+ *   - LEVEL animace (tide, monsoon flood, tání ledu na jaře)
+ */
+export class LIQUID extends CUBES {
+  constructor(id, name, x, level, z, temperature, bbox, cells, description = "") {
+    super(id, name, x, level, z, description);
+    this.LEVEL       = level;
+    this.TEMPERATURE = temperature;
+    this.BOUNDING_BOX = bbox;
+    this.CELLS      = cells;
+  }
+}
+
+/**
  * TIMER = nevizuální potomek OBJECTS — spouští `ACTION` v diskrétních
  * intervalech měřených v `TIME.tick` (sekundy, DD-04). První skutečná
  * reakce na TIME.tick v projektu (do sez. 8 tiky jen tiktaly v HUDu).

@@ -1492,3 +1492,66 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 - DD-49 (sez. 40) — `decorate()` Krok 7 + ramp Y constant `y_top + 1.0` (sez. 40 bod 2 ramp fix). DD-52 nahrazuje konstantní Y lineární interp.
 - Sez. 41 user pointy: „Stromy na rampách (oak) visí ve vzduchu, přepočítej výšku paty stromu na svahu." Kontext v `docs/diary/2026-05-14.md` Sezení 41.
 
+## DD-54 — LIQUID class jako **5. vrstva DD-25 extension** (Tekutiny, sez. 45)
+
+**Rozhodnutí:** DD-25 4-vrstvá taxonomie (Bloky / Voxely / Linie / Objekty) se rozšiřuje o **5. vrstvu: Tekutiny**. První konkrétní implementace `class LIQUID extends CUBES` v `src/model.js`. Sibling BLOCKS / COMPOSITES / PATH pod CUBES (paralel PATH pattern dle DD-27 — bez abstract `LIQUIDS` base třídy dokud nepřibude 2. sourozenec, např. lava / oil / acid).
+
+**Kontext:** DD-47 (sez. 38) zavedl water flood-fill (Wang & Liu 2006 priority queue) a vrátil voda do scény po DD-25 wipe. Implementace ale držela vodu jako **raw data records** v `terrain.water[]` array (`{x, y, z, frozen, w, d}`), bez OOP class. Memory `project-model-hierarchy` zaznamenala „DD-25 vrstva 4 LIQUID class" jako sub-prah — to je chybné čtení DD-25 (vrstva 4 = Objekty / postavy / zvířata, ne tekutiny). DD-54 to opravuje: LIQUID je **nová 5. vrstva** v rozšířené DD-25 taxonomii.
+
+**Class signature:**
+
+```js
+new LIQUID(id, name, x, level, z, temperature, bbox, cells, description)
+```
+
+**Atributy:**
+
+- `LEVEL` — Y hladiny (sémanticky čitelnější alias pro `Y` z CUBES). Skeleton drží oba kvůli budoucí extension (mesh Y může mít nudge offset proti z-fightu, `LEVEL` zůstává čistá logická hladina).
+- `TEMPERATURE` — `"frozen"` | `"liquid"` enum. Material decision v `createLiquidPlane` (`_iceMat` vs. `_waterMat`).
+- `BOUNDING_BOX` — `{ w, d }` axis-aligned XZ extent v 1C jednotkách.
+- `CELLS` — `[{ x, z }, ...]` cells obsazené tímto LIQUID. Pro DRY identifikaci / clear-path / decorate skip.
+
+**Sez. 45 prototype = single-cell skeleton:**
+
+1 LIQUID instance = 1 water cell. `BOUNDING_BOX = { w: 1, d: 1 }`, `CELLS = [{ x, z }]` (single prvek). Spawn loop v `main.js` (`buildScene`) iteruje `terrain.water[]` raw records a wrapuje je do LIQUID instancí. **`createLiquidPlane(liquid)`** (= renamed `createWaterPlane(w)`) bere LIQUID a čte z něj `X/LEVEL/Z/TEMPERATURE/BOUNDING_BOX`.
+
+**Důvod prototype skeleton, ne plný clustering:**
+
+Plný BFS connected-components clustering (= 1 LIQUID = N connected cells sdílejících `water_y` + `frozen`) byl pokusen v sez. 42 (DD-53 attempt) a **revertován** — viz memory `project-target-use-case`:
+
+- bbox over varied `water_y` → mean Y → boundary cells z-fight (visual artifact).
+- per target use case 20×20 dioráma je per-cell render visually correct + zero perf cost.
+- 100×100 stress test je academic edge case, ne real workflow.
+
+Skeleton splňuje **DRY** (LIQUID koncept v jednom místě, ne raw records mixed s class), **first-things-first** (class identita > clustering optimization) a **conceptual integrity** (DD-25 5-vrstvá taxonomie je nyní úplná). Plný clustering = sub-prah, čeká na user signal („100×100 jezera blikají" nebo nový perf need).
+
+**Důsledek:**
+
+- `terrain.water[]` zachováno jako raw data records (per DD-11 model/engine separation — `terrain.js` nezná `model.js`).
+- `_waterMat` / `_iceMat` / `_waterGeom` / `_waterMeshes` internals zachovány (= implementation detail, rename na `_liquid*` = sub-prah až přibude lava/oil sourozenec a paralelní rename si vynutí 2. material set).
+- DD-47 LIQUID prototype označení se v komentářích aktualizuje na „LIQUID class skeleton" (DD-54 nahrazuje raw record pattern).
+
+**Sub-prahy (čekající):**
+
+- **BFS connected-components clustering** — `terrain.js` Krok 6.5 (post-flood-fill): visited Set + queue, split components dle `(water_y, frozen)` key (= unique kombinace → samostatná LIQUID instance, drží z-fight invariant). Spawn loop pak prochází `terrain.liquids[]` namísto `terrain.water[]`.
+- **Multi-Y component split** — jezero s ostrovem (= jeden component, různé `water_y` na různých cells) → N LIQUID instancí, jedna per Y level.
+- **Per-bbox ice texture noise** — pro frozen LIQUID s bbox > 5 cells dát canvas texture s bílo-modrými skvrnami (= „partially zasněžený led").
+
+**Budoucí extension hooks („fyzika kapalin", user note sez. 45):**
+
+- `TEMPERATURE` numeric °C → gradient frozen↔melting, permafrost, sezonní tání.
+- `FLOW_DIRECTION` → rivers, streams (paralel `PATH.POINTS` sekvence). Spustí 2. sourozenec → abstract `LIQUIDS` base class per DD-27 vzoru.
+- `VISCOSITY` → různé tekutiny (voda, láva, ropa, kyselina).
+- `LEVEL` animace — tide cyklus, monsoon flood, sezonní tání ledu na jaře.
+
+**Žádné rename napříč src/ kromě entry pointu** (`createWaterPlane → createLiquidPlane`). `_waterMat` / `_iceMat` / `_waterMeshes` zachovány = implementation locality.
+
+**References:**
+
+- DD-25 (sez. 16) — Originální 4-vrstvá taxonomie scény. DD-54 ji rozšiřuje o 5. vrstvu.
+- DD-27 (sez. 20) — PATH pattern (sibling BLOCKS pod CUBES, bez abstract LINES base dokud nepřibude TRACK). LIQUID kopíruje tento pattern.
+- DD-47 (sez. 38) — Water flood-fill prototype. DD-54 odstraňuje raw record přístup a wrapuje do LIQUID class.
+- DD-53 (sez. 42, attempt + revert) — Bbox clustering attempt. DD-54 explicit drží single-cell skeleton, plný clustering sub-prah s mitigací (split by `(water_y, frozen)`).
+- Memory: [[project-target-use-case]], [[feedback-target-use-case-check]].
+- Sez. 45 user note: „Třeba někdy dojde na fyziku kapalin." — schválení LIQUID jako samostatné vrstvy s budoucí extension hooks (TEMPERATURE °C / FLOW / VISCOSITY).
+
