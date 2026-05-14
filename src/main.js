@@ -22,6 +22,12 @@ const canvas = document.getElementById("scene");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
+// Sez. 42 Krok 3 (perf HUD fix) — `info.autoReset = false` zachová akumulaci
+// stats napříč všemi pass v `composer.render()` (= main scene render + DOF blur
+// pass + OutputPass). Manuální `info.reset()` per frame na začátku `animate()`.
+// Bez tohohle Three.js resetuje stats na začátku **každého** renderer.render(),
+// takže perf HUD čte jen stats z OutputPass (= 1 quad, 2 tri = naprosto k ničemu).
+renderer.info.autoReset = false;
 // Stíny. `shadowMap.enabled = true` = GPU bude generovat depth-mapy ze světel,
 // které stíny podporují. `PCFSoftShadowMap` = Percentage-Closer Filtering
 // s rozmazáním → měkké hrany stínů (nejhezčí/nejdražší default). Alternativy:
@@ -2741,7 +2747,6 @@ const _perfHud = {
     calls: document.getElementById("ph-calls"),
     tri:   document.getElementById("ph-tri"),
     geom:  document.getElementById("ph-geom"),
-    mat:   document.getElementById("ph-mat"),
   },
 };
 
@@ -2780,21 +2785,21 @@ function animate() {
   bokehPass.uniforms.focus.value = camera.position.distanceTo(controls.target);
   composer.render();
 
-  // Perf HUD report 1×/s — `renderer.info.render.*` reflektuje *poslední*
-  // render() (právě výš), takže čteme po něm. `info.memory.*` jsou kumulativní
-  // counts napříč scénou (geometries+textures alive). `mat` = součet
-  // material cache (slow path `_faceMaterialCache` — Three.js nemá native
-  // material count). Po DD-41 (sez. 34) lowpoly pipeline drží jen 1 sdílený
-  // `_lowpolyMat` napříč všemi terrain batchi, nejde do žádné cache → není
-  // počítán; `mat` reflektuje jen non-terrain materiály.
+  // Perf HUD report 1×/s — `renderer.info.render.*` akumulované přes všechny
+  // frames + composer passes mezi reporty (sez. 42 Krok 3 — `autoReset=false`).
+  // Reportujeme **average per-frame** (= total / frameCount). `mat` field
+  // smazán — `_faceMaterialCache` byl pre-DD-41 slow-path cache; po DD-41
+  // lowpoly pipeline drží 1 sdílený `_lowpolyMat`, cache permanentně prázdná.
   _perfHud.frameCount++;
   if (now - _perfHud.lastReport >= 1.0) {
     const fps = _perfHud.frameCount / (now - _perfHud.lastReport);
+    const callsAvg = renderer.info.render.calls / _perfHud.frameCount;
+    const triAvg   = renderer.info.render.triangles / _perfHud.frameCount;
     _perfHud.el.fps.textContent   = fps.toFixed(0);
-    _perfHud.el.calls.textContent = renderer.info.render.calls;
-    _perfHud.el.tri.textContent   = renderer.info.render.triangles.toLocaleString("cs-CZ");
+    _perfHud.el.calls.textContent = Math.round(callsAvg);
+    _perfHud.el.tri.textContent   = Math.round(triAvg).toLocaleString("cs-CZ");
     _perfHud.el.geom.textContent  = renderer.info.memory.geometries;
-    _perfHud.el.mat.textContent   = _faceMaterialCache.size;
+    renderer.info.reset();  // start nové accumulation periody
     _perfHud.frameCount = 0;
     _perfHud.lastReport = now;
   }

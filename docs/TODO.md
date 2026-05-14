@@ -50,9 +50,9 @@
 
 DD-49 + DD-50 implementovány sez. 40. DD-51 (LEAF_AUTUMN cycle + winter defoliation) + DD-52 (slope-aware decor Y) implementovány sez. 41. Otevřené sub-prahy:
 
-### Priorita pro sez. 42 — perf trigger
+### Downgraded (sez. 42 perf diagnostic dive + target use case pivot)
 
-- [!] **InstancedMesh refactor pro DECOR** *(DD-kandidát, trigger byl perf regrese sez. 41)*. Per (KIND × varianta) `InstancedMesh` batch. Sez. 41 multi-decor `MAX_ATTEMPTS=2` zkusil → ~20k DECOR Object3D × ~5 child meshes per Group = ~100k scenetree, rAF 123ms (~8 FPS). Rolled back na 1 attempt; pro hustší prales potřebuje InstancedMesh. Komplikace: per-instance random scale/rotation v `instanceMatrix`, flatShading + InstancedMesh seam (memory [[feedback_flat_shading_instanced]] — switch na vertex-color pipeline pro DECOR). Otevírá cestu k MAX_ATTEMPTS=2-3 bez perf hit.
+- [ ] **InstancedMesh refactor pro DECOR** *(downgrade z `[!]` na `[ ]` — sez. 42 user pivot na 20×20 target dioráma)*. Per (KIND × varianta) `InstancedMesh` batch. Sez. 41 multi-decor `MAX_ATTEMPTS=2` zkusil → ~20k DECOR Object3D × ~5 child meshes per Group = ~100k scenetree, rAF 123ms (~8 FPS @ 100×100 tropical.wet). **Sez. 42 reality check**: pro target use case 20×20 dioráma = 60 FPS + visual OK out of the box, refactor není potřeba. Pro 100×100 stress edge case s tropical.wet max density = 62k draw calls per frame (perf bottleneck). Refactor by srazil na ~50 batches, ale stress je academic per user. Komplikace zachované: per-instance random scale/rotation v `instanceMatrix`, flatShading + InstancedMesh seam ([[feedback_flat_shading_instanced]]), fixed-count parts s `scale=0` neaktivních (per sez. 41 Q3=A).
 
 ### Fáze 6 — follow-up DECOR (KIND extension)
 
@@ -80,9 +80,9 @@ DD-49 + DD-50 implementovány sez. 40. DD-51 (LEAF_AUTUMN cycle + winter defolia
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — **3/8** *(sez. 40+41 jen impl, žádný audit)*. Next: ~sez. 46.
-- **`%AUDIT:DOCS`** — **2/10** *(sez. 40+41 jen impl, žádný audit)*. Next: ~sez. 49.
-- **IDEAS/TODO pruning** — **10/12** *(sez. 41 prune: close LEAF_AUTUMN sub-prah; add InstancedMesh DECOR priority + DD-52 follow-up + DD-51 LEAF_AUTUMN HSL sub-prah)*. **Velmi blízko prahu** — další sezení vyhodnotit jako pruning trigger.
+- **`%AUDIT:CODE`** — **4/8** *(sez. 40+41+42 jen impl/diagnose, žádný audit)*. Next: ~sez. 46.
+- **`%AUDIT:DOCS`** — **3/10** *(sez. 40+41+42 jen impl/diagnose, žádný audit)*. Next: ~sez. 49.
+- **IDEAS/TODO pruning** — **11/12** *(sez. 42 prune: downgrade InstancedMesh `[!]` → `[ ]`, add target use case 20×20 sub-prah, add shadow tighten paradox memory)*. **MUSÍ pruning v sez. 43** — threshold trigger.
 
 - [ ] **Symmetric VALLEY_AMP = −amplitude varianta** — DD-46 dnes asymetrický (VALLEY=−1, PEAK=amplitude). Peak side rozprostřená přes víc úrovní (Y=2,3,4) než valley side (Y=−1 dominantní). Pro skutečně symetrický bimodal (= stejné peaks i valleys distribuce) by VALLEY=−amplitude dalo range [-amp, +amp]. Pro r6 by to znamenalo -4..4. Wait pro user feedback typu „valley je moc dominantní" / „peaks rozcucnatý".
 - [ ] **Plynulý morph r5↔r6** — DD-46 hard switch při r=6 (ridge³ → smoothstep bimodal). Pokud user pocítí „přechod mezi rolling a horami je trhanej", parametrizovat `bimodalWeight = clamp((relief-5)/3, 0, 1)` a lerp mezi ridge³ output a smoothstep output. Wait pro user feedback.
@@ -102,6 +102,14 @@ DD-49 + DD-50 implementovány sez. 40. DD-51 (LEAF_AUTUMN cycle + winter defolia
 ## Sub-prah (sez. 39 %AUDIT:DOCS follow-up)
 
 - [ ] **DIARY.md index retro cleanup** — od sez. 14 dál (multi-session days) index sazí 5-7 sezení do jednoho mega-řádku (sez. 38 řádek má 28k znaků). Per PROMPTS.md %END *„datum + shrnutí sezení"* — index má být stručný 1-2 věty per sezení, detail patří do `diary/YYYY-MM-DD.md`. Retro cleanup = velký úkol, pro budoucí sezení dodržovat stručný index automaticky.
+
+## Sub-prah (sez. 42 perf diagnostic + target use case pivot)
+
+- [ ] **`%BEGIN` projektový addendum — ptát se na target use case** *(per sez. 42 Censure! AI → AI)*. Pokud sezení směřuje k perf/stress test directionu, %BEGIN by mělo defaultně ptát "co user opravdu chce optimalizovat / hrát?" (= velikost grid, climate priority). Sez. 42 AI musela perf diagnostic dive po několika měřeních dokud user nezasáhl "20×20 je real, 100×100 je stress". `docs/PROMPTS.md %BEGIN` rozšířit o krok "(2.5) Target use case check (pokud relevantní)".
+- [ ] **DD-25 vrstva 4 LIQUID class** — per-lake entity (= proper place pro per-component bbox cluster, sez. 42 DD-53 attempt + revert). Atributy LEVEL/TEMPERATURE/FLOW_DIRECTION/BOUNDING_BOX. 1 LIQUID instance = 1 jezero. DD-53-style BFS bbox cluster patří do `terrain.js` jako preprocessing pro LIQUID spawn. Sub-prah, ne immediate.
+- [ ] **Shadow opt sub-prah** — shadow tighten alone neproduktuje perf win (denser texel paradox). Pokud někdy budeme řešit shadow cost, KOMBINOVAT shadow camera tighten + mapSize reduction. Memory: [[feedback_shadow_tighten_paradox]].
+- [ ] **Perf HUD distance LOD pro DECOR** — manual `mesh.visible = false` pro DECOR distanceTo(camera) > 30. Per-frame iteration 5k entries (cheap). Sub-prah pro hypotetický 100×100 stress playability (= NE priorita per target use case 20×20).
+- [ ] **DD-53 follow-up sub-prah** *(reference pro budoucí LIQUID class implementaci)* — per-bbox ice texture noise pro zachování ice/water variability v temperate lakes po bbox cluster. Hybrid threshold (≥5 cells = bbox, <5 = per-cell). Split component by water_y level. Three.js gotcha: PlaneGeometry vertex.Z=0 + mesh.rotation = scale.y → POST-rotation depth, ne scale.z (`createWaterPlane` v main.js).
 
 ## Sub-prah (DD-46 follow-up, sez. 37, zachovat)
 - [x] **Bimodální heightmap (G5 kandidát)** *(sez. 37, DD-46)* — vyřešeno smoothstep bimodální variantou pro relief ≥ 6. Viz DONE.md.
