@@ -112,4 +112,46 @@ Zkontroluj, jestli ze sezení vzešly nové trvalé informace (nové preference,
 
 ---
 
+## %CALIBRATE — Kalibrace AI spolupracovníka
+
+> **Sez. 48 port z PocketStory** (`~/source/PocketStory/docs/PROMPTS.md`) + adaptace pro TheCubes scope (solo dev, JS+Three.js sandbox, single-machine, žádné `.claude/skills/`, žádné `CONTEXT.md`). Sez. 39 audit `%CALIBRATE` droplo jako *„PocketStory-specific"*; sez. 48 ho user explicit vrátil pro M-Genesis arc Fáze 4. Memory `[[feedback_memory_drift_cross_check]]` zachytil drift pattern.
+
+Proveď meta-audit vlastní efektivity jako AI spolupracovník a optimalizuj řídící dokumenty. **Přečti vše potřebné sám** — globální + projektový `CLAUDE.md`/`PROMPTS.md`, posledních 5-10 diary záznamů, `MEMORY.md` (auto-memory index), `IDEAS.md`, `TODO.md`, `docs/DESIGN_DECISIONS.md` (jen recent DD), `docs/GLOSSARY.md` header.
+
+### A) Řídící docs hygiene
+
+- **`~/.claude/CLAUDE.md`** (globální): aktuální? Chybí konvence, které se opakovaně řeší ad-hoc v TheCubes (např. sed range delete risks, browser smoke test po cleanup)? Tone & Feedback ratio 80/20 aplikováno bilaterálně?
+- **`CLAUDE.md`** (projektový overlay): Key Files mapa sync se src/ (po sez. 48 = 8 tříd model)? %THINK rozšíření (5. bod procedural/sandbox) stále relevantní?
+- **`~/.claude/PROMPTS.md`** (globální maker): jsou makra `%BEGIN`/`%END`/`%THINK`/`%AUDIT:CODE`/`%AUDIT:DOCS`/`%DOCS` aktuální? Mělo by být přidáno makro pro pattern, který se opakovaně řeší ad-hoc?
+- **`docs/PROMPTS.md`** (projektový override): `%BEGIN` server spawn detail, target use case check (sez. 42 addendum), `%END` commit+push (TheCubes-specific override). `%CALIBRATE` definice (toto makro) aktuální?
+- **`.claude/settings*.json`** (pokud existují): permissions, hooks, env vars. Žádné automation gaps po `%END`?
+- **`MEMORY.md` index** (`~/.claude/projects/.../memory/`): drift po sez. 48 cleanup (memory zmínky SPRITES/PATH/TIMER/COUNTER/ANIMATE — aktivní vs. dropnuté), broken `[[link]]` references, duplicity, zastaralé date references.
+
+### B) Process review
+
+- **Posledních 5-10 diary záznamů**: opakující se vzory, bottlenecks, false starts, regrese po cleanup, sed range delete incidents.
+- **`%BEGIN`/`%END` sekvence**: target use case check (sez. 42 addendum), git sync first step (sez. 39 mandatory), server spawn last step. Funguje stále optimal po sez. 48 4-commit flow?
+- **Audit cadence prahy správné?** `%AUDIT:CODE` 8 sezení (sez. 38, 46, 48), `%AUDIT:DOCS` 10 sezení (sez. 39, 48), IDEAS/TODO/DONE pruning 12 sezení (sez. 43, 48). User-driven override (sez. 48) vs. cadence trigger pattern. Threshold čísla ještě dávají smysl?
+- **Multi-session days pattern** (sez. 41-48 = 8 sezení dne 2026-05-14): vysoká kadence solo dev. PROMPTS.md `%BEGIN` *„rychlejší re-entry"* sub-prah? DIARY.md index mega-řádky (TODO sub-prah ř. 78, sez. 39 audit follow-up).
+- **Token efektivita** — `~/.claude/CLAUDE.md` (~70 ř.), projektový `CLAUDE.md` (~33 ř.), `MEMORY.md` index (~25 ř.), `README.md` (~85 ř.), `GLOSSARY.md` (~190 ř.). Load size na sezení. Balast načítaný nezbytně?
+
+### C) Collaboration retrospective
+
+- **Kudos!/Censure! ratio** — aktivní oboustranně. Sez. 42 / 46 / 48 Censure! patterns: target use case check before perf, memory drift cross-check, sed range delete verification, browser smoke test po cleanup. Sub-prah pro novou globální feedback memory?
+- **Plán+Q → Go pattern** (`feedback_plan_then_go`) — používán bilaterálně, sez. 35-48 ~15+ aplikací. Funguje rychle nebo má frikce?
+- **Default-oponovat 80/20** — TheCubes-specific aplikace. Příklady kdy AI oponovala (DD-32 pivot, target use case sez. 42, BatchedMesh oponován sez. 32). Pattern aktivně držený nebo drift k pochlebování?
+- **5-entitní pattern aplikace** (pre-DD-32 PocketStory pattern) — TheCubes po sez. 48 cleanup = 8 tříd (OBJECTS/CUBES → BLOCKS/COMPOSITES/LIQUID + WORLD). Konsistent s „minimální set entit per koncept" princip nebo over/under-engineered?
+- **Sed range delete risks** — sez. 15 `buildVoxelModel` accidental delete, sez. 48 TAU regrese (Animator section sed delete smazal i konstantu used mimo scope). Sub-prah pre-`sed Nd` grep symbol uses v range proti rest of file?
+- **Browser smoke test po cleanup** — sez. 48 naivní HTTP 200 check ≠ runtime OK. F12 console error scan nutný pro frontend cleanup commits. Sub-prah `%END` enhancement?
+
+### Výstup
+
+Seřazený seznam nálezů s prioritou (kritické / doporučené / kosmetické) + konkrétními návrhy (úpravy souborů, změny workflow, nová memory, nová pravidla v CLAUDE.md/PROMPTS.md). **Neopravuj nic bez odsouhlasení uživatele** — `%CALIBRATE` je read-only meta-audit + návrh fáze, implementace samostatným commitem.
+
+### Cadence
+
+`%CALIBRATE` nemá automatickou cadence (na rozdíl od `%AUDIT:CODE`/`%AUDIT:DOCS`). Spouští se **user-driven trigger** nebo jako součást ceremonii (např. M-Genesis arc Fáze 4).
+
+---
+
 *(Soubor průběžně rozšiřován o další makra, až budou potřeba.)*
