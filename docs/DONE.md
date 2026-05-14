@@ -979,3 +979,90 @@ RNG roll per spawn v `decorate()`, propagace přes `decoration.dead` → `DECOR.
 - Skupina B+C visual ✓ („Test OK, stromy nelétají, květiny zmenšit na polovinu") + flower kalibrace 1.0 → 0.5.
 
 Sez. 43 audit cadence 4/8 (`%AUDIT:CODE`) / 3/10 (`%AUDIT:DOCS`) / 0/12 (IDEAS/TODO pruning — full pass done). Žádné regression. Sezení = pruning + content (5 nových KINDs + 1 meta feature + 1 sub-fix), bez nového DD (Fáze 6 implementace pre-approved TODO).
+
+---
+
+## Sezení 44 — Fáze 6 close (3/3 final položek, 9/9 total)
+
+Pokračování bezprostředně po sez. 43 ve stejný den (2026-05-14). User invoked `%BEGIN` → AI navrhla pokračovat Fází 6 close → user „Fáze 6 batch, všechny tři" → 79 ř. impl batch + docs. Žádný nový DD.
+
+### (A) Receive shadow opt-out flag
+
+`userData.noReceiveShadow` paralelní opt-out k `noShadow` (sez. 33 LAMP pattern). V `createMeshFor` traverze (`main.js` ř. 1224) cast zachováno, jen receive flagované:
+```js
+if (!child.userData.noShadow) {
+  child.castShadow = true;
+  child.receiveShadow = !child.userData.noReceiveShadow;
+}
+```
+
+V `createDecor` po builder dispatch jeden traverse přidá flag na všechny meshes:
+```js
+group.traverse((child) => {
+  if (child.isMesh) child.userData.noReceiveShadow = true;
+});
+```
+
+Aplikace BEFORE globální traverze (volaného z `spawn → createMeshFor`). Decor vrhá stín na zem (cast=true), ale sám nestíní okolními objekty (receive=false). Marginal perf save: facetovaný lowpoly decor by stejně neviděl smooth shadow gradient. DD-49 spec původně tento default.
+
+### (B) LEAF_AUTUMN 4-color paleta + per-strom RNG pick
+
+`toolkit.js` rozšířen o 3 nové paleta entries:
+- `LEAF_AUTUMN_YELLOW = 0xd8a830` (hue ~45°, bříza/lípa)
+- `LEAF_AUTUMN_RED    = 0xb84020` (~10°, sumach/javor červený)
+- `LEAF_AUTUMN_BROWN  = 0x8a5028` (desaturated ~30°, buk po opadu)
+
+Plus `AUTUMN_PALETTE` array obsahující [ORANGE, YELLOW, RED, BROWN] — pořadí dle frekvence v reálném lese (ORANGE modální).
+
+`buildOak` a `buildBush` v autumn větvi:
+```js
+const clusterColor = opts.season === "autumn"
+  ? AUTUMN_PALETTE[randInt(rng, 0, AUTUMN_PALETTE.length - 1)]
+  : LEAF_GREEN;  // (resp. BUSH_GREEN pro bush)
+```
+
+RNG roll PŘED cluster loop = celý jeden strom monochromatický (= „1 druh listí"). Sousedi (jiný `seed`) dostanou jinou barvu = spektrum jako reálný podzimní les. Per cluster by dal pestrý vánoční stromek (odmítnuto).
+
+Palm zachoval single `LEAF_AUTUMN` hex — botanicky reálná palma listy neopadává, autumn modifier v palm = dummy konzistence s globálním UI (sub-prah „tropical season cycle invariant" v komentáři builderu, sez. 43 add).
+
+### (C) Sezonní DECOR_DENSITY modifier
+
+`seasonalDensityMult(kind, season)` helper v `terrain.js`:
+- **autumn:** oak/bush/flower × 0.8 (−20 %, listí na zemi, neopadané víc viditelné).
+- **winter:** oak/bush/flower × 0.5 (−50 %, defoliated bush úplně skipne v decorate filteru); rock × 1.2 (+20 % visibility, bez listí/sněhu se odhalí víc kamenů na povrchu).
+- **spring/summer:** invariant (mult 1.0).
+- Spruce (jehličnan), palm/cactus (tropical/dry), grass_tuft/stump/log (stale/dead wood) — všechny season-invariant.
+
+V `decorate()` clone přes `Object.fromEntries(...Object.entries(baseWeights).map(...))`:
+```js
+const seasonalWeights = Object.fromEntries(
+  Object.entries(baseWeights).map(([kind, w]) =>
+    [kind, w * seasonalDensityMult(kind, season)])
+);
+```
+
+Pak `allowedEntries = Object.entries(seasonalWeights).filter(...)` (rename source). Surface constraint filter + snowed bush filter beze změny.
+
+### Soubory dotčeny
+
+- `src/main.js` +13 / −3 ř. (`noReceiveShadow` traverse respect + `createDecor` post-build traverze).
+- `src/composites/toolkit.js` +16 / −2 ř. (AUTUMN_PALETTE 4 hex + array + komentáře + dev exposure).
+- `src/composites/builders.js` +12 / −4 ř. (AUTUMN_PALETTE import + 2× clusterColor `randInt` pick).
+- `src/terrain.js` +28 / −1 ř. (`seasonalDensityMult` helper + `seasonalWeights` clone + rename allowedEntries source).
+- `docs/TODO.md` ~−5 ř. (close 3 položky Fáze 6 + summary 6 → 9/9 + cadence ticky AUDIT:CODE 5→6 / AUDIT:DOCS 4→5 / pruning 0→1).
+- `docs/DIARY.md` +1 ř. (sez. 44 append k 2026-05-14 multi-session line).
+- `docs/diary/2026-05-14.md` +Sezení 44 sekce.
+- `docs/DONE.md` +tato sekce.
+
+`node --check` na 4 src souborech: OK.
+
+### Vizuální verifikace (user)
+
+- „Krása! Kudos!" out of the box, žádná kalibrace třeba (na rozdíl od sez. 43 flower scale 1.0 → 0.5 follow-up).
+- AUTUMN_PALETTE × oak/bush: sousední stromy/keře různé odstíny ORANGE/YELLOW/RED/BROWN.
+- Sezonní density modifier: autumn mírně řidší listnaté, winter dramaticky řidší + víc rock.
+- Receive shadow opt-out: stromy stále vrhají stín na zem (cast zachováno), uvnitř koruny už nestíní (lowpoly + facetovaný = neviditelné). Per regression test bez issue.
+
+Sez. 44 audit cadence 6/8 (`%AUDIT:CODE`) / 5/10 (`%AUDIT:DOCS`) / 1/12 (IDEAS/TODO pruning). AUDIT:CODE due ~sez. 46.
+
+**Fáze 6 close 9/9** — DECOR cyklus DD-49→DD-52 + Fáze 6 KIND extension (10 KIND-ů, dead flag, autumn paletka, density UI, sezonní modifier, shadow opt-out) konzistentní. Sub-prahy zachovány (`BARK_DEAD` darker, palm trunk curve).

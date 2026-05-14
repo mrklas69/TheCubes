@@ -28,6 +28,7 @@ import {
   BARK_BROWN,
   LEAF_GREEN,
   LEAF_AUTUMN,
+  AUTUMN_PALETTE,
   ROCK_GRAY,
   GRASS_GREEN,
   BUSH_GREEN,
@@ -182,8 +183,14 @@ export function buildOak(group, opts = {}) {
     const clusterGeom = getGeomCache("oak", "cluster",
       () => new THREE.IcosahedronGeometry(1.0, 0));
 
-    // Autumn → LEAF_AUTUMN (oranžová), jinak LEAF_GREEN.
-    const clusterColor = opts.season === "autumn" ? LEAF_AUTUMN : LEAF_GREEN;
+    // Sez. 44 Fáze 6 — autumn hue picked per-strom z AUTUMN_PALETTE (4-color
+    // ORANGE/YELLOW/RED/BROWN). RNG roll PŘED cluster loop = celá koruna jednoho
+    // stromu sdílí jednu barvu (= „1 strom = 1 druh"). Sousední duby v scéně
+    // dostanou jiné barvy → spektrum jako reálný podzimní les. Per cluster
+    // by dal pestrý vánoční stromek, což je nereálné.
+    const clusterColor = opts.season === "autumn"
+      ? AUTUMN_PALETTE[randInt(rng, 0, AUTUMN_PALETTE.length - 1)]
+      : LEAF_GREEN;
     for (let i = 0; i < clusterCount; i++) {
       const cluster = new THREE.Mesh(clusterGeom, lowpolyMat(clusterColor));
       // Scale per cluster — variabilní velikost, slightly anisotropic.
@@ -242,8 +249,11 @@ export function buildBush(group, opts = {}) {
   const clusterGeom = getGeomCache("bush", "cluster",
     () => new THREE.IcosahedronGeometry(1.0, 0));
 
-  // Autumn → LEAF_AUTUMN (oranžová), default BUSH_GREEN.
-  const clusterColor = opts.season === "autumn" ? LEAF_AUTUMN : BUSH_GREEN;
+  // Sez. 44 Fáze 6 — autumn hue picked per-keř z AUTUMN_PALETTE (stejný idiom
+  // jako buildOak). Sousední keře mají různý odstín, jednotlivý keř monochrom.
+  const clusterColor = opts.season === "autumn"
+    ? AUTUMN_PALETTE[randInt(rng, 0, AUTUMN_PALETTE.length - 1)]
+    : BUSH_GREEN;
   for (let i = 0; i < clusterCount; i++) {
     const cluster = new THREE.Mesh(clusterGeom, lowpolyMat(clusterColor));
     const sBase = randRange(rng, 0.20, 0.32);

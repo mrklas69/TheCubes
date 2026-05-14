@@ -1221,9 +1221,16 @@ function createMeshFor(instance) {
       // `noShadow` opt-out pro meshe, které jsou vizuální indikátory, ne
       // fyzické objekty (např. bubble tail — tenký proužek na zemi). THREE
       // default castShadow = false, takže stačí prostě přeskočit.
+      //
+      // Sez. 44 Fáze 6 add — paralelní `noReceiveShadow` opt-out (cast zachováno,
+      // jen receive vypnuto). Použito pro DECOR (DD-49 spec): krajinná dekorace
+      // vrhá stín na zem, ale sama nestíní okolními objekty (marginal perf save
+      // — listový/keřový mesh = mnoho fragmentů × shadow sampling per fragment;
+      // visual loss zanedbatelný, koruny stromů jsou facetované lowpoly, ne
+      // smooth surface kde by stínování bylo čitelné).
       if (!child.userData.noShadow) {
         child.castShadow = true;
-        child.receiveShadow = true;
+        child.receiveShadow = !child.userData.noReceiveShadow;
       }
     }
   });
@@ -1761,6 +1768,14 @@ function createDecor(instance) {
     // KIND neznámý — log + prázdná Group. Diagnostic, ne fatal.
     console.warn(`DECOR: unknown KIND "${instance.KIND}" (id=${instance.ID})`);
   }
+  // Sez. 44 Fáze 6 — receive shadow opt-out per DD-49 spec (decor je facetovaný
+  // lowpoly, stínování na korunách stromů ani na keřích by stejně nebylo čitelné;
+  // cast shadow ale zachováno = strom stále vrhá stín na zem). Flag se aplikuje
+  // BEFORE globální traverze v `createMeshFor`, která čte `noReceiveShadow` a
+  // přeskočí `receiveShadow = true` přiřazení.
+  group.traverse((child) => {
+    if (child.isMesh) child.userData.noReceiveShadow = true;
+  });
   group.position.set(instance.X, instance.Y, instance.Z);
   return group;
 }

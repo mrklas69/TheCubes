@@ -4,7 +4,7 @@
 
 > Hotové úkoly: `docs/DONE.md`. Designová rozhodnutí: `docs/DESIGN_DECISIONS.md`.
 >
-> **Recent DONE (sez. 34-43):** Terrain G0..G6 cesta (DD-41 lowpoly vertex-color → DD-42 LATITUDE/HUMIDITY → DD-44 BIOME_SURFACES → DD-45 fBm/ridge³ → DD-46 smoothstep bimodal → DD-47 snow + LIQUID prototype). WORLD: DD-38 DAY/DAY_SPEED, DD-48 atmospheric, DECOR_DENSITY_MULT (sez. 43). DECOR: DD-49 procedural composites, DD-50 SEASON, DD-51 LEAF_AUTUMN + winter defoliation, DD-52 slope-aware Y na rampách, Fáze 6 6 nových KINDs + `dead` flag + density UI (sez. 43). Detail v `DONE.md` a `DESIGN_DECISIONS.md`.
+> **Recent DONE (sez. 34-44):** Terrain G0..G6 cesta (DD-41 lowpoly vertex-color → DD-42 LATITUDE/HUMIDITY → DD-44 BIOME_SURFACES → DD-45 fBm/ridge³ → DD-46 smoothstep bimodal → DD-47 snow + LIQUID prototype). WORLD: DD-38 DAY/DAY_SPEED, DD-48 atmospheric, DECOR_DENSITY_MULT (sez. 43). DECOR: DD-49 procedural composites, DD-50 SEASON, DD-51 LEAF_AUTUMN + winter defoliation, DD-52 slope-aware Y na rampách, Fáze 6 close (sez. 43+44 = 9/9 položek: 5 nových KINDs + `dead` flag + density UI + AUTUMN_PALETTE hue per strom + sezonní density modifier + receive shadow opt-out). Detail v `DONE.md` a `DESIGN_DECISIONS.md`.
 
 ## Otevřené M8+
 
@@ -26,11 +26,8 @@
 
 ### Fáze 6 — DECOR KIND extension
 
-> **Sez. 43 DONE:** Skupina A (palm + cactus), Skupina B (flower + stump + log), Skupina C (`_dead` postfix + Density UI control) — 6 z 9 položek. Plus TTRAMPS skip fix v `decorate()` (corner ramp half-coverage = decor floating, KISS resolution). Viz DONE.md.
+> **Sez. 43+44 DONE — 9/9 položek (CLOSE):** Sez. 43 Skupina A (palm + cactus), Skupina B (flower + stump + log), Skupina C (`_dead` postfix + Density UI control) + TTRAMPS skip fix. Sez. 44 final 3: LEAF_AUTUMN 4-color hue per strom (AUTUMN_PALETTE ORANGE/YELLOW/RED/BROWN), sezonní density modifier (autumn ×0.8 leaves, winter ×0.5 leaves + ×1.2 rock), receive shadow opt-out flag (`userData.noReceiveShadow` v `createDecor` traverse). Viz DONE.md.
 
-- [ ] **LEAF_AUTUMN HSL variace per instance** — currently single hex `0xc8722a`. Reálný podzimní les má spektrum oranžová/žlutá/červená/hnědá per individuální strom. Per-instance hue shift přes `DECOR.SEED`-derived noise.
-- [ ] **DECOR_DENSITY sezonní modifier** — autumn -20 % leaves, winter -50 % leaves + 20 % rock visibility. `decorate()` rozšíření o season-weighted multiplier.
-- [ ] **Receive shadow opt-out flag** — `userData.noReceiveShadow` analogicky k `noShadow`. DD-49 spec původně receiveShadow=false pro decor (marginal perf save). Aktuálně default traversal nastaví na true.
 - [ ] **`BARK_DEAD` darker palette varianta** *(sez. 43 sub-prah)* — `_dead` flag teď použije `BARK_BROWN` (= same jako live trunk), oak/spruce snowed vs. dead vypadá podobně (oba kmen-only). Pro visual differentiation darker hex (e.g. `0x4a3520`) by oddělil "dead skeleton" od "winter bare".
 - [ ] **Palm trunk curve** *(sez. 43 sub-prah)* — reálná palma má mírně zakřivený kmen. Současný `buildPalm` rovný Cylinder. Subdivision na 2-3 segmenty s mírným offsetem by dal realističtější profil. Komplikace: per-instance variability vs. shared geom cache.
 
@@ -77,6 +74,6 @@ Kandidáti bez explicit user signal — drží se jako kotvy, neaktivní:
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — **5/8** *(sez. 40+41+42+43 jen impl)*. Next: ~sez. 46.
-- **`%AUDIT:DOCS`** — **4/10** *(sez. 40+41+42+43 jen impl)*. Next: ~sez. 49.
-- **IDEAS/TODO pruning** — **0/12** *(sez. 43 full pruning DONE — Pass 1 IDEAS markery + Pass 2 ledger move + Pass 3 Speculative konsolidace + Pass 4 section restructure 14→6 area-based)*. Next: ~sez. 55.
+- **`%AUDIT:CODE`** — **6/8** *(sez. 40+41+42+43+44 jen impl)*. Next: ~sez. 46.
+- **`%AUDIT:DOCS`** — **5/10** *(sez. 40+41+42+43+44 jen impl)*. Next: ~sez. 49.
+- **IDEAS/TODO pruning** — **1/12** *(sez. 43 full pruning DONE — 4 passes)*. Next: ~sez. 55.

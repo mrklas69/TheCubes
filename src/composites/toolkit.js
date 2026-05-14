@@ -30,13 +30,28 @@ import { mulberry32 } from "../terrain.js";
 //   - BARK_BROWN (0x5a3e22) tmavší než dirt (0x8a5e36) — kontrast „kmen vs.
 //     zem", strom je rozpoznatelný i z dálky.
 //   - LEAF_GREEN (0x3d7a2a) tmavší než GRASS_GREEN — koruna stromu vs. tráva.
-//   - LEAF_AUTUMN (0xc8722a) — Fáze 6 sub-prah, pro `_autumn` variant builderu.
+//   - LEAF_AUTUMN (0xc8722a) — base orange, dříve single hex pro autumn variant.
+//     Sez. 44: rozšířeno na 4-color paletu (ORANGE/YELLOW/RED/BROWN), per-instance
+//     RNG pick v `buildOak`/`buildBush`. Reálný podzimní les má spektrum, ne
+//     monochrom — sousední stromy různý druh = různý hue. Per strom (ne per
+//     cluster) = monochromatická koruna, realistický „1 strom = 1 druh".
 //   - ROCK_GRAY (0x6e6e72) tmavší než stone TOP (0x9a9a9a) + mírně modřejší —
 //     dekorativní kámen vyčnívá nad stone podlahu, není to „odpadlý voxel".
 //   - BUSH_GREEN (0x4d8a30) mezi GRASS a LEAF — středně sytá keřová zeleň.
 export const BARK_BROWN  = 0x5a3e22;
 export const LEAF_GREEN  = 0x3d7a2a;
-export const LEAF_AUTUMN = 0xc8722a;
+export const LEAF_AUTUMN        = 0xc8722a;  // ORANGE — javor, dub (base)
+export const LEAF_AUTUMN_YELLOW = 0xd8a830;  // YELLOW — bříza, lípa (hue ~45°)
+export const LEAF_AUTUMN_RED    = 0xb84020;  // RED    — sumach, javor červený (hue ~10°)
+export const LEAF_AUTUMN_BROWN  = 0x8a5028;  // BROWN  — buk po opadu, desaturated (~30° low sat)
+// AUTUMN_PALETTE — array pro `randInt` pick v buildery. Pořadí = váha
+// frekvence v reálném podzimním lese (orange dominantní, brown nejméně).
+export const AUTUMN_PALETTE = [
+  LEAF_AUTUMN,         // 0 — ORANGE (modální barva)
+  LEAF_AUTUMN_YELLOW,  // 1 — YELLOW
+  LEAF_AUTUMN_RED,     // 2 — RED
+  LEAF_AUTUMN_BROWN,   // 3 — BROWN
+];
 export const ROCK_GRAY   = 0x6e6e72;
 export const GRASS_GREEN = 0x6aaa3a;
 export const BUSH_GREEN  = 0x4d8a30;
@@ -130,7 +145,9 @@ export { mulberry32 };
 // Není v produkční path, jen smoke test pre-Fáze 2.
 if (typeof window !== "undefined") {
   window.toolkit = {
-    BARK_BROWN, LEAF_GREEN, LEAF_AUTUMN, ROCK_GRAY, GRASS_GREEN, BUSH_GREEN, CACTUS_GREEN,
+    BARK_BROWN, LEAF_GREEN,
+    LEAF_AUTUMN, LEAF_AUTUMN_YELLOW, LEAF_AUTUMN_RED, LEAF_AUTUMN_BROWN, AUTUMN_PALETTE,
+    ROCK_GRAY, GRASS_GREEN, BUSH_GREEN, CACTUS_GREEN,
     FLOWER_PETAL_RED, FLOWER_PETAL_YELLOW, FLOWER_PETAL_WHITE,
     lowpolyMat,
     getGeomCache,

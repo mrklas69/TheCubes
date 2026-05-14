@@ -839,6 +839,26 @@ const DEAD_PROB_BY_HUM = {
   dry: 0.30,
 };
 
+// `seasonalDensityMult(kind, season)` — sezonní multiplikátor pro DECOR weight.
+// Sez. 44 Fáze 6 add. Realistický sezonní cyklus:
+//   - **autumn** — listnaté trochu řidčí (−20 %): část listí na zemi, neopadané
+//     stromy víc viditelné (oak/bush). Flower už nekvete masově (−20 %).
+//   - **winter** — listnaté výrazně řidčí (−50 %): defoliated bush úplně skipne
+//     v decorate, oak/flower density spadne. Rock +20 %: bez listí a sněhu se
+//     odhalí víc kamenů na povrchu (visibility, ne spawn).
+//   - **spring/summer** — invariant (multiplier 1.0).
+// Spruce (jehličnan) season-invariant — drží jehlí celý rok.
+// Palm/cactus/grass_tuft/stump/log jsou tropical/dry/stale — season-invariant.
+function seasonalDensityMult(kind, season) {
+  if (season === "autumn") {
+    if (kind === "oak" || kind === "bush" || kind === "flower") return 0.8;
+  } else if (season === "winter") {
+    if (kind === "oak" || kind === "bush" || kind === "flower") return 0.5;
+    if (kind === "rock") return 1.2;
+  }
+  return 1.0;
+}
+
 // `decorate(cells, ramps, latitude, humidity, season, seed)` — scatter implementace.
 //   - **Skip cells with water** (decor neroste pod hladinou).
 //   - **Stone surface** → jen "rock" povolen (kamenitý terén — stromy/keře
@@ -865,6 +885,14 @@ const DEAD_PROB_BY_HUM = {
 function decorate(cells, ramps, latitude, humidity, season, seed, densityMult = 1.0) {
   const baseWeights = DECOR_DENSITY[latitude]?.[humidity] ?? {};
   if (Object.keys(baseWeights).length === 0) return [];
+
+  // Sezonní modifier (sez. 44 Fáze 6) — clone baseWeights × seasonalDensityMult
+  // per KIND. Jednou per regen call, pak filter+pick používá `seasonalWeights`.
+  // Object.fromEntries(...Object.entries(...).map(...)) idiom = funkční transform
+  // mapy (per [key, val] aplikuje multiplier).
+  const seasonalWeights = Object.fromEntries(
+    Object.entries(baseWeights).map(([kind, w]) => [kind, w * seasonalDensityMult(kind, season)])
+  );
 
   // Nezávislý RNG namespace (seed +3 oproti height +0, biome +1, snow +2).
   const rng = mulberry32(seed + 3);
@@ -904,7 +932,7 @@ function decorate(cells, ramps, latitude, humidity, season, seed, densityMult = 
     // entity by byla prázdná Group). Lepší instanci nespawnnout — KISS, žádný
     // empty mesh ve scéně. Spruce + rock + grass_tuft snowed zachovají vlastní
     // snow-aware render (jehličí + sníh / top chunk bílý / bílé shards).
-    const allowedEntries = Object.entries(baseWeights).filter(([kind]) => {
+    const allowedEntries = Object.entries(seasonalWeights).filter(([kind]) => {
       if (c.surface === "stone" && kind !== "rock") return false;
       if (c.snowed === true && kind === "bush") return false;
       return true;
