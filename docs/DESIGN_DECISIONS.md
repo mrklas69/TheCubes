@@ -1428,3 +1428,67 @@ const TDRAMP_PEAK_ORIENT = { EN: 0, ES: 90, SW: 180, NW: 270 };
 - TODO „WORLD.SEASON driver pro freezeRatio" (sez. 38 DD-47 follow-up) — DD-50 realizuje.
 - Sez. 40 user volby: scope=minimální (jen snow modifier) / default=summer / DD-50=kotva. Kontext v `docs/diary/2026-05-13.md` Sezení 40.
 
+## DD-51 — Seasonal foliage cycle (LEAF_AUTUMN + winter defoliation, sez. 41)
+
+**Rozhodnutí:**
+
+1. **DECOR seasonal foliage cycle pro listnaté KIND-y (oak, bush)** — barva listí závisí na `DECOR.SEASON` atributu:
+   - **spring / summer** → `LEAF_GREEN` (oak) / `BUSH_GREEN` (bush) — default.
+   - **autumn** → `LEAF_AUTUMN` (`0xc8722a` oranžová, paleta připravená sez. 40 jako DD-50 kotva).
+   - **winter (= snowed cell)** → defoliated, holé větve:
+     - `oak.snowed`: builder skipne `for` loop nad Icosahedron clusters, vykreslí jen kmen (BARK_BROWN Cylinder).
+     - `bush.snowed`: `decorate()` filtruje `bush` z `allowedEntries` (entity vůbec nespawnne, žádný empty mesh ve scéně). KISS — bush nemá kmen, defoliated by byl prázdný Group.
+2. **Spruce season-invariant** — jehličnan drží `LEAF_GREEN` napříč seasony; snowed → SNOW_WHITE patra (zachováno ze sez. 40 DD-49). Důvod: smrk neoplývá list, sníh leží na jehličí.
+3. **Priorita v builderu listnatých**: `snowed > autumn > default`. Snowed (winter) přebije autumn (= sníh leží na koruně bez ohledu na sezónu, takže autumn-snowed cell = winter-style holé větve).
+4. **`DECOR.SEASON` 9. konstruktor atribut** (string, default `"summer"`). Propagace: `world.SEASON` → `decorSpec.season` → `decorate(...)` → `decoration.season` → `new DECOR(..., d.season)` → `DECOR.SEASON` → `createDecor` builder `opts.season`. Per-instance attribute drží model+engine separation (= entity nečte `world.SEASON` v render path, jen vlastní `SEASON` slot).
+5. **`decorSpecForClimate(latitude, humidity, season)`** — rozšířená signatura (DD-49 sez. 40 byla 2-arg). Default `season = "summer"` při missing 3. argu (boot bez SEASON).
+6. **Builder `opts.season` 4. param** — analogicky `opts.snowed` (sez. 40 DD-49 follow-up). Nepřidává state, jen routing color path.
+7. **Botanická correctness** — listnáče (oak/bush) opadávají na podzim/zimu, jehličnany (spruce) drží. Tropical/subtropical biomy mají season-invariant decor (DD-50 polar/tropical perpetually-* invariant), ale pokud cell tam bude `snowed` (rare edge — temperate snow noise spillover), defoliation se aplikuje.
+
+**Omezení (sub-prah pro budoucí sezení):**
+
+- **`_dead` postfix** (Fáze 6 DECOR, sez. 40 sub-prah) — dry biomy mají suché bezlisté listnáče celoročně, na rozdíl od season defoliation (per-cell snow-driven). Když `_dead` přibude, builder logika rozšíří priorita: `dead > snowed > autumn > default`.
+- **DECOR_DENSITY sezonní modifier** — autumn -20 % leaves, winter -50 % leaves (DD-50 omezení sez. 40). Mimo DD-51 first-pass (žádný density change, jen color).
+- **Polar season variace** — polar `_snow` invariant, takže polar oak/bush by byl trvale defoliated, ale polar biomy `decorSpec.density` nemají oak/spruce (TODO `DECOR_DENSITY.polar.wet/mid/dry`). Edge case bez impactu.
+- **`LEAF_AUTUMN` HSL variace per instance** — currently single hex `0xc8722a`. Reálný podzimní les má spektrum oranžová/žlutá/červená/hnědá per individuální strom. Per-instance hue shift přes `DECOR.SEED`-derived noise = sub-prah.
+- **Bush cluster regen při season změně** — bush v snowed cell skip = při winter regen scéna ztratí bush instance celé, při návratu na summer/spring je entity zpět. UI side effect: F12 entity counter neaktualizuje (každý regen je „fresh"). Akceptovatelné.
+
+**References:**
+
+- DD-50 (sez. 40) — SEASON enum + `world.SEASON` atribut. DD-51 realizuje sub-prah „LEAF_AUTUMN paleta" + přidává winter defoliation (mimo původní DD-50 scope).
+- DD-49 (sez. 40) — DECOR class + builder pattern. DD-51 přidává `SEASON` atribut + 4. builder opts + winter defoliation logiku do oak/bush.
+- DD-47 (sez. 38) — `cells[i].snowed` flag (source defoliation triggeru, propagovaný do `decoration.snowed`).
+- DD-29 (sez. 19) — politika *„nové atributy přibudou jen s živým konzumentem"*. `DECOR.SEASON` splňuje (3 konzumenti: `buildOak`, `buildBush`, `decorate()` filter).
+- Sez. 41 user pointy: „Listnaté zelené, oranžovou nevidím" (regen path caller bug) + „A co listnaté v zimě?" (logická chyba snowed = white pro listnáče). Kontext v `docs/diary/2026-05-14.md` Sezení 41.
+
+## DD-52 — Slope-aware DECOR Y na rampách (`ramps[].slopeDir`, sez. 41)
+
+**Rozhodnutí:**
+
+1. **`ramps[]` entry rozšířena o `slopeDir: { dx, dz }`** — unit vector z low end → high end ramp (horizontal direction). Computed při candidate creation v `terrain.js` Krok 5:
+   - **edge ramp** (TRRAMPS): `slopeDir = { dx: pick.dir.dx, dz: pick.dir.dz }` (toward high neighbor; norm `|dx|+|dz| = 1`, axiální).
+   - **corner ramp** (TTRAMPS, isolated diag peak): `slopeDir = { dx: c.ddx, dz: c.ddz }` (toward diagonal peak corner; norm = 2, diagonální).
+   - **diagonal ramp** (TDRAMP): `slopeDir = { dx: tdrampCorner.ddx, dz: tdrampCorner.ddz }` (toward peak corner; norm = 2).
+2. **`decorate()` Y výpočet rozšířen** z konstantního `c.y_top + 1.0` (sez. 40 ramp Y fix) na lineární interpolaci dle jitter pozice:
+   - **non-ramp cell**: `decY = c.y_top + 0.5` (top face top voxelu).
+   - **ramp cell**: `slopeT = (jitterX·dx + jitterZ·dz) / (|dx|+|dz|)`; `decY = c.y_top + 1.0 + slopeT`.
+3. **Normalizace `(|dx|+|dz|)`** unifikuje edge (norm=1, axial) a corner/diagonal (norm=2, diagonal):
+   - Edge: jitter ±0.3 podél slope axis → `slopeT ∈ [-0.3, +0.3]`, `decY ∈ [y_top + 0.7, y_top + 1.3]`.
+   - Corner/diagonal: jitter dot product ±0.6 raw / norm 2 → `slopeT ∈ [-0.3, +0.3]`, stejný rozsah jako edge.
+4. **`rampDirMap: Map<"x,z", slopeDir>`** v `decorate()` — O(1) lookup per cell. Slope lookup mimo attempt loop (per-cell konstanta).
+5. **TDRAMP step shape aproximace** — diagonal ramp není smooth slope ale step (peak side filled na `y_top + 1.5`, low side na `y_top + 0.5`, diskontinuita na diagonálu). Bilinear formula je mild aproximace — strom blízko diagonal line může být mírně zapuštěn nebo viset. Akceptováno pro KISS, sub-prah pro exact step model.
+
+**Omezení (sub-prah):**
+
+- **TDRAMP exact step Y** — `if (jitterX·dx + jitterZ·dz > 0) decY = y_top + 1.5; else decY = y_top + 0.5`. Skok na diagonal line místo lineární interp. Drobně viditelný jen u trees umístěných do 1-2 voxel range diagonal split, sub-prah.
+- **Per-cell single ramp** — `rampDirMap` ukládá 1 entry per (x,z), pokud cell má více ramp orientací (rare edge), používá se první z `ramps[]` iteration order. Acceptable pro current ramp generation (nemělo by být duplicit per cell).
+- **Jitter clampovaný ±0.3** — pokud někdy zvedneme jitter range (např. ±0.45 = decor až na hranu cellu), Y formula stále dá výsledek v `[y_top + 0.55, y_top + 1.45]`. Mezní hodnoty `[y_top + 0.5, y_top + 1.5]` jsou jen pro jitter dosahující ±0.5 (= corner cellu).
+- **DECOR rotation nezohledňuje slope normal** — strom roste „pole-style" vertical, ne kolmo k ramp surface (= mírně nakloněn proti slope). Realistické stromy rostou vertikálně, takže tohle není bug; ale fence/wall future entities by potřebovaly slope normal rotation.
+
+**References:**
+
+- DD-33 (sez. 26) — TRRAMPS edge ramp + ORIENTATION konvence. DD-52 reuse `pick.dir.dx/dz` z candidate creation pro slope direction (=  axial slope vector).
+- DD-35 (sez. 27) — TDRAMP diagonal half-cube. DD-52 aproximuje diagonal slope bilinear (step shape sub-prah).
+- DD-49 (sez. 40) — `decorate()` Krok 7 + ramp Y constant `y_top + 1.0` (sez. 40 bod 2 ramp fix). DD-52 nahrazuje konstantní Y lineární interp.
+- Sez. 41 user pointy: „Stromy na rampách (oak) visí ve vzduchu, přepočítej výšku paty stromu na svahu." Kontext v `docs/diary/2026-05-14.md` Sezení 41.
+

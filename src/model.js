@@ -312,7 +312,7 @@ export class LAMP extends COMPOSITES {}
  * v `decorate` (Fáze 4) umístí dekorace mezi voxely.
  */
 export class DECOR extends COMPOSITES {
-  constructor(id, name, x, y, z, kind, seed = 0, scale = 1.0, snowed = false, description = "") {
+  constructor(id, name, x, y, z, kind, seed = 0, scale = 1.0, snowed = false, season = "summer", description = "") {
     super(id, name, x, y, z, description);
     this.KIND   = kind;
     this.SEED   = seed;
@@ -322,6 +322,12 @@ export class DECOR extends COMPOSITES {
     // top element na SNOW_WHITE (sníh seshora). Propagovaný z `cells[i].snowed`
     // v `decorate()` (terrain.js) → `decoration.snowed` → DECOR.SNOWED.
     this.SNOWED = snowed;
+    // SEASON (sez. 41 DD-50 follow-up) — string, jeden ze `SEASONS` enum.
+    // Builder dle hodnoty volí listovou paletu pro listnaté KIND-y: oak/bush
+    // v "autumn" → LEAF_AUTUMN (oranžová), jinak LEAF_GREEN/BUSH_GREEN. Spruce
+    // (jehličnan) je season-invariant. Propagovaný z `world.SEASON` přes
+    // `decorSpec.season` → `decorate()` → `decoration.season` → DECOR.SEASON.
+    this.SEASON = season;
   }
 }
 

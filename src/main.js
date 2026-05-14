@@ -1748,6 +1748,7 @@ function createDecor(instance) {
       seed:   instance.SEED,
       scale:  instance.SCALE,
       snowed: instance.SNOWED,  // builder dle flagu přebarví top element na SNOW_WHITE
+      season: instance.SEASON,  // sez. 41 DD-50 — "autumn" → oak/bush listí LEAF_AUTUMN
     });
   } else {
     // KIND neznámý — log + prázdná Group. Diagnostic, ne fatal.
@@ -2328,7 +2329,7 @@ function spawnTerrain(params) {
     // ukáže, ale nezachovává mezi regen.
     const id = `decor_${String(decorIdx++).padStart(4, "0")}`;
     const name = d.kind;
-    const instance = new DECOR(id, name, d.x, d.y, d.z, d.kind, d.seed, d.scale ?? 1.0, d.snowed === true);
+    const instance = new DECOR(id, name, d.x, d.y, d.z, d.kind, d.seed, d.scale ?? 1.0, d.snowed === true, d.season ?? "summer");
     const mesh = createMeshFor(instance);
     mesh.userData.terrain = true;
     scene.add(mesh);
@@ -2432,7 +2433,7 @@ function buildScene(scene) {
     surfaces:  surfacesForBiome(world.LATITUDE, world.HUMIDITY),
     snowSpec:  snowSpecForLatitude(world.LATITUDE, world.SEASON),
     waterSpec: waterSpecForClimate(world.LATITUDE, world.HUMIDITY, world.SEASON),
-    decorSpec: decorSpecForClimate(world.LATITUDE, world.HUMIDITY),
+    decorSpec: decorSpecForClimate(world.LATITUDE, world.HUMIDITY, world.SEASON),
   });
 }
 

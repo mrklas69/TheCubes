@@ -27,6 +27,7 @@ import {
   mulberry32,
   BARK_BROWN,
   LEAF_GREEN,
+  LEAF_AUTUMN,
   ROCK_GRAY,
   GRASS_GREEN,
   BUSH_GREEN,
@@ -99,6 +100,9 @@ export function buildSpruce(group, opts = {}) {
   // **všechna patra** SNOW_WHITE (kmen zachová BARK_BROWN) — celý strom
   // zasněžený, jen kmen prokoukne. User feedback sez. 40: top-only vypadalo
   // jako "vánoční ozdoba", celý strom bílý je realistický zimní strom.
+  //
+  // Spruce je **jehličnan** — autumn season ho nepřebarvuje (LEAF_GREEN drží
+  // i v podzimu). LEAF_AUTUMN paletu používají jen listnaté: oak + bush.
   const leafColor = opts.snowed ? SNOW_WHITE : LEAF_GREEN;
   for (let i = 0; i < tierCount; i++) {
     // Lerp radius dle pozice patra od dole nahoru (i=0 dole, i=tierCount-1 top).
@@ -143,36 +147,45 @@ export function buildOak(group, opts = {}) {
 
   // Listové clusters — Icosahedron(1, 0) = 20-stěn unit-radius. Per cluster
   // scaled + offset kolem apex. Detail=0 = nejhrubší (faceted, lowpoly).
-  const clusterGeom = getGeomCache("oak", "cluster",
-    () => new THREE.IcosahedronGeometry(1.0, 0));
+  //
+  // **Sez. 41 DD-50 follow-up: listnaté v zimě opadávají.** Pokud `snowed`
+  // (= winter cell), skip cluster loop celý — vykreslí se jen kmen (holý
+  // strom). Spruce drží jehličí, oak/bush ne. Tím seasonal cycle:
+  //   spring/summer → LEAF_GREEN, autumn → LEAF_AUTUMN, winter → bare trunk.
+  // Build cluster geom only when potřeba — getGeomCache je lazy, kdyby všechny
+  // duby v scéně byly snowed, geom cache by ho nevytvořila vůbec.
+  if (!opts.snowed) {
+    const clusterGeom = getGeomCache("oak", "cluster",
+      () => new THREE.IcosahedronGeometry(1.0, 0));
 
-  // Snowed = všechny clustery SNOW_WHITE (kmen zachová BARK_BROWN).
-  const clusterColor = opts.snowed ? SNOW_WHITE : LEAF_GREEN;
-  for (let i = 0; i < clusterCount; i++) {
-    const cluster = new THREE.Mesh(clusterGeom, lowpolyMat(clusterColor));
-    // Scale per cluster — variabilní velikost, slightly anisotropic.
-    const sBase = randRange(rng, 0.35, 0.55);
-    cluster.scale.set(
-      sBase * randRange(rng, 0.9, 1.2),
-      sBase * randRange(rng, 0.85, 1.1),
-      sBase * randRange(rng, 0.9, 1.2),
-    );
-    // Pozice — kolem apex kmene v kruhu, mírně náhodně.
-    const angle = (i / clusterCount) * Math.PI * 2 + randRange(rng, -0.4, 0.4);
-    const r = randRange(rng, 0.05, 0.25);
-    cluster.position.set(
-      Math.cos(angle) * r,
-      trunkHeight + randRange(rng, -0.15, 0.20),
-      Math.sin(angle) * r,
-    );
-    // Slight random rotation per cluster — Icosahedron je sice symetrický,
-    // ale rotace ho „smíchá" mezi clusters, faces nejsou paralelní.
-    cluster.rotation.set(
-      randRange(rng, 0, Math.PI * 2),
-      randRange(rng, 0, Math.PI * 2),
-      randRange(rng, 0, Math.PI * 2),
-    );
-    group.add(cluster);
+    // Autumn → LEAF_AUTUMN (oranžová), jinak LEAF_GREEN.
+    const clusterColor = opts.season === "autumn" ? LEAF_AUTUMN : LEAF_GREEN;
+    for (let i = 0; i < clusterCount; i++) {
+      const cluster = new THREE.Mesh(clusterGeom, lowpolyMat(clusterColor));
+      // Scale per cluster — variabilní velikost, slightly anisotropic.
+      const sBase = randRange(rng, 0.35, 0.55);
+      cluster.scale.set(
+        sBase * randRange(rng, 0.9, 1.2),
+        sBase * randRange(rng, 0.85, 1.1),
+        sBase * randRange(rng, 0.9, 1.2),
+      );
+      // Pozice — kolem apex kmene v kruhu, mírně náhodně.
+      const angle = (i / clusterCount) * Math.PI * 2 + randRange(rng, -0.4, 0.4);
+      const r = randRange(rng, 0.05, 0.25);
+      cluster.position.set(
+        Math.cos(angle) * r,
+        trunkHeight + randRange(rng, -0.15, 0.20),
+        Math.sin(angle) * r,
+      );
+      // Slight random rotation per cluster — Icosahedron je sice symetrický,
+      // ale rotace ho „smíchá" mezi clusters, faces nejsou paralelní.
+      cluster.rotation.set(
+        randRange(rng, 0, Math.PI * 2),
+        randRange(rng, 0, Math.PI * 2),
+        randRange(rng, 0, Math.PI * 2),
+      );
+      group.add(cluster);
+    }
   }
 
   group.scale.multiplyScalar(scale);
@@ -188,11 +201,22 @@ export function buildBush(group, opts = {}) {
   const rng = mulberry32(seed);
 
   const clusterCount = randInt(rng, 3, 5);
+
+  // **Sez. 41 DD-50 follow-up: keř v zimě = defoliated.** `decorate()` v
+  // terrain.js bush v snowed cell úplně skipne (entity nevznikne), takže sem
+  // přijde jen non-snowed call. Defenzivně: pokud caller přímo passne
+  // `snowed: true` (dev/test), vrátíme prázdnou Group (= keř bez listí, bez
+  // kmenu = neviditelný). Symetrie s `buildOak` snowed = kmen-only.
+  if (opts.snowed) {
+    group.scale.multiplyScalar(scale);
+    return group;
+  }
+
   const clusterGeom = getGeomCache("bush", "cluster",
     () => new THREE.IcosahedronGeometry(1.0, 0));
 
-  // Snowed = všechny clustery SNOW_WHITE (keř nemá kmen, takže celý bílý).
-  const clusterColor = opts.snowed ? SNOW_WHITE : BUSH_GREEN;
+  // Autumn → LEAF_AUTUMN (oranžová), default BUSH_GREEN.
+  const clusterColor = opts.season === "autumn" ? LEAF_AUTUMN : BUSH_GREEN;
   for (let i = 0; i < clusterCount; i++) {
     const cluster = new THREE.Mesh(clusterGeom, lowpolyMat(clusterColor));
     const sBase = randRange(rng, 0.20, 0.32);

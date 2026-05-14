@@ -544,6 +544,9 @@ export function generateTerrain({ size, relief, surfaces, seed = 42, snowSpec = 
           type: "diagonal",
           a, bDiag,
           orientation: TDRAMP_PEAK_ORIENT[tdrampCorner.key],
+          // slopeDir → unit vector low→high po diagonále k peak corneru. (sez. 41
+          // DD-50 follow-up — decor Y na rampě.) `|dx|+|dz| = 2` (diagonální).
+          slopeDir: { dx: tdrampCorner.ddx, dz: tdrampCorner.ddz },
           surface: surfaceSrc.surface,
         });
         continue;
@@ -562,6 +565,9 @@ export function generateTerrain({ size, relief, surfaces, seed = 42, snowSpec = 
         type: "edge",
         a, dir: pick.dir, b: pick.b,
         orientation: EDGE_ORIENT[pick.dir.name],
+        // slopeDir → unit vector low→high (toward high neighbor). Edge ramp
+        // je čistě axiálně (|dx|+|dz|=1). Pro decor Y interpolaci v decorate().
+        slopeDir: { dx: pick.dir.dx, dz: pick.dir.dz },
         surface: pick.b.surface,
       });
       continue;
@@ -582,6 +588,9 @@ export function generateTerrain({ size, relief, surfaces, seed = 42, snowSpec = 
         type: "corner",
         a, bDiag,
         orientation: CORNER_ORIENT[c.key],
+        // slopeDir → unit vector low→high po diagonále k tip corneru. Corner
+        // (TTRAMPS) je apex/tent ramp; bilinear aproximace v decorate() Y.
+        slopeDir: { dx: c.ddx, dz: c.ddz },
         surface: bDiag.surface,
       });
       break;  // 1. ten, který sedí (preferenční pořadí NE>NW>SE>SW)
@@ -615,6 +624,11 @@ export function generateTerrain({ size, relief, surfaces, seed = 42, snowSpec = 
       x: cand.a.x, y: cand.a.y_top + 1, z: cand.a.z,
       surface: finalSurface,
       orientation: cand.orientation,
+      // slopeDir (sez. 41 DD-50 follow-up) — unit vector low→high po horizontále.
+      // Konzument: `decorate()` v Krok 7 pro lineární Y interpolaci paty stromu
+      // na svahu (jinak by tree visel ve vzduchu při jitter pozici jiné než
+      // střed cellu).
+      slopeDir: cand.slopeDir,
     });
   }
 
@@ -713,7 +727,7 @@ export function generateTerrain({ size, relief, surfaces, seed = 42, snowSpec = 
   //   "biome" → použij `DECOR_DENSITY[decorSpec.latitude][decorSpec.humidity]`.
   //   "none"  → vrátí prázdné pole (= žádné decor).
   const decorations = (decorSpec.mode === "biome")
-    ? decorate(cells, ramps, decorSpec.latitude, decorSpec.humidity, seed)
+    ? decorate(cells, ramps, decorSpec.latitude, decorSpec.humidity, decorSpec.season ?? "summer", seed)
     : [];
 
   return { blocks, ramps, water, decorations };
@@ -737,51 +751,63 @@ export const DECOR_DENSITY = {
   // s posunem od dominantních stromů (tropical/subtropical) přes mix
   // (temperate) k jen-trávy-a-keře (polar). User wish: „od tropického
   // pralesa 80% pokrytí → polární tundra 20% pokrytí spíše trávami/keři".
+  //
+  // Sez. 41 follow-up — stromové KIND-y (oak + spruce) × 2 napříč všemi biomy.
+  // Důvod: DECOR_BASE_SCALE snížen z 0.5× na 1/3× (=33% menší stromy), takže
+  // víc decor per cell je vizuálně OK + uživatel chce "hustší prales".
+  // Pozn.: `decorate()` má max 1 decor per cell (= sum > 1.0 znamená jen
+  // 100% fill rate, ne víc stromů per buňku). Tropical.wet sum 1.15 = každá
+  // non-skip cell dostane decor. Multi-decor per cell je sub-prah pro
+  // skutečně zdvojnásobenou hustotu.
   tropical: {
-    wet: { oak: 0.35, bush: 0.25, grass_tuft: 0.15, rock: 0.05 },                // sum 0.80 — hustý prales
-    mid: { oak: 0.04, bush: 0.04, grass_tuft: 0.06, rock: 0.02 },                // sum 0.16 — savana
-    dry: { grass_tuft: 0.03, rock: 0.05 },                                       // sum 0.08 — poušť
+    wet: { oak: 0.70, bush: 0.25, grass_tuft: 0.15, rock: 0.05 },                // sum 1.15 — hustý prales (oak ×2; cap 100% fill)
+    mid: { oak: 0.08, bush: 0.04, grass_tuft: 0.06, rock: 0.02 },                // sum 0.20 — savana (oak ×2)
+    dry: { grass_tuft: 0.03, rock: 0.05 },                                       // sum 0.08 — poušť (bez stromů)
   },
   subtropical: {
-    wet: { oak: 0.25, bush: 0.20, grass_tuft: 0.10, rock: 0.05 },                // sum 0.60 — vlhký les
-    mid: { oak: 0.03, bush: 0.04, grass_tuft: 0.05, rock: 0.03 },                // sum 0.15 — mediteránní
-    dry: { bush: 0.02, grass_tuft: 0.03, rock: 0.05 },                           // sum 0.10 — step
+    wet: { oak: 0.50, bush: 0.20, grass_tuft: 0.10, rock: 0.05 },                // sum 0.85 — vlhký les (oak ×2)
+    mid: { oak: 0.06, bush: 0.04, grass_tuft: 0.05, rock: 0.03 },                // sum 0.18 — mediteránní (oak ×2)
+    dry: { bush: 0.02, grass_tuft: 0.03, rock: 0.05 },                           // sum 0.10 — step (bez stromů)
   },
   temperate: {
-    wet: { oak: 0.15, spruce: 0.10, bush: 0.08, grass_tuft: 0.05, rock: 0.02 },  // sum 0.40 — listnatý les
-    mid: { oak: 0.04, spruce: 0.06, bush: 0.04, grass_tuft: 0.06, rock: 0.02 },  // sum 0.22 — smíšený
-    dry: { spruce: 0.01, bush: 0.02, grass_tuft: 0.04, rock: 0.05 },             // sum 0.12 — chladná step
+    wet: { oak: 0.30, spruce: 0.20, bush: 0.08, grass_tuft: 0.05, rock: 0.02 },  // sum 0.65 — listnatý les (oak+spruce ×2)
+    mid: { oak: 0.08, spruce: 0.12, bush: 0.04, grass_tuft: 0.06, rock: 0.02 },  // sum 0.32 — smíšený (oak+spruce ×2)
+    dry: { spruce: 0.02, bush: 0.02, grass_tuft: 0.04, rock: 0.05 },             // sum 0.13 — chladná step (spruce ×2)
   },
   polar: {
-    wet: { bush: 0.08, grass_tuft: 0.08, rock: 0.04 },                           // sum 0.20 — polární tundra (jen trávy/keře, žádný spruce)
-    mid: { spruce: 0.04, bush: 0.02, grass_tuft: 0.02, rock: 0.04 },             // sum 0.12 — tundra
+    wet: { bush: 0.08, grass_tuft: 0.08, rock: 0.04 },                           // sum 0.20 — polární tundra (bez stromů)
+    mid: { spruce: 0.08, bush: 0.02, grass_tuft: 0.02, rock: 0.04 },             // sum 0.16 — tundra (spruce ×2)
     dry: { rock: 0.04 },                                                         // sum 0.04 — ledová poušť
   },
 };
 
-// `decorSpecForClimate(latitude, humidity)` — helper pro caller. Symetrický
-// s `snowSpecForLatitude` / `waterSpecForClimate`. Pokud někdy přidáme
-// "vypnout decor" toggle (UI checkbox), tady jeden bod.
-export function decorSpecForClimate(latitude, humidity) {
-  return { mode: "biome", latitude, humidity };
+// `decorSpecForClimate(latitude, humidity, season)` — helper pro caller. Symetrický
+// s `snowSpecForLatitude` / `waterSpecForClimate`. `season` (sez. 41 DD-50
+// follow-up) se propaguje skrz `decorations[]` až do builderu (LEAF_AUTUMN
+// paleta pro oak/bush v autumn). Default "summer" pokud caller nepředá.
+// Pokud někdy přidáme "vypnout decor" toggle (UI checkbox), tady jeden bod.
+export function decorSpecForClimate(latitude, humidity, season = "summer") {
+  return { mode: "biome", latitude, humidity, season };
 }
 
 // `DECOR_BASE_SCALE[kind]` — globální size factor per KIND, passnutý do
 // `DECOR.SCALE` (= `group.scale.multiplyScalar(scale)` v buildery). User
 // feedback sez. 40: stromy/keře/kameny v 1.0× působily jako "lese-bonsaje
 // nad voxely" (~1.5 m výška vs. 1 m hrana voxelu = OK, ale user chtěl
-// "krajinné dekorace" = subtle, ne dominantní). 0.5× drží decor pod voxel
-// height, voxely zůstávají dominantní vrstva scény. Grass_tuft 1.0×
-// (= ~30 cm shards, malé i tak).
+// "krajinné dekorace" = subtle, ne dominantní). Sez. 40 první step 0.5×.
+// Sez. 41 follow-up: ještě o 1/3 menší (= 0.333 ≈ 1/3 původní 1.0×) — user
+// chce nahustit stromy víc na sebe, prales pak vypadá hustší (kompenzace
+// přes density × 2 níže). Grass_tuft 1.0× (= ~30 cm shards, malé i tak,
+// nemá smysl dál zmenšovat).
 const DECOR_BASE_SCALE = {
-  spruce:     0.5,
-  oak:        0.5,
-  bush:       0.5,
-  rock:       0.5,
+  spruce:     1 / 3,
+  oak:        1 / 3,
+  bush:       1 / 3,
+  rock:       1 / 3,
   grass_tuft: 1.0,
 };
 
-// `decorate(cells, ramps, latitude, humidity, seed)` — scatter implementace.
+// `decorate(cells, ramps, latitude, humidity, season, seed)` — scatter implementace.
 //   - **Skip cells with water** (decor neroste pod hladinou).
 //   - **Stone surface** → jen "rock" povolen (kamenitý terén — stromy/keře
 //     nemají kořeny ve skále, sub-prah pokud bude vzdorovat user vkusu).
@@ -794,9 +820,13 @@ const DECOR_BASE_SCALE = {
 //   - Weighted random pick KIND-u podle filtered weights.
 //   - Jitter ±0.3 v X/Z uvnitř cell — decor sedí mezi voxely, ne přesně
 //     na intersection. Y = top voxel top face (= `y_top + 0.5`).
+//   - `season` se ukládá do každého `decorations[i].season` a propaguje se
+//     až do builderu (LEAF_AUTUMN paleta pro oak/bush v autumn — sez. 41
+//     DD-50 follow-up). Globální per regen (= všechny DECOR ve scéně sdílejí
+//     stejný SEASON), ale per-instance fan-out drží engine separation.
 //
-// Vrací `decorations[]` array objektů `{ kind, x, y, z, seed, scale, snowed }`.
-function decorate(cells, ramps, latitude, humidity, seed) {
+// Vrací `decorations[]` array objektů `{ kind, x, y, z, seed, scale, snowed, season }`.
+function decorate(cells, ramps, latitude, humidity, season, seed) {
   const baseWeights = DECOR_DENSITY[latitude]?.[humidity] ?? {};
   if (Object.keys(baseWeights).length === 0) return [];
 
@@ -804,19 +834,28 @@ function decorate(cells, ramps, latitude, humidity, seed) {
   const rng = mulberry32(seed + 3);
   const decorations = [];
 
-  // Set ramp cell koordinát pro O(1) lookup při Y výpočtu (sez. 40 bod 2).
-  // `ramps[]` má per-cell entry `{ x, y, z, kind, surface, orientation }`,
-  // pozice odpovídá source cell `a` (= ten co stoupá k vyššímu sousedovi).
-  const rampCells = new Set();
-  for (const r of ramps ?? []) rampCells.add(`${r.x},${r.z}`);
+  // Map ramp cell koordinát → slopeDir pro O(1) lookup + Y interpolaci.
+  // Sez. 40 měl jen `rampCells` Set s konstantním Y = y_top + 1.0 (= střed
+  // ramp diagonal), ale jitter pozice tree mimo střed cellu visela ve vzduchu
+  // na low end nebo byla zapuštěna na high end. Sez. 41 DD-50 follow-up:
+  // `slopeDir` z ramp entry umožní lineární interp Y dle (jitterX, jitterZ).
+  const rampDirMap = new Map();
+  for (const r of ramps ?? []) rampDirMap.set(`${r.x},${r.z}`, r.slopeDir);
 
   for (const c of cells) {
     if (c.water === true) continue;
 
     // Filter dle surface constraints. Allowed = baseWeights bez nepovolených KIND-ů.
     // `Object.entries(obj)` vrací `[[key, val], ...]` array, `.filter` standardní.
+    //
+    // **Sez. 41 DD-50 follow-up: bush v snowed cell skip.** Listnatý keř v zimě
+    // = defoliated, nemá co vykreslit (oak udělá holý kmen, bush kmen nemá =
+    // entity by byla prázdná Group). Lepší instanci nespawnnout — KISS, žádný
+    // empty mesh ve scéně. Spruce + rock + grass_tuft snowed zachovají vlastní
+    // snow-aware render (jehličí + sníh / top chunk bílý / bílé shards).
     const allowedEntries = Object.entries(baseWeights).filter(([kind]) => {
       if (c.surface === "stone" && kind !== "rock") return false;
+      if (c.snowed === true && kind === "bush") return false;
       return true;
     });
     if (allowedEntries.length === 0) continue;
@@ -840,16 +879,35 @@ function decorate(cells, ramps, latitude, humidity, seed) {
     // Jitter ±0.3 (uvnitř cell ~ 60 % šíře, nejde nikdy přes hranu).
     const jitterX = (rng() - 0.5) * 0.6;
     const jitterZ = (rng() - 0.5) * 0.6;
-    // Y na top face voxelu (= y_top + 0.5). Pro ramp cells posun o +0.5 nahoru
-    // (= střed ramp diagonal, dekorace neleží zapuštěná pod ramp surface).
-    const onRamp = rampCells.has(`${c.x},${c.z}`);
-    const decY = c.y_top + (onRamp ? 1.0 : 0.5);
+    // Y výpočet (sez. 41 DD-50 follow-up):
+    //  - non-ramp cell: top face voxelu = y_top + 0.5.
+    //  - ramp cell: lineární interp po slopeDir. Ramp range je y_top + 0.5
+    //    (low edge) až y_top + 1.5 (high edge); střed cellu = y_top + 1.0.
+    //    `slopeT = (jx·dx + jz·dz) / norm` mapuje (jitterX, jitterZ) na ±0.5
+    //    při cell edge (norm = |dx|+|dz|, edge=1, corner/diagonal=2).
+    //    decY = y_top + 1.0 + slopeT.
+    //  Edge ramp (axial): jitter podél slope axisu = ±0.3 vrátí Y = y_top + 0.7..1.3.
+    //  Corner/diagonal (diagonální): jitter v rohu daleko od peaku = ±0.6
+    //    raw dot / norm 2 = ±0.3 → stejný rozsah jako edge.
+    let decY;
+    const slopeDir = rampDirMap.get(`${c.x},${c.z}`);
+    if (slopeDir) {
+      const norm = Math.abs(slopeDir.dx) + Math.abs(slopeDir.dz);
+      const slopeT = (jitterX * slopeDir.dx + jitterZ * slopeDir.dz) / norm;
+      decY = c.y_top + 1.0 + slopeT;
+    } else {
+      decY = c.y_top + 0.5;
+    }
 
     // Per-instance seed pro builder variace — derivované z scatter RNG, takže
     // stejný global `seed` dá deterministicky stejnou scénu.
     // `Math.floor(rng() * 2^32)` — 32-bit integer rozsah pro mulberry32.
     const decSeed = Math.floor(rng() * 0xffffffff);
 
+    // Sez. 41 multi-decor attempt rolled back — 100×100 tropical.wet × 2 attempts
+    // = ~20k DECOR Object3D × ~5 child meshes = ~100k scenetree, FPS klesl
+    // na ~8 (rAF 123ms). Single attempt zachová playable FPS; pro skutečnou
+    // hustotu pralesu čekáme na InstancedMesh refactor DECOR (TODO sub-prah).
     decorations.push({
       kind: pickedKind,
       x: c.x + jitterX,
@@ -863,6 +921,10 @@ function decorate(cells, ramps, latitude, humidity, seed) {
       // určí snow cap (top element bílý) pro zasněžený biome. `bool` (default
       // `false` pokud cell.snowed undefined při snowSpec.mode="none").
       snowed: c.snowed === true,
+      // Propagace `season` (sez. 41 DD-50 follow-up) — builder z toho určí
+      // listovou paletu (oak/bush v autumn = LEAF_AUTUMN oranžová, jinak
+      // LEAF_GREEN/BUSH_GREEN). Spruce season-invariant (jehličnan).
+      season: season,
     });
   }
 

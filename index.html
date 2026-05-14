@@ -367,7 +367,10 @@
         const waterSpec = window.waterSpecForClimate?.(latKey, humKey, seasonKey) ?? { enabled: false };
         // DD-49 (sez. 40) — decorSpec driver-derived ze stejné dvojice (lat, hum).
         // Krajinné dekorace (stromy/keře/kameny/tráva) per biome density driver.
-        const decorSpec = window.decorSpecForClimate?.(latKey, humKey) ?? { mode: "none" };
+        // DD-50 follow-up (sez. 41) — plus seasonKey pro LEAF_AUTUMN paletu
+        // (oak/bush v autumn). Bez season arg padá `decorSpec.season` na
+        // default "summer" a slider season nemá efekt na decor listí.
+        const decorSpec = window.decorSpecForClimate?.(latKey, humKey, seasonKey) ?? { mode: "none" };
         return {
           size:     [parseInt(sizeX.value, 10), parseInt(sizeZ.value, 10)],
           relief:   parseInt(relief.value, 10),

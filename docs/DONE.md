@@ -775,3 +775,82 @@ Sez. 38 audit cadence reset 0/8. Žádné regression.
 - SEASON slider temperate winter: 60 % snow + 70 % ice ✓.
 
 Sez. 40 audit cadence 2/8 (`%AUDIT:CODE`) / 1/10 (`%AUDIT:DOCS`) / 9/12 (IDEAS/TODO pruning). Žádné regression.
+
+## M8+ — Seasonal foliage cycle (DD-51) + slope-aware decor Y (DD-52) (sez. 41)
+
+User volba z Příště sez. 40 → 41: **(1) DD-50 follow-up LEAF_AUTUMN paleta** — uzavřít sezonní visual loop. Plán-then-Go pattern × 3 iterace (LEAF_AUTUMN → winter defoliation → multi-decor rollback).
+
+### DD-51 — Seasonal foliage cycle pro listnaté
+
+**Per-instance season propagace** přes `DECOR.SEASON` atribut (9. konstruktor param, default `"summer"`):
+
+```
+world.SEASON → decorSpec.season → decorate(...) → decoration.season → DECOR.SEASON → builder opts.season
+```
+
+**Listnaté KIND-y (oak, bush) seasonal cycle:**
+- spring/summer → LEAF_GREEN (oak) / BUSH_GREEN (bush)
+- autumn → LEAF_AUTUMN (oranžová `0xc8722a`, paleta připravená sez. 40 jako DD-50 kotva)
+- winter (snowed cell) → defoliated:
+  - **oak.snowed** → builder skipne `for` loop nad clusters, vykreslí jen kmen (BARK_BROWN Cylinder)
+  - **bush.snowed** → `decorate()` filter v `allowedEntries` (entity vůbec nespawnne, žádný empty Group)
+
+**Spruce season-invariant** — jehličnan drží LEAF_GREEN; snowed → SNOW_WHITE patra (zachováno ze sez. 40 DD-49).
+
+**Priorita v builderu listnatých**: `snowed > autumn > default`.
+
+### DD-52 — Slope-aware DECOR Y na rampách
+
+User: „Stromy na rampách (oak) visí ve vzduchu." Sez. 40 měl konstantní `y_top + 1.0` (= střed ramp diagonal); jitter pozice mimo střed = floating nebo zapuštěná.
+
+**`ramps[]` entry rozšířena o `slopeDir: { dx, dz }`** — unit vector low→high:
+- edge ramp: `pick.dir.dx/dz` (toward high neighbor, norm = 1)
+- corner ramp: `c.ddx/ddz` (toward diagonal peak, norm = 2)
+- diagonal ramp: `tdrampCorner.ddx/ddz` (toward peak corner, norm = 2)
+
+**`decorate()` Y výpočet:**
+- non-ramp cell: `decY = c.y_top + 0.5`
+- ramp cell: `slopeT = (jitterX·dx + jitterZ·dz) / (|dx|+|dz|)`; `decY = c.y_top + 1.0 + slopeT`
+
+Normalizace unifikuje edge/corner/diagonal (jitter ±0.3 podél slope axis → `slopeT ∈ [-0.3, +0.3]` napříč všemi ramp kindy).
+
+TDRAMP step shape je bilinear aproximace (mild zapuštění/floating near diagonal split line) — sub-prah pro exact step model.
+
+### Kalibrace sez. 41
+
+- **`DECOR_BASE_SCALE.spruce/oak/bush/rock`** `0.5` → `1/3` (= 0.333; o 1/3 menší). User: „Velikost dekorací kromě trávy zmenšit o 1/3, nahustit víc na sebe."
+- **`DECOR_DENSITY` oak/spruce × 2** napříč 12 biomy. User: „Zdvojnásob počty stromů ve výpočtech." Tradeoff flag: `decorate()` má max 1 decor per cell, sum > 1.0 znamená 100 % fill rate (ne víc stromů per cell). Tropical.wet sum 0.80 → 1.15.
+
+### Multi-decor per cell (rolled back)
+
+User: „Byl by problém vygenerovat na jednom tile více stromů? Prales je řídký." AI plán: `MAX_ATTEMPTS_PER_CELL = 2` smyčka v `decorate()`, per-attempt jitter + pick + seed. Tropical.wet 100×100 = ~20k DECOR Object3D × ~5 child meshes per Group = ~100k scenetree. **Perf regrese:** rAF handler 123-131ms (~8 FPS, regrese ze sez. 31/40 FPS 104). User volba: A (rollback `MAX_ATTEMPTS=1`). Hustota wet biomu zachována přes density × 2 (sum > 1 = 100 % fill).
+
+**InstancedMesh DECOR refactor** = priorita pro sez. 42 (TODO priority `[!]`, perf trigger).
+
+### Bug fix — `decorSpecForClimate` caller sweep
+
+**Censure! (AI → AI):** při edit API signature `decorSpecForClimate(lat, hum)` → `(lat, hum, season)` AI updatoval jen 1/2 callers (main.js `buildScene` = boot path). Regen path (`readParams()` v index.html) zapomněn → `decorSpec.season` padal zpět na default `"summer"`, slider Season neměl efekt na decor listí. User: „Listnaté zelené, oranžovou nevidím — zkontroluj!" Fix: 1 řádek v index.html. Memory [[feedback_subagent_verify]] v praxi.
+
+### Soubory dotčeny
+
+- `src/composites/builders.js` +~25 / −~10 ř. (LEAF_AUTUMN import, oak/bush seasonal cycle, oak.snowed kmen-only, bush.snowed early return).
+- `src/terrain.js` +~50 / −~15 ř. (3-arg `decorSpecForClimate`, 6-arg `decorate`, ramps[] `slopeDir`, decorate Y interp, DECOR_BASE_SCALE 1/3, oak/spruce density × 2, bush snowed skip, season propagace).
+- `src/model.js` +~10 / −~1 ř. (`DECOR.SEASON` 9. param + docstring).
+- `src/main.js` +~5 / −~3 ř. (createDecor opts.season, spawn loop d.season, buildScene world.SEASON).
+- `index.html` +~5 / −~1 ř. (readParams decorSpec season arg fix).
+- `docs/DESIGN_DECISIONS.md` +~110 ř. (DD-51 + DD-52 sekce).
+- `docs/TODO.md` +~25 / −~15 ř.
+- `docs/DIARY.md` +1 ř. index.
+- `docs/diary/2026-05-14.md` nový ~140 ř.
+- `docs/GLOSSARY.md` +~5 / −~2 ř.
+- `README.md` +~3 / −~3 ř.
+
+### Vizuální verifikace (user)
+
+- LEAF_AUTUMN viditelná v autumn ✓ (po regen path fix).
+- Winter defoliation: oak holý kmen, bush invisible ✓ („Vypadá to dobře").
+- Ramp decor sedí na svahu bez floating ✓ („Opraveno OK").
+- Decor scale 1/3, oak/spruce density × 2 ✓.
+- Multi-decor 100×100 tropical.wet → FPS 8 (rollback) ✓.
+
+Sez. 41 audit cadence 3/8 (`%AUDIT:CODE`) / 2/10 (`%AUDIT:DOCS`) / 10/12 (IDEAS/TODO pruning, **velmi blízko prahu**). Žádné regression mimo úmyslný multi-decor rollback. User verdikt: **„Generátor scény považuji za dokončený."**

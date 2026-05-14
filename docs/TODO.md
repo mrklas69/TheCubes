@@ -46,9 +46,13 @@
 - [ ] **BUILDING třída** *(IDEAS — budoucí dekorativní/factory entity nad generovaným terénem)*.
 - [ ] **TRACK třída** *(IDEAS — sourozenec PATH, vlaky odloženy)*.
 
-## Krajinné COMPOSITES (DD-49) + SEASON (DD-50) sub-prahy
+## Krajinné COMPOSITES (DD-49) + SEASON (DD-50/DD-51) + slope-aware Y (DD-52) sub-prahy
 
-DD-49 + DD-50 implementovány sez. 40. Fáze 1-5 hotové (viz DONE.md). Otevřené sub-prahy:
+DD-49 + DD-50 implementovány sez. 40. DD-51 (LEAF_AUTUMN cycle + winter defoliation) + DD-52 (slope-aware decor Y) implementovány sez. 41. Otevřené sub-prahy:
+
+### Priorita pro sez. 42 — perf trigger
+
+- [!] **InstancedMesh refactor pro DECOR** *(DD-kandidát, trigger byl perf regrese sez. 41)*. Per (KIND × varianta) `InstancedMesh` batch. Sez. 41 multi-decor `MAX_ATTEMPTS=2` zkusil → ~20k DECOR Object3D × ~5 child meshes per Group = ~100k scenetree, rAF 123ms (~8 FPS). Rolled back na 1 attempt; pro hustší prales potřebuje InstancedMesh. Komplikace: per-instance random scale/rotation v `instanceMatrix`, flatShading + InstancedMesh seam (memory [[feedback_flat_shading_instanced]] — switch na vertex-color pipeline pro DECOR). Otevírá cestu k MAX_ATTEMPTS=2-3 bez perf hit.
 
 ### Fáze 6 — follow-up DECOR (KIND extension)
 
@@ -56,25 +60,29 @@ DD-49 + DD-50 implementovány sez. 40. Fáze 1-5 hotové (viz DONE.md). Otevřen
 - [ ] **`cactus` KIND** — `subtropical.dry` (CylinderGeom svislé sloupce, 1-3 paže).
 - [ ] **`flower` KIND** — `temperate.wet` louka kvítky (small SphereGeom + thin stem).
 - [ ] **Pařezy + kmeny** — `stump`, `log`. Nízké válce / hranol s anuli.
-- [ ] **`_dead` postfix** — no leaves, dark bark (sušené stromy v dry biomech).
+- [ ] **`_dead` postfix** — no leaves, dark bark (sušené stromy v dry biomech). Builder priorita rozšíření: `dead > snowed > autumn > default`.
 - [ ] **Density UI control** — slider v `#terrainctrl` „Decoration density" (multiplikátor 0..2× nad DECOR_DENSITY).
-- [ ] **InstancedMesh refactor pro DECOR** — pokud >5k DECOR Object3D ve scenetree degraduje FPS na 100×100.
 - [ ] **Receive shadow opt-out flag** — `userData.noReceiveShadow` analogicky k `noShadow`. DD-49 spec původně receiveShadow=false pro decor (marginal perf save). Aktuálně default traversal nastaví na true.
+- [ ] **LEAF_AUTUMN HSL variace per instance** — currently single hex `0xc8722a`. Reálný podzimní les má spektrum oranžová/žlutá/červená/hnědá per individuální strom. Per-instance hue shift přes `DECOR.SEED`-derived noise.
 
 ### DD-50 SEASON follow-up (mid + plný scope)
 
-- [ ] **LEAF_AUTUMN paleta v autumn** — DECOR oak/bush v autumn dostane LEAF_AUTUMN (oranžová) místo LEAF_GREEN. Spruce zachová zelený (jehličnan). Builder přijme `opts.season` přes DECOR.SEASON atribut nebo `decorate` propagace per cell.
+- [x] **LEAF_AUTUMN paleta v autumn** *(sez. 41, DD-51)* — listnaté seasonal cycle: spring/summer LEAF_GREEN, autumn LEAF_AUTUMN, winter (snowed) defoliated (oak = kmen-only, bush = skip). Spruce season-invariant. Viz DONE.md + DD-51.
 - [ ] **DECOR_DENSITY sezonní modifier** — autumn -20 % leaves, winter -50 % leaves + 20 % rock visibility. `decorate()` rozšíření o season-weighted multiplier.
 - [ ] **Polar season variace** — polar summer ablation (méně led, méně sníh), polar winter pernamentní 1.0 napříč. Vyžaduje rozdvojit polar branch v `snowSpecForLatitude` / `waterSpecForClimate`.
 - [ ] **Sky/sun color season modifier** — DD-48 `_skyDay` / `_skyDusk` keypoints jsou season-invariant. Sezonní subtle tint (winter colder modřejší, summer warmer žlutější).
 - [ ] **Snow accumulation animace přes DAY_SPEED** — temporal evolution (sníh roste v zimě, taje na jaře) přes WORLD.DAY × SEASON interpolation.
 
+### DD-52 slope-aware Y follow-up
+
+- [ ] **TDRAMP exact step Y** — DD-52 dnes bilinear aproximace. Exact: `if (jitterX·dx + jitterZ·dz > 0) decY = y_top + 1.5; else decY = y_top + 0.5`. Skok na diagonal line. Sub-prah pokud user nahlásí floating/burying trees na TDRAMPech.
+- [ ] **DECOR rotation z slope normal** — strom roste vertical, ne kolmo k ramp surface. Realistic OK pro stromy, ale fence/wall future entities by potřebovaly slope normal rotation.
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — **2/8** *(sez. 40 jen impl, žádný audit)*. Next: ~sez. 46.
-- **`%AUDIT:DOCS`** — **1/10** *(sez. 40 jen impl, žádný audit)*. Next: ~sez. 49.
-- **IDEAS/TODO pruning** — **9/12** *(sez. 40 prune: close DD-49 Fáze 1-5 + DD-50 minimal + close WORLD.SEASON DD-47 follow-up; add DD-50 follow-up section + DECOR Fáze 6 sub-prahy)*.
+- **`%AUDIT:CODE`** — **3/8** *(sez. 40+41 jen impl, žádný audit)*. Next: ~sez. 46.
+- **`%AUDIT:DOCS`** — **2/10** *(sez. 40+41 jen impl, žádný audit)*. Next: ~sez. 49.
+- **IDEAS/TODO pruning** — **10/12** *(sez. 41 prune: close LEAF_AUTUMN sub-prah; add InstancedMesh DECOR priority + DD-52 follow-up + DD-51 LEAF_AUTUMN HSL sub-prah)*. **Velmi blízko prahu** — další sezení vyhodnotit jako pruning trigger.
 
 - [ ] **Symmetric VALLEY_AMP = −amplitude varianta** — DD-46 dnes asymetrický (VALLEY=−1, PEAK=amplitude). Peak side rozprostřená přes víc úrovní (Y=2,3,4) než valley side (Y=−1 dominantní). Pro skutečně symetrický bimodal (= stejné peaks i valleys distribuce) by VALLEY=−amplitude dalo range [-amp, +amp]. Pro r6 by to znamenalo -4..4. Wait pro user feedback typu „valley je moc dominantní" / „peaks rozcucnatý".
 - [ ] **Plynulý morph r5↔r6** — DD-46 hard switch při r=6 (ridge³ → smoothstep bimodal). Pokud user pocítí „přechod mezi rolling a horami je trhanej", parametrizovat `bimodalWeight = clamp((relief-5)/3, 0, 1)` a lerp mezi ridge³ output a smoothstep output. Wait pro user feedback.
