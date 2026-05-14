@@ -1372,13 +1372,26 @@ OBJECTS (ID, NAME, DESCRIPTION)
 - Commit `46f686d` — audit trail pro `git log` traceability.
 - Memory: `[[feedback-test-nic-overthinked-nelze-odebrat]]` (nová), `[[feedback-end-implies-push]]`.
 
-### Fáze 2: `%AUDIT:DOCS` (sez. 48)
+### Fáze 2: `%AUDIT:DOCS` (sez. 48, commit `8a88aa7`)
 
 - [x] GLOSSARY drift cleanup — drop SPRITES/PATH/TIMER/COUNTER/TIME/ANIMATE sekce, sync UI Settings (2 checkbox), Sun mesh, Vizuální zdroje (3 → 2), LIQUID 5.→4. vrstva, header sez. 45 → sez. 48 + DD-55.
 - [x] README Status + Milníky + Hierarchie + Plán — sez. 41 → sez. 48 M-Genesis cleanup, hierarchie diagram update, „Smazáno sez. 48" sekce, M-Genesis arc 5-fázový plán.
 - [x] CLAUDE.md Key Files — model.js/main.js popis sync s 8 tříd modelem, time.js row drop, DD range na DD-55, %CALIBRATE projektová zmínka.
 - [x] DESIGN_DECISIONS.md DD-55 — plný immutable entry s K1+D1+D2 + Sun toggle drop + 5 KISS důvodů + references.
 - [x] TODO Recent DONE + cadence sync — sez. 34-48, M-Genesis arc 5-fázový plán jako aktivní úkoly.
-- [x] DONE sez. 48 entry — tato sekce.
-- [ ] DIARY index + sez. 48 file — bude součást tohoto commitu.
-- [ ] IDEAS sync sez. 48 — TIMER/COUNTER/WORLD ř. 53 update.
+- [x] DONE sez. 48 entry — výš.
+- [x] DIARY index + sez. 48 file — řádek v DIARY.md index + `## Sezení 48` sekce v `docs/diary/2026-05-14.md` (Diskuse + Rozhodnutí + Fáze 1+2 + Kudos/Censure + Příště).
+- [x] IDEAS sync sez. 48 — ř. 49-53 status sync (SPRITES/TIMER/COUNTER → DROPNUTO sez. 48 cleanup s git history revert pattern, WORLD jediný aktivní nevizuální OBJECTS).
+
+### Regrese fix (sez. 48 follow-up, commit `c88aa4c`)
+
+- [x] **TAU re-introduce** — K1a sed range delete smazal `const TAU = Math.PI * 2` (původně v Animator section pro `oscPhase`), ale TAU konzumuje i `updateSun()` (DD-38 sun position math) + `updateAtmosphere()` (DD-48 sky lerp). Browser ReferenceError → bílé okno. Fix: re-introduce TAU jako standalone konstantu před `updateWorldTime()`. **Censure! AI → AI** za naivní smoke test (HTTP 200 ≠ runtime OK) — sub-prah pre-`sed Nd` grep všech symbolů v range proti rest of file.
+
+### Fáze 3: IDEAS/TODO/DONE pruning (sez. 48)
+
+- [x] **TODO sync** — M-Genesis arc updates: Fáze 2 `[~]` → `[x]`, Fáze 3 `[ ]` → `[~]` (probíhá). Cadence pruning 5/12 → 0/12 reset.
+- [x] **TODO MOVE → DONE: Atlas IIFE raw geom strip UV at source** *(G0 follow-up, TODO ř. 78)* — D1 sez. 48 hotové: 3× ramp `*_GEOM_CACHE` IIFE drop UV + remapU compute, rename `*_GEOM_CACHE` → `_*_RAW_GEOM`. ~50 ř. KISS dluh splaceno.
+- [x] **TODO MOVE → DONE: GLOSSARY BLOCKS rodina TEXTURE_* sync s DD-41** *(sez. 38 audit follow-up, TODO ř. 79)* — Sez. 39 `%AUDIT:DOCS` + DD-41 wording v GLOSSARY ř. 18 už je *„bez vlastních face atributů (od DD-41 sez. 34, předtím TEXTURE_TOP/BOTTOM/NORTH/SOUTH/EAST/WEST)"*. Retro DONE.
+- [x] **TODO DROP: Biome populate** *(M8+, TODO ř. 21)* — obsoletní, plně překryto `BIOME_NAMES` × `BIOME_SURFACES` v `generateTerrain` (DD-44 sez. 36) + biome-aware DECOR_DENSITY (DD-49 sez. 40).
+- [x] **TODO TRACK třída anotace update** — doplnit „revert PATH z gitu sez. 4-8 pokud potřeba" (po sez. 48 PATH drop).
+

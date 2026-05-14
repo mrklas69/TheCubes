@@ -8,9 +8,9 @@
 
 ## M-Genesis arc (aktivní, sez. 48+)
 
-- [x] **Fáze 1: `%AUDIT:CODE` + cleanup** (sez. 48) — K1a-K1e + D1 + D2 + Sun toggle drop. DD-55 + commit `46f686d`.
-- [~] **Fáze 2: `%AUDIT:DOCS`** (sez. 48) — drift sync všech docs po cleanup + DD-55 entry + diary sez. 48.
-- [ ] **Fáze 3: IDEAS/TODO/DONE pruning** — close cut. Pruning cadence trigger 5/12.
+- [x] **Fáze 1: `%AUDIT:CODE` + cleanup** (sez. 48) — K1a-K1e + D1 + D2 + Sun toggle drop. DD-55 + commit `46f686d`. + Regrese fix TAU re-introduce (commit `c88aa4c`).
+- [x] **Fáze 2: `%AUDIT:DOCS`** (sez. 48) — drift sync 9 souborů + DD-55 entry + diary sez. 48 + IDEAS sez. 48 sync. Commit `8a88aa7`.
+- [~] **Fáze 3: IDEAS/TODO/DONE pruning** (sez. 48) — close cut. 3 drop kandidáti (2 MOVE → DONE D1 + TEXTURE_* sync, 1 DROP Biome populate), cadence 5/12 → 0/12 reset.
 - [ ] **Fáze 4: `%CALIBRATE`** — port z PocketStory + projektová definice v `docs/PROMPTS.md` + run (meta-audit AI spolupracovníka + řídících docs).
 - [ ] **Fáze 5: Close ceremonie** — README `## Status` update na v1.0 + git tag `v1.0-terrain` (annotated push) + IDEAS.md brain-dump pro post-close arc (FindPath multi-modal + generátor/transformátor/konzument supply chain).
 
@@ -18,9 +18,8 @@
 
 - [ ] **`.glb`/glTF asset import pipeline** — `GLTFLoader` + AssetCache + shadow setup pro načítané meshe. Otevírá: (a) hezčí lampu z user-poskytnutého PBR Street Props balíčku, (b) Stickman integraci (varianta A níže), (c) dekorativní obyvatele scény. Vyžaduje nový DD (asset pipeline = strukturální), sez. 29 F3 smazala stará MagicaVoxel pipeline (OBJ/MTL Loader) — pattern obnovit, ale na glTF stack.
 - [ ] **Integrace externího Stickmana** — TBD způsob: `[A]` `.glb` import (závislé na asset pipeline výš), `[B]` sibling ES module `../Stickman/src/...`, `[C]` jiné. Otevře novou DD při rozhodnutí.
-- [ ] **Biome populate** *(IDEAS — částečně překryto biome map v `generateTerrain`, terra-specific dekorace nyní řeší DD-49)*.
 - [ ] **BUILDING třída** *(IDEAS — budoucí dekorativní/factory entity nad generovaným terénem)*.
-- [ ] **TRACK třída** *(IDEAS — sourozenec PATH, vlaky odloženy)*.
+- [ ] **TRACK třída** *(IDEAS — sourozenec PATH, vlaky odloženy; revert PATH z gitu sez. 4-8 pokud potřeba)*.
 
 ## Terrain generator (aktivní)
 
@@ -75,12 +74,10 @@ Kandidáti bez explicit user signal — drží se jako kotvy, neaktivní:
 - [ ] **Math.floor experiment pro low relief plateau** *(DD-45/46 follow-up)* — DD-45 `Math.round(blended * amp)` clusteruje fBm distribuci kolem mean (relief 5 amp 3 → 55 % na top voxel). Experiment: nahradit `floor` (lower bias) pro relief ≤ 5. Cena: ztratí 1 voxel max výšky.
 - [ ] **Symmetric VALLEY_AMP = −amplitude varianta** *(DD-46 follow-up)* — dnes asymetrický (VALLEY=−1, PEAK=amplitude). Pro skutečně symetrický bimodal by VALLEY=−amplitude dalo range [-amp, +amp]. Wait pro feedback typu „valley moc dominantní" / „peaks rozcucnatý".
 - [ ] **Plynulý morph r5↔r6** *(DD-46 follow-up)* — DD-46 hard switch při r=6 (ridge³ → smoothstep bimodal). Pokud user pocítí „přechod rolling → hory trhanej", parametrizovat `bimodalWeight = clamp((relief-5)/3, 0, 1)`.
-- [ ] **Atlas IIFE raw geom strip UV at source** + rename na `_RAMP_RAW_GEOM_*` *(G0 follow-up)* — IIFE pořád builduje UV + `remapU` (~50 ř. zbytečný compute), `getRampGeom` to stripuje v clone. KISS dluh.
-- [ ] **GLOSSARY BLOCKS rodina atributy sync s DD-41** *(sez. 38 audit follow-up)* — TCUBES doc na ř. 18 stále popisuje `TEXTURE_TOP/BOTTOM/NORTH/SOUTH/EAST/WEST` atributy (po DD-41 drop z `model.js`). Stejně TRRAMPS/TTRAMPS/TDRAMP. Drop `TEXTURE_*` z atribut sekce, zachovat face geometrie popis (face vs. `BLOCK_COLORS` klíče = informativní mapping).
 - [ ] **DIARY.md index retro cleanup** *(sez. 39 audit follow-up)* — od sez. 14 dál (multi-session days) index sazí 5-7 sezení do jednoho mega-řádku (sez. 38 řádek má 28k znaků). Per PROMPTS.md %END *„datum + shrnutí sezení"* — index má být stručný 1-2 věty per sezení, detail patří do `diary/YYYY-MM-DD.md`. Retro cleanup = velký úkol; pro budoucí sezení dodržovat stručný index automaticky.
 
 ## Audit cadence
 
 - **`%AUDIT:CODE`** — **0/8** *(sez. 48 user-driven trigger + reset — K1+D1+D2 cleanup)*. Next: ~sez. 56.
 - **`%AUDIT:DOCS`** — **0/10** *(sez. 48 trigger + reset — M-Genesis arc Fáze 2)*. Next: ~sez. 58.
-- **IDEAS/TODO/DONE pruning** — **5/12** *(sez. 48 partial sync, plné pruning v Fázi 3)*. Next: M-Genesis arc Fáze 3.
+- **IDEAS/TODO/DONE pruning** — **0/12** *(sez. 48 Fáze 3 reset — 2 MOVE → DONE D1+TEXTURE_* sync, 1 DROP Biome populate obsoletní)*. Next: ~sez. 60.

@@ -67,7 +67,7 @@ Atributy `WORLD` se přidávají jen tehdy, když mají živého konzumenta v en
 Strukturní pozn.: pokud přibudou ≥3 atributy jedné kategorie (např. `SUN_TILT` + `SUN_DISTANCE` + `SUN_COLOR`), refaktor z ploché na nested (`SUN: { tilt, distance, color }`) — DD-29 / DD-38 pro to drží otevřená vrátka.
 
 ## Chování v čase
-- Až bude „čas něco dělat": jak? Pravidla (PocketStory style), per-object `tick()`, subscription na TIME? → DONE (sez. 5, M7): data-driven atribut `ANIMATE = { kind, ...params }` na `OBJECTS`, dispatch v enginu (DD-15). První dvě `kind`y: `balloon_bob` a `tree_sway`. Sez. 6 + 7 doplnily `rotate`, `orbit_stadium`, `pulse` (s volitelným opacity), `drift` (lineární s wrap-around). Sez. 10 (DD-18) rozšířil ANIMATE na „mode slot" — statické pózy (`sit`, `lie`) i stavové automaty (`wander`) sdílejí dispatch. Diskrétní události: `TIMER` + `ACTION` (DD-17, sez. 9).
+- Až bude „čas něco dělat": jak? Pravidla (PocketStory style), per-object `tick()`, subscription na TIME? → DONE (sez. 5, M7): data-driven atribut `ANIMATE = { kind, ...params }` na `OBJECTS`, dispatch v enginu (DD-15). Sez. 6 + 7 doplnily `rotate`, `orbit_stadium`, `pulse` (s volitelným opacity), `drift` (lineární s wrap-around). Sez. 10 (DD-18) rozšířil ANIMATE na „mode slot" — statické pózy (`sit`, `lie`) i stavové automaty (`wander`) sdílejí dispatch. Diskrétní události: `TIMER` + `ACTION` (DD-17, sez. 9). **→ DROPNUTO sez. 48 M-Genesis cleanup (DD-55)** — ANIMATE dispatch + 4 kindy + TIMER + COUNTER + ACTIONS bez živého konzumenta po DD-32 terrain pivot. Pattern + immutable DD-15/16/17/18 zachováno; revert z git history (sez. 5-9 commits) až s konzumentem (Stickman integrace nebo gameplay vrstva).
 - **Sekvenční chování** (zvedání, pokládání, přechody mezi pózy) — nepokryté mode slotem (ten drží jen aktuální stav, ne trajektorii mezi stavy). Kandidáti: (a) transition animátor přebírající interpolaci mezi snapshotem páteře a cílem, (b) keyframe systém po vzoru tradiční animace, (c) skriptovaný ANIMATE.kind s fázemi. Rozhodne se, až bude konkrétní use case.
 
 ## AI / automaty *(sez. 14: CHARACTER/NOODLE/STICKMAN přesunuty do sibling projektu `./source/Stickman`. Wander automat, kolizní systém i pose primitives v TheCubes nežijí. Body níž jsou dlouhodobé kandidáty — relevantní až přijde integrace Stickmana zpět nebo nová pohyblivá entita.)*
@@ -79,17 +79,50 @@ Strukturní pozn.: pokud přibudou ≥3 atributy jedné kategorie (např. `SUN_T
   - **Multi-entity koordinace** — dvě entity se domluví na společné akci.
 - **Pathfinding** — pro cílený pohyb přes překážku graf/A* (nový systém, ne drobný refaktor; samostatné DD).
 
-## Mobilita napříč výškami (auta, vlaky, hráč)
+## Mobilita napříč výškami (auta, vlaky, hráč) *(relevant pro post-close FindPath multi-modal arc — sez. 48 user signal)*
+
+> **Po sez. 48 M-Genesis cleanup:** Terrain pipeline má **rampy hotové** (DD-33 TRRAMPS edge + DD-34 ORIENTATION centralizace + DD-35 TDRAMP diagonal + DD-52 slope-aware decor Y). Schodovitý terén = aktivní pattern (1-voxel step + ramp smoothing). FindPath multi-modal (ground/air/water) plánovaný jako post-close arc s `generátor/transformátor/konzument` supply chain. Body níž jsou strategické kandidáty pro pohybovou logiku.
+
 Jak se pohyblivá entita dostane z nižší kostky na vyšší? Voxelový svět má diskrétní Y a entity nechtějí „skákat" přes hrany. Kandidáti:
-- **Rampy** — speciální kostka se šikmou geometrií (3D iso tile klasika: SimCity, RCT, Minecraft slabs/stairs). Nová třída v rodině CUBES (`RCUBES`?) nebo atribut `SLOPE = { dir, angle }` na CCUBES/TCUBES (data-driven, izomorfní s `ANIMATE`/`TEXTURE_*`).
+- **Rampy** — speciální kostka se šikmou geometrií (3D iso tile klasika: SimCity, RCT, Minecraft slabs/stairs). → **DONE (DD-33/34/35, sez. 26-27)** terrain ramp smoothing layer 3 typy (TRRAMPS/TTRAMPS/TDRAMP). Per-cell `ramps[].slopeDir` unit vector (DD-52) k dispozici pro pohybový agent.
 - **Schodovitý terén** — každý krok = plná kostka, entita hopsá o 1 voxel (Minecraft). KISS, drží voxel identitu, ale auta/vlaky působí nepřirozeně (kodrcání).
 - **Heightmap / heightfield** — každý tile má vlastní Y, povrch se interpoluje trojúhelníky (Transport Tycoon hills). Plynulé, ale opouští voxel estetiku — *nepasuje do koncepce TheCubes*.
 - **Z-levels / patra** — voxely zůstávají, pohybové vrstvy jsou oddělená patra propojená lokálními přechody (výtah, schody, díra). Dwarf Fortress pattern.
-- **Splines / track graf** — silnice/koleje jsou spline-křivky nezávislé na voxelech, entita jezdí po křivce, voxely jen dekorace (TT vlaky po kolejích).
-- **Logický pathing graf** — engine neřeší geometrii, ale graf „z tile A do tile B lze", entity animují přejezd mezi uzly. Turn-based (Civilization). **Silný koncept pro sandbox s `TIME.tick` pravidly** — izomorfie s tím, jak `ANIMATE` oddělil chování od modelu.
+- **Splines / track graf** — silnice/koleje jsou spline-křivky nezávislé na voxelech, entita jezdí po křivce, voxely jen dekorace (TT vlaky po kolejích). *(PATH třída dropla sez. 48; revert z gitu sez. 17 commit pokud TRACK přijde.)*
+- **Logický pathing graf** — engine neřeší geometrii, ale graf „z tile A do tile B lze", entity animují přejezd mezi uzly. Turn-based (Civilization). **Silný koncept pro `FindPath(from, to, mode = ground|air|water)` API** — graf + mode-aware traversal (ground = nesmí přes water, air = ignoruje height, water = jen přes LIQUID cells).
 - **Anti-gravity / wall-climb** — entity nemají gravitaci, jezdí po čemkoli (Sonic, Mario Galaxy). Pro kreativní sandbox zajímavé, pro vlaky ne.
 
-Poznámka: rampy / schody řeší jen *geometrii*, splines / graf oddělí **pohyb od prezentace** — to je hlubší. V TheCubes nejspíš mix: **rampy/schody pro vizuální terén** + **graf pro logiku pohybu** (co z kam lze, pravidla jízdy). Rozhodne se, až přijde první pohyblivá entita (auto/vlak/hráč) a bude jasné, co s tím má dělat.
+Poznámka: rampy / schody řeší jen *geometrii*, splines / graf oddělí **pohyb od prezentace** — to je hlubší. V TheCubes nejspíš mix: **rampy/schody pro vizuální terén (DONE)** + **graf pro logiku pohybu** (co z kam lze, pravidla jízdy). Post-close arc: FindPath multi-modal nad současný terrain (heightmap + ramps + water) — viz brain-dump níž.
+
+## Post-close arc: FindPath + supply chain *(sez. 48 user signal Q3, brain-dump pro Fáze 5 ceremonie)*
+
+User vize pro post-close: **multi-modal pathfinding + factory/anno-style supply chain** nad terrain základem. Resonating s factory-observer toy DD-30/DD-31 (sez. 21, dropnutý DD-32 sez. 24) — vrácení v novém kabátu nad procedurálním světem.
+
+### `FindPath(from, to, mode)` — multi-modal traversal
+
+- **mode = `ground`** — A* nad heightmap grid, ramps traversable (jen sousední Δy ≤ 1), water cells **forbidden**, LIQUID frozen=true (ice) **traversable**. Cost = Manhattan + climb penalty na step.
+- **mode = `air`** — A* nebo přímý vector, ignoruje height + water + ramps. Pro flying entity. Cost = Euclidean.
+- **mode = `water`** — A* jen přes water cells (LIQUID frozen=false). Pro plavidla. Cost = Manhattan. Adjacency přes BFS clustering (DD-54 sub-prah pre-requisite).
+
+API návrh: `findPath(fromXZ, toXZ, mode) → { path: [{x, z, y}, ...], cost, mode }` nebo `null`. Engine-side helper v `src/path.js` nebo `src/terrain.js` extension.
+
+### Supply chain: generátor / transformátor / konzument
+
+Anno 1404 / Factorio / Voidspan inspirace, ale OOP entity pattern (ne grid-cell pattern). Tři nové třídy pod COMPOSITES:
+
+- **GENERATOR** (= „source" v Voidspan) — produkuje resource. Atributy: `RESOURCE` (string `wood`/`stone`/`fish`/...), `RATE` (per tick), `STORAGE` (current + capacity). Spawn v biome-relevantním kontextu (`wood` v `temperate.wet` les, `stone` v `polar` hory, `fish` v water cells).
+- **TRANSFORMER** (= „factory" / „workshop") — vstup N resources → výstup 1 resource. Atributy: `INPUT` (`[{ resource, rate }]`), `OUTPUT` (`{ resource, rate }`), `STORAGE` (Map per resource). Recipe-driven (`RECIPE` z registru).
+- **CONSUMER** (= „sink") — spotřebovává resource. Atributy: `RESOURCE`, `DEMAND` (per tick). Triggeruje supply chain logic.
+
+**Propojení:** PATH třída (revert z gitu) jako transportní spojení = `SOURCE` + `SINK` instance refs (DD-30/DD-31 pattern). Nebo abstract `Connection` graf bez vizuální PATH (= splines / spline-less logical graph).
+
+**Pre-requisite:**
+- Revert ANIMATE dispatch (Stickman integrace) — pro pohyblivé worker entity
+- Revert TIMER + COUNTER + ACTIONS (sez. 48 dropnuté) — pro tick-based supply chain logic
+- Revert PATH (Catmull-Rom + POINTS) — pro vizuální transportní spojení (volitelné)
+- LIQUID BFS clustering (DD-54 sub-prah) — pre-requisite pro water-mode FindPath
+
+**Strategie:** post-close DD-56 *(supply chain scope locked)* + DD-57 *(FindPath multi-modal)*. Pravděpodobně několik sezení (1 sezení FindPath, 1 GENERATOR + biome spawn rules, 1 TRANSFORMER + recipes, 1 CONSUMER + demand).
 
 ## Režimy světa
 - Minecraft-like voxel terén
