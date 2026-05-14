@@ -10,23 +10,7 @@
                  font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
     canvas#scene { display: block; width: 100vw; height: 100vh; }
 
-    /* HUD = malý nenápadný panel v levém horním rohu */
-    #hud {
-      position: fixed; top: 10px; left: 10px;
-      background: rgba(0, 0, 0, 0.55);
-      color: #fff;
-      padding: 8px 14px;
-      border-radius: 6px;
-      font-size: 14px;
-      font-variant-numeric: tabular-nums;
-      user-select: none;
-      pointer-events: none;
-    }
-    #hud .label { opacity: 0.7; margin-right: 4px; }
-    /* COUNTER řádky (dynamicky přidané divy) — lehký rozestup mezi řádky */
-    #hud > div { margin-top: 2px; }
-
-    /* Perf HUD — pravý horní roh, vizuálně izomorfní s `#hud` (vlevo).
+    /* Perf HUD — pravý horní roh.
        Sez. 28: `renderer.info` (draw calls / triangles / geometries / materials)
        throttle 1×/s v animate(). Diagnostický overlay, ne production UI. */
     #perfhud {
@@ -203,9 +187,6 @@
   </script>
 </head>
 <body>
-  <div id="hud">
-    <span class="label">TIME:</span><span id="time">0</span>
-  </div>
   <!-- Perf HUD (sez. 28 diagnostic). FPS = 1000/dt průměr přes vteřinu, calls/tri
        = `renderer.info.render`, geom/mat = `renderer.info.memory`. -->
   <div id="perfhud">
@@ -299,7 +280,6 @@
     <h3>Settings</h3>
     <label><input type="checkbox" id="set-dof" checked> DOF (rozostření)</label>
     <label><input type="checkbox" id="set-fog" checked> Fog (mlha)</label>
-    <label><input type="checkbox" id="set-sun" checked> Slunce</label>
     <div class="slider-row">
       <label for="set-day">DAY <span id="set-day-val">0.50</span></label>
       <input type="range" id="set-day" min="0" max="0.999" step="0.01" value="0.5">
@@ -500,7 +480,6 @@
       const $ = (id) => document.getElementById(id);
       $("set-dof").addEventListener("change", (e) => window.settings.setDOF(e.target.checked));
       $("set-fog").addEventListener("change", (e) => window.settings.setFog(e.target.checked));
-      $("set-sun").addEventListener("change", (e) => window.settings.setSun(e.target.checked));
       const dayInput   = $("set-day");
       const dayVal     = $("set-day-val");
       const speedInput = $("set-day-speed");

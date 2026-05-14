@@ -20,12 +20,6 @@ export class OBJECTS {
     this.NAME = name;
     // DESCRIPTION = volný popis (může být prázdný; default "")
     this.DESCRIPTION = description;
-    // ANIMATE = recept na chování v čase. `null` = statický objekt (default).
-    // Objekt `{ kind: "<string>", ...params }` = engine dispatch podle `kind`
-    // (izomorfně s DD-14 pattern pro vizuální atributy). Konkrétní interpretace
-    // žije v `src/main.js` (updateAnimations) — model zůstává datový (DD-11).
-    // Viz DD-15.
-    this.ANIMATE = null;
   }
 }
 
@@ -35,12 +29,13 @@ export class OBJECTS {
  *
  * Pozor na terminologii: "CUBES" je projektová značka, ne doslovný tvar.
  * Potomci override vizualizaci — CCUBES (plochá barva), TCUBES (per-face
- * textury), SPRITES (2D billboard ke kameře), COMPOSITES (3D mesh z primitivů).
- * Všichni ale sdílejí souřadný systém.
+ * vertex colors, DD-41), BLOCKS rampy (TRRAMPS/TTRAMPS/TDRAMP), COMPOSITES
+ * (3D mesh z primitivů — LAMP/DECOR), LIQUID (PlaneGeometry water/ice DD-54).
+ * Všichni sdílejí souřadný systém.
  *
  * DD-12: X, Y, Z jsou JS number (float). Voxelové potomky (CCUBES, TCUBES)
  * si v rendereru pozici zaokrouhlí na celé (snap-to-grid), nevoxelové
- * (SPRITES, COMPOSITES) si spojitou pozici ponechají.
+ * (COMPOSITES, LIQUID) si spojitou pozici ponechají.
  *
  * `extends OBJECTS` = dědičnost v JS. `super(...)` uvnitř constructoru
  * volá constructor rodičovské třídy (musí být první, než se použije `this`).
@@ -49,7 +44,7 @@ export class CUBES extends OBJECTS {
   constructor(id, name, x, y, z, description = "") {
     super(id, name, description);
     // Souřadnice ve sdíleném souřadném systému (float, DD-12).
-    // Voxel renderer je snapne na int; SPRITES/COMPOSITES je nechají spojité.
+    // Voxel renderer je snapne na int; COMPOSITES/LIQUID je nechají spojité.
     this.X = x;
     this.Y = y;
     this.Z = z;
@@ -216,49 +211,6 @@ export class TDRAMP extends BLOCKS {
 }
 
 /**
- * SPRITES = potomek CUBES vizualizovaný jako 2D billboard (obrázek vždy
- * otočený ke kameře). Sourozenec CCUBES/TCUBES/COMPOSITES — liší se
- * vizuálním módem, ne polohou. Viz DD-13.
- *
- * Atribut `ASSET`:
- *  - `null` / nezadáno → fallback šachovnicový billboard (idiom DD-07,
- *    „vizuál není definován").
- *  - `string` → text vykreslený jako dialogová bublina (canvas-generovaný
- *    obrázek, engine si z textu vyrobí CanvasTexture).
- *  - (pozdější rozšíření: URL na PNG, recept pro canvas, …).
- *
- * Pozice spojitá (DD-12) — sprite se nesnapuje na grid; 2D billboard dává
- * smysl i mezi voxely (dialog nad stromem apod.). V M5 stojí na vlastních
- * absolutních souřadnicích; parent-child vazba (follow parent + offset) je
- * samostatné téma na pozdější milník.
- */
-export class SPRITES extends CUBES {
-  constructor(id, name, x, y, z, asset = null, description = "") {
-    super(id, name, x, y, z, description);
-    // ASSET = popis obsahu bubliny. `null` → fallback šachovnice.
-    // Konkrétní interpretaci (string → text bubble, URL → obrázek, …)
-    // řeší engine v `createSpriteFor`. Model zůstává datový (DD-11).
-    this.ASSET = asset;
-    // SPEAKER = volitelný cíl dynamického ocásku bubliny. `null` (default)
-    // → bublina bez ocásku (plochý obdélník). Jinak engine vygeneruje 3D
-    // ocásek (tenký jehlan) mířící z bubliny na cíl. Dva formáty (DD-16):
-    //  - instance OBJECTS-potomka (má `.X`, `.Y`, `.Z`) → cíl = pozice
-    //    instance + `SPEAKER_OFFSET_Y`. Dynamické — když se instance pohne
-    //    (např. orbit_stadium mutuje `object3d.position`), ocásek sleduje
-    //    aktuální world pozici přes `meshByInstance` lookup.
-    //  - `{ x, y, z }` literál → pevný bod v prostoru (offset se ignoruje).
-    // Vyplňuje se po konstrukci: `sprite.SPEAKER = tree1;` — stejný pattern
-    // jako `ANIMATE`. Model zůstává datový (DD-11), dispatch v enginu.
-    this.SPEAKER = null;
-    // SPEAKER_OFFSET_Y = vertikální posun nad pozici `SPEAKER` (instance varianta).
-    // Default `0.5` cílí na vrch standardního voxelu 1×1×1 centrovaného v Y=0.
-    // Pro větší COMPOSITES (budoucí potomci) uživatel nastaví ručně. Pro
-    // literální `{x,y,z}` SPEAKER nemá význam (cíl je přesně zadaný bod).
-    this.SPEAKER_OFFSET_Y = 0.5;
-  }
-}
-
-/**
  * COMPOSITES = potomek CUBES vizualizovaný jako 3D mesh složený z primitivů
  * (Three.js `Group` obsahující např. válec + kužely pro strom).
  *
@@ -339,30 +291,11 @@ export class DECOR extends COMPOSITES {
 }
 
 /**
- * PATH = 1D křivka (DD-25 vrstva 3 — Linie). Catmull-Rom spline rendrovaný
- * jako plochý strip mesh šířky ~0.5 j s drobným Y offsetem nad terrain
- * (proti z-fighting).
- *
- * Atributy:
- *  - `KIND` — string, určuje surface texturu (default `"dirt"` = štěrk).
- *  - `POINTS` — pole `[x, y, z]` kontrolních bodů ve **world** souřadnicích
- *    (instance.X/Y/Z se nepoužívá; engine staví strip mesh přímo z POINTS).
- *
- * Pozice: instance.X/Y/Z = (0, 0, 0) — cesta žije v world coords (POINTS).
- */
-export class PATH extends CUBES {
-  constructor(id, name, points, description = "", kind = "dirt") {
-    super(id, name, 0, 0, 0, description);
-    this.KIND   = kind;
-    this.POINTS = points;
-  }
-}
-
-/**
- * LIQUID = tekutina (jezero, řeka, ...). **5. vrstva DD-25 extension** (sez. 45,
- * DD-54): Bloky / Voxely / Linie / Objekty / **Tekutiny**. Sibling BLOCKS /
- * COMPOSITES / PATH pod CUBES (paralel PATH pattern — bez abstract rodiny dokud
- * nepřibude 2. sourozenec, pak `LIQUIDS` base class podle DD-27 vzoru).
+ * LIQUID = tekutina (jezero, řeka, ...). **4. vrstva DD-25 extension** (sez. 45,
+ * DD-54): Bloky / Voxely / Objekty / **Tekutiny** (po sez. 48 cleanup Linie / PATH
+ * dropla — bez živého konzumenta v terrain scope). Sibling BLOCKS / COMPOSITES
+ * pod CUBES (bez abstract rodiny dokud nepřibude 2. sourozenec, pak `LIQUIDS`
+ * base class podle DD-27 vzoru).
  *
  * 1 instance = 1 connected basin (= seznam cells sdílejících hladinu + skupenství).
  * **Sez. 45 prototype:** single-cell instance (1 LIQUID = 1 water cell). Plný
@@ -390,7 +323,7 @@ export class PATH extends CUBES {
  *
  * Budoucí extension hooks („fyzika kapalin"):
  *   - TEMPERATURE numeric °C → gradient frozen↔melting, permafrost
- *   - FLOW_DIRECTION → rivers, streams (paralel PATH `POINTS` sekvence)
+ *   - FLOW_DIRECTION → rivers, streams (sekvence kontrolních bodů)
  *   - VISCOSITY → různé tekutiny (voda, láva, ropa, kyselina)
  *   - LEVEL animace (tide, monsoon flood, tání ledu na jaře)
  */
@@ -401,67 +334,6 @@ export class LIQUID extends CUBES {
     this.TEMPERATURE = temperature;
     this.BOUNDING_BOX = bbox;
     this.CELLS      = cells;
-  }
-}
-
-/**
- * TIMER = nevizuální potomek OBJECTS — spouští `ACTION` v diskrétních
- * intervalech měřených v `TIME.tick` (sekundy, DD-04). První skutečná
- * reakce na TIME.tick v projektu (do sez. 8 tiky jen tiktaly v HUDu).
- *
- * Atributy:
- *  - `INTERVAL` — počet ticků mezi vystřelením ACTION. Např. 5 = každých 5 s.
- *  - `ACTION` — recept `{ kind, ...params }` stejně strukturovaný jako
- *    `ANIMATE` (DD-15); engine dispatchuje přes `ACTIONS[kind]`. Default
- *    `null` (TIMER bez ACTION je legitimní pro budoucí plánovač, teď no-op).
- *    Aktuální `kind`y (DD-17): `toggle` (flip bool atributu cíle), `set`
- *    (nastaví atribut cíle na hodnotu).
- *
- * Izomorfismus s ANIMATE: obě třídy drží *recept*, ne chování. Rozdíl:
- * `ANIMATE` žije na libovolné instanci a běží per-frame (plynule), TIMER
- * žije jako samostatná entita a firuje diskrétně per-tick. Oba dispatchují
- * engine-side z `kind` → funkce mapy. Model nezná dispatch implementaci (DD-11).
- *
- * Nevizuální = infotip a 3D scéna TIMER neukazují; observable je pouze
- * skrze efekt jeho ACTION (např. balón se rozsvítí). Pozdější milník:
- * HUD list aktivních timerů, nebo vlastní SPRITES reprezentace.
- */
-/**
- * COUNTER = nevizuální potomek OBJECTS — stav (integer VALUE) mutovaný
- * automaticky každý `TIME.tick`. Druhý nevizuální potomek po TIMER —
- * demonstruje, že „nevizuální" nemusí znamenat „bez observability":
- * COUNTER je viditelný v **HUD** (ne v 3D scéně), engine při registraci
- * dynamicky přidá řádek do `#hud` elementu.
- *
- * Atributy:
- *  - `VALUE` — aktuální hodnota (integer, libovolná; default 0).
- *  - `INCREMENT` — o kolik se `VALUE` změní každý tick. Může být záporné
- *    (countdown). Default 1.
- *
- * Use case: skóre, odpočet, uplynulé ticky od události, frame counter.
- *
- * Kombinace s TIMER: TIMER.ACTION { kind: "set", target: counter,
- * attr: "VALUE", value: 0 } ho může kdykoli resetovat. Obecně je
- * COUNTER.VALUE **datové pole** jako kterékoli jiné — TIMER.ACTION /
- * ruční mutace / click handler do něj smí sahat paralelně (stejná
- * filozofie jako BALLOON.LIT v DD-17).
- */
-export class COUNTER extends OBJECTS {
-  constructor(id, name, startValue = 0, increment = 1, description = "") {
-    super(id, name, description);
-    this.VALUE = startValue;
-    this.INCREMENT = increment;
-  }
-}
-
-export class TIMER extends OBJECTS {
-  constructor(id, name, interval, description = "") {
-    super(id, name, description);
-    // INTERVAL = počet ticků mezi vystřelením ACTION. Musí být ≥ 1.
-    this.INTERVAL = interval;
-    // ACTION = recept `{ kind, target, attr, value? }`. Vyplnit post-hoc:
-    // `timer.ACTION = { kind: "toggle", target: balloon, attr: "LIT" };`
-    this.ACTION = null;
   }
 }
 

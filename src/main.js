@@ -10,9 +10,8 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
-import { CUBES, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, SPRITES, LAMP, DECOR, PATH, LIQUID, TIMER, COUNTER, WORLD } from "./model.js";
+import { CUBES, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, LAMP, DECOR, LIQUID, WORLD } from "./model.js";
 import { DECOR_BUILDERS } from "./composites/builders.js";
-import { TIME, advanceTime } from "./time.js";
 import { generateTerrain, maxReliefForSize, BIOME_NAMES, BIOME_SURFACES, surfacesForBiome, snowSpecForLatitude, waterSpecForClimate, decorSpecForClimate, DECOR_DENSITY, SEASONS } from "./terrain.js";
 
 // === Renderer ===
@@ -323,10 +322,8 @@ function updateSun() {
   // Sun mesh follow + skip render hluboko pod obzorem (sez. 47). Threshold
   // SUN_HORIZON_Y_MIN = -15° altitude (~-4.21 j) drží mesh visible krátce po
   // sunset/před sunrise — vyhne se „skokovému zmizení" na matematickém horizontu.
-  // AND s `_sunUserVisible` — pokud user vypne toggle v settings panelu, hide
-  // se zachová i v poledne (toggle = user override, ne overflow flag).
   sunMesh.position.copy(sun.position).multiplyScalar(SUN_DISTANCE_SCALE);
-  sunMesh.visible = _sunUserVisible && sun.position.y > SUN_HORIZON_Y_MIN;
+  sunMesh.visible = sun.position.y > SUN_HORIZON_Y_MIN;
 }
 
 // Day/night atmospheric lerp. Driver: `world.DAY` (DD-38). 3 konzumenti:
@@ -399,14 +396,12 @@ composer.addPass(new OutputPass());
 //
 // DOF: `BokehPass.enabled = false` přeskočí pass v composeru (+5-10 FPS na 100×100).
 // Fog: `scene.fog = null` vypne fog uniform; restoreujeme `sceneFog` (cheap toggle).
-// Sun: dvojkový stav — user override (`_sunUserVisible`) + auto-hide v noci
-// (`updateSun()` skryje mesh pod horizontem). Finální visible = AND obou.
 // Day/DaySpeed: mutují WORLD atributy; `updateSun()` se postará per-frame.
-let _sunUserVisible = true;
+// Sun mesh visibility řeší `updateSun()` přes horizon threshold (sez. 47, sez. 48
+// drop user override — auto-hide v noci stačí).
 window.settings = {
   setDOF(on)      { bokehPass.enabled = on; },
   setFog(on)      { scene.fog = on ? sceneFog : null; },
-  setSun(on)      { _sunUserVisible = on; },
   setDay(v)       { world.DAY = v; },
   setDaySpeed(v)  { world.DAY_SPEED = v; },
   // G2 (sez. 35) — climate enum mutátory. Validace klíče: silent skip neznámých
@@ -464,64 +459,6 @@ function makeCheckerboardTexture(cellsPerSide = 8) {
 
 // Texturu vytvoříme jednou — sdílená instance pro všechny mateřské CUBES.
 const checkerboardTexture = makeCheckerboardTexture();
-
-// === Canvas-generovaná textura pro dialog bubble (SPRITES) ===
-// Vykreslí text do zaobleného bílého obdélníku → vrátí CanvasTexture a poměr
-// stran (width/height) pro správné měřítko spritu v 3D. Poměr vrací proto,
-// aby sprite ve scéně neměl zkreslené proporce (square 1×1 by dialog
-// protáhl nebo zmáčknul).
-//
-// HTML5 canvas API: `fillText` nakreslí text; `textAlign` / `textBaseline`
-// určuje, jak se souřadnice mapují na bounding box textu (center/middle
-// = střed textu leží přesně v (x, y)). `quadraticCurveTo` se v helperu
-// `roundRect` používá pro zaoblení rohů — kvadratická Bézierova křivka
-// se dvěma řídícími body.
-function makeBubbleTexture(text) {
-  const canvas = document.createElement("canvas");
-  // Plátno bez ocásku — ocásek je teď samostatný 3D mesh (dynamický směr,
-  // míří na mluvčího z libovolného úhlu). Plátno je tedy jen zaoblený
-  // obdélník s textem. Poměr 512×150 ≈ 3.4:1 odpovídá předchozímu bubble
-  // regionu, takže velikost textu zůstane podobná.
-  const W = 512, H = 150;
-  canvas.width = W;
-  canvas.height = H;
-  const ctx = canvas.getContext("2d");
-
-  // --- Zaoblený obdélník jako jeden path + fill + stroke ---
-  const PAD = 6;                   // vnitřní okraj, aby stroke nevyjel z plátna
-  const RADIUS = 28;               // radius zaoblení rohů
-
-  ctx.beginPath();
-  ctx.moveTo(PAD + RADIUS, PAD);
-  ctx.lineTo(W - PAD - RADIUS, PAD);                                   // horní hrana
-  ctx.quadraticCurveTo(W - PAD, PAD, W - PAD, PAD + RADIUS);           // pravý horní roh
-  ctx.lineTo(W - PAD, H - PAD - RADIUS);                               // pravá hrana
-  ctx.quadraticCurveTo(W - PAD, H - PAD, W - PAD - RADIUS, H - PAD);   // pravý spodní roh
-  ctx.lineTo(PAD + RADIUS, H - PAD);                                   // spodní hrana
-  ctx.quadraticCurveTo(PAD, H - PAD, PAD, H - PAD - RADIUS);           // levý spodní roh
-  ctx.lineTo(PAD, PAD + RADIUS);                                       // levá hrana
-  ctx.quadraticCurveTo(PAD, PAD, PAD + RADIUS, PAD);                   // levý horní roh
-  ctx.closePath();
-
-  ctx.fillStyle = "#ffffff";
-  ctx.strokeStyle = "#222222";
-  ctx.lineWidth = 4;
-  ctx.fill();
-  ctx.stroke();
-
-  // --- Text ---
-  // `system-ui` = systémový sans-serif. 34 px na 150 px výšce → čitelné.
-  ctx.fillStyle = "#111111";
-  ctx.font = "bold 34px system-ui, sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, W / 2, H / 2);
-
-  const texture = new THREE.CanvasTexture(canvas);
-  // SRGB aby barvy (bílá, černá text) seděly s PBR renderem
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return { texture, aspect: W / H };
-}
 
 // === Canvas-generovaná textura pro TCUBES stranu s textem/emoji ===
 // Vykreslí jediný znak (typicky emoji) na bílý čtverec. Použití: TCUBES s
@@ -670,10 +607,9 @@ function makeRailTopTexture() {
 }
 
 // Pojmenované sdílené textury — factory vyrobí canvas s random patches, ale
-// výsledek je memoizovaný v `_namedTextureCache`. Všichni konzumenti (slow path
-// `faceMaterialFor`, TCUBES atlas, ramp atlas, PATH) sdílí stejnou `THREE.Texture`
-// instanci → jednotný vizuál napříč cestami (sez. 32 F5 fix — bez sdílení by
-// atlas a slow path měly různé random patches pro stejný `:name`).
+// výsledek je memoizovaný v `_namedTextureCache`. Konzumenti (slow path
+// `faceMaterialFor`) sdílí stejnou `THREE.Texture` instanci → jednotný vizuál
+// napříč cestami.
 const NAMED_TEXTURE_FACTORIES = {
   ":dirt":       () => makeDirtTexture(),
   ":grass-top":  () => makeGrassTopTexture(),
@@ -703,8 +639,7 @@ function getNamedTexture(name) {
 
 // === Dispatch: atribut strany TCUBES → Three.js materiál ===
 // Rozhodne podle **typu** hodnoty, jaký materiál pro jednu stranu voxelu
-// vyrobit. Izomorfně s dispatchem `createSpriteFor(ASSET)` — stejný pattern
-// „model drží data, engine interpretuje".
+// vyrobit. Pattern „model drží data, engine interpretuje" (DD-11/DD-14).
 //
 //  - `null`/`undefined` → fallback šachovnice (DD-07). Stejná sdílená
 //    textura jako u mateřské CUBES — vizuální idiom „strana nevyplněná".
@@ -730,7 +665,7 @@ function getNamedTexture(name) {
 // V projektu žije **`_faceMaterialCache`** — slow path, klíč = stringifikace
 // `val` (per-face atribut: barva / `:name` / emoji). 1 materiál = 1 strana
 // voxelu, mesh dostane `material[6]` array. Fallback pro non-terrain TCUBES,
-// PATH, water plane, COMPOSITES boxy, CCUBES default šachovnice (DD-07).
+// water plane, COMPOSITES boxy, CCUBES default šachovnice (DD-07).
 //
 // Historicky paralelně existovaly i `_tcubesAtlasMatCache` (DD-36 TCUBES atlas)
 // a `_rampsAtlasMatCache` (DD-36 ramp atlas) — obě smazány v DD-41 (sez. 34,
@@ -770,476 +705,11 @@ function faceMaterialFor(val) {
   return mat;
 }
 
-// === Animátory: reakce objektů na TIME ===
-// Registry párů `{ object3d, instance }` — render loop přes ně každý frame
-// iteruje a podle `instance.ANIMATE.kind` rozhoduje, jak mesh update-ovat.
-// Izomorfní s dispatchem vizuálních atributů (DD-14) — model drží recept
-// (atribut `ANIMATE`), engine ho interpretuje. Viz DD-15.
-//
-// Proč nesahá model přímo na mesh? DD-11 (model/engine separation) — model
-// je čistě datový, o Three.js neví. Animátor je tedy v `main.js`, ne v třídě.
-const animators = [];
-
-// Plný kruh v radiánech — pojmenovaná konstanta, aby `(TAU * t) / period` šel
-// číst jako „kolik period uplynulo v radiánech". Math.PI * 2 = 2π.
-const TAU = Math.PI * 2;
-
-// Scratch vektory pro animační hot path — reuse místo `new THREE.Vector3()`
-// každý frame. `_up` je default osa Three.js válce (+Y, readonly konstanta);
-// `_dir` a `_a` jsou pracovní buffery, spotřebované v rámci jednoho volání
-// a hned přepsané dalším. Pattern „scratch vectors" je standard v Three.js
-// animacích — vyhýbá se GC pressure v 60 FPS smyčce.
-const _up = new THREE.Vector3(0, 1, 0);
-const _dir = new THREE.Vector3();
-const _a = new THREE.Vector3();
-
-// Fáze harmonické oscilace: převod wall-clock `t` (sekundy) na argument pro
-// `Math.sin`. `period` = doba jednoho kompletního kmitu v sekundách,
-// `offset` = fázový posun v radiánech (π/2 posune sinus na kosinus).
-function oscPhase(t, period, offset = 0) {
-  return (TAU * t) / period + offset;
-}
-
-// Rovnoměrná rotace kolem jedné z os. Na rozdíl od `balloon_bob` / `tree_sway`
-// sahá **přímo na kořenový Object3D** (ne na vnitřní díly v `userData.parts`) —
-// není závislá na typu vizuálu, funguje pro voxel (TCUBES), složeninu
-// (COMPOSITES), sprite i cokoli dalšího. Dokazuje, že pattern `ANIMATE`
-// generalizuje napříč třídami (ne jen COMPOSITES).
-// Parametry: `axis` = "x" | "y" | "z" (default "y"); `period` = doba jednoho
-// plného otočení v sekundách. `oscPhase` vrátí úhel v radiánech (2π × počet
-// uplynulých period) — pro rotaci to je přímo aktuální úhel natočení.
-function animateRotate(object3d, anim, t) {
-  const axis = anim.axis ?? "y";
-  object3d.rotation[axis] = oscPhase(t, anim.period);
-}
-
-// Objekt obíhá uzavřenou oválnou dráhu („stadium" — atletický ovál, 2 rovné
-// úseky + 2 půlkruhové otočky). Parametry:
-//  - `length` (L) = délka rovné části (dlouhá osa)
-//  - `radius` (R) = poloměr půlkruhu na koncích (krátká osa = 2R)
-//  - `period` (T) = doba jednoho oběhu v sekundách
-//
-// Dráha je v rovině XZ (Y se nemění), dlouhá osa je **X**, krátká **Z**.
-// Střed dráhy = původní pozice instance (snapshot `object3d.userData.base`,
-// pořízený při registraci). Obvod = 2L + 2πR; `progress = (t/T) mod 1` dává
-// normalizovanou polohu, vynásobením obvodem získáme `s` (arc-length).
-//
-// Heading (`rotation.y`) = tečna k dráze → NORTH strana kostky (default
-// forward v Three.js je −Z) vždy míří ve směru pohybu. `rotation.y` rotuje
-// CCW při pohledu shora, proto heading = **−a** (opačný smysl než parametr
-// úhlu na kružnici) — jinak by se kostka v zatáčce otáčela „ven" místo „do"
-// směru pohybu.
-function animateOrbitStadium(object3d, anim, t) {
-  const base = object3d.userData.base;
-  if (!base) return;
-  const L = anim.length;
-  const R = anim.radius;
-  const T = anim.period;
-
-  const perimeter = 2 * L + 2 * Math.PI * R;
-  // Dvojité modulo ošetří i záporné `t` — JS `%` vrací záporky pro záporná t.
-  const progress = ((t / T) % 1 + 1) % 1;
-  const s = progress * perimeter;
-
-  // Hranice fází podle arc-length
-  const endStraight1 = L;
-  const endArc1      = L + Math.PI * R;
-  const endStraight2 = 2 * L + Math.PI * R;
-
-  let dx, dz, heading;
-  if (s < endStraight1) {
-    // Rovná 1: Z = +R, X roste z −L/2 do +L/2 → směr pohybu +X.
-    dx = -L / 2 + s;
-    dz = R;
-    heading = -Math.PI / 2;
-  } else if (s < endArc1) {
-    // Půlkruh 1: střed (+L/2, 0), úhel `a` klesá z π/2 do −π/2.
-    const a = Math.PI / 2 - (s - endStraight1) / R;
-    dx = L / 2 + R * Math.cos(a);
-    dz = R * Math.sin(a);
-    heading = -a;
-  } else if (s < endStraight2) {
-    // Rovná 2: Z = −R, X klesá z +L/2 do −L/2 → směr pohybu −X.
-    dx = L / 2 - (s - endArc1);
-    dz = -R;
-    heading = Math.PI / 2;
-  } else {
-    // Půlkruh 2: střed (−L/2, 0), úhel `a` klesá z −π/2 do −3π/2 (wrap na π/2).
-    const a = -Math.PI / 2 - (s - endStraight2) / R;
-    dx = -L / 2 + R * Math.cos(a);
-    dz = R * Math.sin(a);
-    heading = -a;
-  }
-
-  object3d.position.x = base.x + dx;
-  object3d.position.z = base.z + dz;
-  object3d.rotation.y = heading;
-}
-
-// Emisivní pulsace — objekt sám ze sebe vyzařuje světlo, které sinusově
-// kolísá mezi `min` a `max`. Třetí dimenze `ANIMATE` patternu: po
-// **transformaci** (`rotate`, `orbit_stadium`) a **dílech** (`balloon_bob`,
-// `tree_sway`) přijde mutace **materiálu**. Funguje na libovolném mesh-u
-// s `MeshStandardMaterial` (CCUBES, jednostranné TCUBES plochy…).
-//
-// Parametry:
-//  - `period` — doba jednoho cyklu pulsu (s)
-//  - `min`    — minimum `emissiveIntensity` (default 0 = úplně zhasnuto)
-//  - `max`    — maximum `emissiveIntensity` (default 1.0 = plná síla barvy)
-//  - `color`  — barva self-emise jako JS number 0xRRGGBB; default = `material.color`
-//  - `opacityMin`, `opacityMax` *(volitelné)* — pokud jsou nastavené, objekt
-//    zároveň sinusově mění `material.opacity` v daném rozsahu **ve stejné
-//    fázi** s emissive (max záře = max neprůhlednost, „dýchá"). Pro aktivaci
-//    stačí zadat alespoň jeden — engine si pak zapne `transparent = true`.
-//    Jen jedna z dvojice = druhá dostane default (0 resp. 1.0).
-//
-// Implementace: `emissive` barva se nastaví **jednou** (lazy init přes
-// `userData.pulseInit` flag); per-frame mění jen `emissiveIntensity` (a
-// případně `opacity`). Levné (jedna–dvě float mutace) a izomorfní s tím,
-// jak `animateRotate` mutuje rotaci. Sinus → [−1, 1] přeškálováno na [0, 1]
-// přes (0.5 + 0.5·sin), pak lerp [min, max].
-//
-// Pozn.: stín transparentního objektu Three.js default nestínuje opacitně
-// (závisí na stanardní shadow map bez alpha testu). Pro náš use case
-// (dlaždice na zemi s malým stínem) to není viditelně rušivé.
-function animatePulse(object3d, anim, t) {
-  const mat = object3d.material;
-  // Materiály bez `emissive` (ShadowMaterial, SpriteMaterial, pole materiálů
-  // u TCUBES) → tichý skip. Instance byla registrována (kind je známý), jen
-  // její konkrétní mesh neumí emissive. Validace v registraci by musela znát
-  // interní dispatch, což by bylo těsné spojení — raději defensive tady.
-  if (!mat?.emissive) return;
-  const hasOpacityPulse = anim.opacityMin != null || anim.opacityMax != null;
-  if (!object3d.userData.pulseInit) {
-    const color = anim.color ?? mat.color.getHex();
-    mat.emissive.setHex(color);
-    // `transparent = true` zapne alpha blending — jinak Three.js ignoruje
-    // `material.opacity` (default režim je opaque). Nastavujeme jen pokud
-    // instance opravdu opacity puls chce — nemá smysl za běhu blendovat
-    // plně neprůhlednou dlaždici (vyšší fill cost).
-    if (hasOpacityPulse) mat.transparent = true;
-    object3d.userData.pulseInit = true;
-  }
-  const min = anim.min ?? 0;
-  const max = anim.max ?? 1.0;
-  // Normalizovaný sinus ∈ [0, 1] — sdílený pro emissive i opacity, aby
-  // obě dimenze „dýchaly" synchronně (max záře = max neprůhlednost).
-  const s = 0.5 + 0.5 * Math.sin(oscPhase(t, anim.period));
-  mat.emissiveIntensity = min + (max - min) * s;
-  if (hasOpacityPulse) {
-    const oMin = anim.opacityMin ?? 0;
-    const oMax = anim.opacityMax ?? 1.0;
-    mat.opacity = oMin + (oMax - oMin) * s;
-  }
-}
-
-// Lineární drift po jedné ose s **wrap-around** — když objekt opustí dráhu
-// na jednom konci, vrátí se z druhého. Idiom „mraky po obloze": jednosměrný
-// pohyb s plynulým návratem. Na rozdíl od `orbit_stadium` (uzavřená dráha
-// v rovině) je `drift` 1D a má skok — když objekt projde celý `range`,
-// teleportuje se zpět na start. Pro mrak vysoko nad scénou je skok na okraji
-// viewportu prakticky neviditelný.
-//
-// Parametry:
-//  - `axis`  — "x" | "y" | "z" (default "x")
-//  - `speed` — jednotky za sekundu (default 1.0)
-//  - `range` — šířka pásu (default 16). Pohyb obíhá v intervalu
-//    `[base - range/2, base + range/2]` kolem `userData.base`.
-//
-// Implementace: `phase = (t * speed) mod range` převedené na `[0, range)`
-// (dvojité modulo ošetří záporné `t`). Pozice = `base + phase - range/2` —
-// začínáme u `base − range/2`, pokračujeme přes `base`, končíme u
-// `base + range/2`, pak skok zpět na start.
-function animateDrift(object3d, anim, t) {
-  const base = object3d.userData.base;
-  if (!base) return;
-  const axis = anim.axis ?? "x";
-  const speed = anim.speed ?? 1.0;
-  const range = anim.range ?? 16;
-  const phase = ((t * speed) % range + range) % range;
-  object3d.position[axis] = base[axis] + phase - range / 2;
-}
-
-// Sez. 14 cleanup: humanoidi (CHARACTER/NOODLE/STICKMAN) + 2D kolizní systém
-// (DD-19) + wander stavový automat + pose primitives + gait animátory přesunuty
-// do sibling projektu ./source/Stickman. DD-18/19/20 v immutable logu.
-
-// Lookup tabulka `kind` → animátor. Nový druh pohybu = nová větev zde (+
-// samotná funkce výš). Izomorfní s `faceMaterialFor` dispatchem (DD-14).
-// Umožňuje i validaci při registraci — překlep v `ANIMATE.kind` odhalíme
-// boot-time warnem, ne tichým no-op v render loopu.
-const ANIMATORS = {
-  rotate:         animateRotate,
-  orbit_stadium:  animateOrbitStadium,
-  pulse:          animatePulse,
-  drift:          animateDrift,
-};
-
-// Registruje pár mesh↔instance k animaci. Voláno z `createMeshFor` pro
-// jakoukoli instanci, která má vyplněný `ANIMATE`. Neznámý `kind` se
-// odmítne (warn) — nemá smysl iterovat přes něj v render loopu.
-//
-// Snapshot `object3d.userData.base` drží referenční (počáteční) polohu —
-// transformační animátory (`orbit_stadium` a budoucí `drift`) z něj čtou
-// střed dráhy. Pozdější změna instance.X/Y/Z by se musela propagovat ručně.
-function registerAnimator(object3d, instance) {
-  const anim = instance.ANIMATE;
-  if (!anim) return;
-  if (!ANIMATORS[anim.kind]) {
-    console.warn(`Neznámý ANIMATE.kind: "${anim.kind}" (instance ${instance.ID})`);
-    return;
-  }
-  object3d.userData.base = {
-    x: object3d.position.x,
-    y: object3d.position.y,
-    z: object3d.position.z,
-  };
-  animators.push({ object3d, instance });
-}
-
-// Update všech animovaných objektů. `tSeconds` = wall-clock v sekundách
-// (plynulé, ne diskrétní TIME.tick). TIME.tick zůstává pro diskrétní
-// událostní logiku pozdějších milníků.
-function updateAnimations(tSeconds) {
-  for (const { object3d, instance } of animators) {
-    const anim = instance.ANIMATE;
-    if (!anim) continue;
-    // `ANIMATORS[anim.kind]` je garantováno vyplněné — registerAnimator
-    // nevpustil nezmapované kindy.
-    ANIMATORS[anim.kind](object3d, anim, tSeconds);
-  }
-}
-
-// === Dynamický 3D ocásek pro SPRITES s vyplněným SPEAKER === (DD-16)
-// Ocásek žije jako samostatný mesh (tenký 4-segmentový jehlan) mimo sprite —
-// sprite je billboard (vždy čelem ke kameře), ocásek je 3D a plnohodnotně
-// sleduje mluvčího z jakéhokoli úhlu. Pattern izomorfní s lany balónu:
-//  1. `buildBubbleTail` vyrobí unit-height mesh (scale.y = skutečná délka).
-//  2. Registrace páru `{ sprite, tail, instance, bubbleHalfHeight }` do
-//     `bubbleTails[]` při `createSpriteFor`.
-//  3. Per-frame `updateBubbleTails` přepočítá pozici/orientaci jehlanu
-//     (vedle `updateAnimations` v render loopu).
-//
-// Proč samostatný registry a ne `ANIMATE` (DD-15)? **Rozdílná kategorie:**
-// `ANIMATE` je uživatelský recept chování zapsaný v modelu (DD-15 definuje
-// `{ kind, ...params }`), `bubbleTails` je **engine-interní důsledek** toho,
-// že má SPRITES vyplněný `SPEAKER`. Sdílet jeden slot by znamenalo, že
-// user s vlastním `ANIMATE` (bubbling bubliny atp.) by přišel o ocásek.
-const bubbleTails = [];
-
-// Mapa instance.ID → Three.js Object3D. Plníme v `createMeshFor` a čteme
-// při překladu `SPEAKER` instance na aktuální **world position** (ne jen
-// instance.X/Y/Z, protože animátory jako `orbit_stadium` mutují mesh,
-// ne model — DD-15). Tím může ocásek sledovat i pohybující se mluvčí.
-//
-// **Cleanup TBD (napříč registry):** `meshByInstance`, `animators`,
-// `bubbleTails`, `tickHandlers` a hover material klony (v `userData.hoverHotMat`
-// na mesh rootu) se plní monotonně, žádný `removeInstance` mechanismus zatím
-// neexistuje. Pro statickou scénu OK; pro editor (Příště sez. 9 bod 3) bude
-// potřeba jednotný `destroyInstance(id)` — projde všechny registry a uklidí.
-// Dokud editor není, komentář tady stačí jako připomínka; duplicitní
-// „TODO cleanup" u každého registru není nutná.
+// Mapa instance.ID → Three.js Object3D. Plníme v `createMeshFor`; non-terrain
+// entity (LAMP, DECOR, LIQUID, slow-path TCUBES) jdou single-mesh path, terrain
+// TCUBES + rampy jsou v batch path (DD-37 InstancedMesh, discriminated union
+// `{ batch, idx }` v Map). Lookup používá `setHoverHighlight`.
 const meshByInstance = new Map();
-
-// Scratch vektor pro cíl ocásku (výstup `resolveSpeakerTarget`).
-const _speakerTarget = new THREE.Vector3();
-
-// Převede `SPEAKER` hodnotu na 3D cíl ve world coords. Duck-typing na tvaru
-// hodnoty (DD-16, izomorfně s DD-14 pro vizuální atributy):
-//  - `{ X, Y, Z }` (UPPER case, DD-12) = instance OBJECTS-potomka.
-//    Priorita: pokud je instance v `meshByInstance`, čti **mesh world
-//    position** (dynamické — sleduje `object3d.position`, kterou mění
-//    animátory). Fallback na `instance.X/Y/Z` + offset (defensive, pro
-//    instance zaregistrované mimo standardní flow).
-//    Y offset = `bubbleInstance.SPEAKER_OFFSET_Y` (default 0.5 = vrch
-//    voxelu 1×1×1). Pro větší entity uživatel nastaví ručně.
-//  - `{ x, y, z }` (lower case) = pevný bod v prostoru. Offset ignorován.
-function resolveSpeakerTarget(speaker, offsetY, out) {
-  if (!speaker) return null;
-  if (typeof speaker.X === "number") {
-    const mesh = meshByInstance.get(speaker.ID);
-    if (mesh) {
-      out.set(mesh.position.x, mesh.position.y + offsetY, mesh.position.z);
-    } else {
-      out.set(speaker.X, speaker.Y + offsetY, speaker.Z);
-    }
-    return out;
-  }
-  if (typeof speaker.x === "number") {
-    out.set(speaker.x, speaker.y, speaker.z);
-    return out;
-  }
-  return null;
-}
-
-// Vyrobí tenký jehlan jako ocásek dialogu. Pattern shodný s `cylinderBetween`:
-// geometrie má **jednotkovou výšku**, skutečnou délku řeší `scale.y` při
-// update. 4 radiální segmenty dávají „papírový" (tetrahedrický) vzhled —
-// méně generický než hladký kónus, a pořád viditelný z jakéhokoli úhlu.
-//
-// ConeGeometry(radius, height, radialSegments): špička na +Y, základna na
-// −Y, střed geometrie v lokálním origin. Stejná konvence jako CylinderGeometry,
-// proto `updateBubbleTail` vypočítává quaternion přes `_up` = (0,1,0).
-function buildBubbleTail() {
-  const geom = new THREE.ConeGeometry(0.06, 1, 4);
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff });
-  const mesh = new THREE.Mesh(geom, mat);
-  // Ocásek je vizuální indikátor, ne fyzický objekt — stín tenkého proužku
-  // na zemi rušil by čitelnost (přesahuje přes dlaždice gridu). Flag čteme
-  // v `createMeshFor` traverzi a přeskakujeme jinak globální castShadow.
-  mesh.userData.noShadow = true;
-  return mesh;
-}
-
-// Přepočítá jeden ocásek — pozici, orientaci, délku. Volaná per-frame.
-// Dispatch:
-//  1. Pokud `SPEAKER` neumíme rozlousknout (null, nebo target neexistuje)
-//     → ocásek zneviditelníme (ne vymažeme, uživatel může SPEAKER doplnit).
-//  2. Cíl je < 0.001 j od bubliny → skryj (degenerovaný směr by dal NaN).
-//  3. Základna ocásku = střed bubliny posunutý směrem k cíli o
-//     `bubbleHalfHeight` — přichytí se na okraj bubliny (ne uprostřed).
-//     Aproximace platí přesně, když je cíl pod bublinou (default iso scéna);
-//     do stran mírně „kouká dovnitř" bubliny, ale je to přijatelné (bublina
-//     ji přesto překryje z pohledu diváka).
-//  4. Délka = vzdálenost(start, cíl) — tip přesně v cíli.
-//  5. Orientace: quaternion rotující default osu +Y jehlanu na směr
-//     (cíl − start). `cylinderBetween` styl.
-function updateBubbleTail(entry) {
-  const { sprite, tail, instance, bubbleHalfHeight } = entry;
-  const target = resolveSpeakerTarget(instance.SPEAKER, instance.SPEAKER_OFFSET_Y, _speakerTarget);
-  if (!target) { tail.visible = false; return; }
-
-  // `_dir` = cíl − střed bubliny (scratch vektor, viz `_up`/`_dir`/`_a` výše)
-  _dir.subVectors(target, sprite.position);
-  const distCenter = _dir.length();
-  if (distCenter < 0.001) { tail.visible = false; return; }
-  _dir.divideScalar(distCenter);
-
-  // Start ocásku = okraj bubliny směrem k cíli
-  _a.copy(sprite.position).addScaledVector(_dir, bubbleHalfHeight);
-  // Pokud už je cíl uvnitř bubliny, zbytečný ocásek
-  const length = distCenter - bubbleHalfHeight;
-  if (length <= 0) { tail.visible = false; return; }
-
-  tail.visible = true;
-  tail.scale.y = length;
-  tail.quaternion.setFromUnitVectors(_up, _dir);
-  // Střed mesh-u = midpoint (start, target)
-  tail.position.set(
-    (_a.x + target.x) / 2,
-    (_a.y + target.y) / 2,
-    (_a.z + target.z) / 2,
-  );
-}
-
-// Update všech ocásků — volané v render loopu vedle `updateAnimations`.
-function updateBubbleTails() {
-  for (const entry of bubbleTails) updateBubbleTail(entry);
-}
-
-// === Diskrétní reakce na TIME.tick: TIMER → ACTION dispatch === (DD-17)
-// `ANIMATE` (DD-15) řeší plynulé per-frame chování (wall-clock). Nový mechanismus
-// pokrývá **diskrétní události**: TIMER instance se probudí každých N ticků
-// a vystřelí `ACTION` — recept `{ kind, target, attr, ... }` izomorfně s ANIMATE.
-//
-// `tickHandlers[]` je seznam callbacků `(tick) => void` volaných z rozšířeného
-// `setInterval` (vedle `advanceTime`). TIMER se tam registruje v `registerBehavior`
-// jako closure, která si drží `lastFire` tick počítadlo.
-const tickHandlers = [];
-
-// Dispatch ACTION. Každý `kind` je funkce `(action) => void` s odpovědností
-// provést efekt. Konzistence s ANIMATORS / faceMaterialFor patternem.
-//
-//  - `toggle` — flip bool atributu `target[attr]`.
-//  - `set`    — `target[attr] = value`.
-// Budoucí rozšíření: `increment` (counter), `spawn` (vytvořit instanci),
-// `trigger` (řetězit ACTION), …
-const ACTIONS = {
-  toggle: (action) => {
-    action.target[action.attr] = !action.target[action.attr];
-  },
-  set: (action) => {
-    action.target[action.attr] = action.value;
-  },
-};
-
-function dispatchAction(action) {
-  if (!action) return;
-  const fn = ACTIONS[action.kind];
-  if (!fn) {
-    console.warn(`Neznámý ACTION.kind: "${action.kind}"`);
-    return;
-  }
-  fn(action);
-}
-
-// Registruje COUNTER instanci do `tickHandlers` + dynamicky přidá HUD řádek.
-// COUNTER je „nevizuální ale observable": není ve 3D scéně (nedědí z CUBES),
-// ale engine mu vytvoří řádek v `#hud` elementu vedle `TIME`. Každý tick
-// `VALUE += INCREMENT`, DOM element se aktualizuje textContentem.
-//
-// Proč dynamický DOM a ne pevný řádek v HTML? Obecný pattern — libovolný
-// počet COUNTERů registrovaných po bootu dostane svůj řádek. HTML zůstává
-// minimální (drží jen TIME jako systémový counter).
-//
-// Bezpečnost: vytváříme elementy přes `createElement` + `textContent`, ne
-// `innerHTML` — NAME může přijít od uživatele (budoucí editor), nechceme
-// XSS. Konzistentní s `escapeHtml` principem v infotipu.
-function registerCounter(instance) {
-  const hud = document.getElementById("hud");
-  const row = document.createElement("div");
-  const labelSpan = document.createElement("span");
-  labelSpan.className = "label";
-  labelSpan.textContent = `${instance.NAME}:`;
-  const valueSpan = document.createElement("span");
-  valueSpan.textContent = instance.VALUE;
-  row.appendChild(labelSpan);
-  row.appendChild(valueSpan);
-  hud.appendChild(row);
-
-  // Handler signatura `(tick) => void` je uniform s `registerTimer`. COUNTER
-  // sám tick nepotřebuje (inkrementuje každé zavolání), ale kontrakt držíme
-  // jednotný — jakýkoli budoucí tickHandler počítá s `(tick)` parametrem.
-  tickHandlers.push((_tick) => {
-    instance.VALUE += instance.INCREMENT;
-    valueSpan.textContent = instance.VALUE;
-  });
-}
-
-// Registruje TIMER instanci do `tickHandlers`. Closure si pamatuje
-// `lastFire = TIME.tick` (start relativní k aktuálnímu stavu, ne absolutní 0 —
-// TIMER registrovaný v tick 42 s INTERVAL=5 firuje poprvé v tick 47, ne hned).
-function registerTimer(instance) {
-  let lastFire = TIME.tick;
-  tickHandlers.push((tick) => {
-    if (tick - lastFire >= instance.INTERVAL) {
-      lastFire = tick;
-      dispatchAction(instance.ACTION);
-    }
-  });
-}
-
-// Proběhne všechny handlery — volá se z rozšířeného `setInterval` za
-// `advanceTime()`, aby handler viděl už inkrementovaný `TIME.tick`.
-function updateTickHandlers() {
-  for (const h of tickHandlers) h(TIME.tick);
-}
-
-// Dispatch pro nevizuální instance (potomci OBJECTS, ne CUBES). Registruje
-// jejich chování v příslušném registru. Symetrie s `createMeshFor` pro
-// vizuální entity: user píše `registerBehavior(timer)` místo `scene.add(createMeshFor(timer))`.
-function registerBehavior(instance) {
-  if (instance instanceof TIMER) {
-    registerTimer(instance);
-    return;
-  }
-  if (instance instanceof COUNTER) {
-    registerCounter(instance);
-    return;
-  }
-  console.warn(`Neznámá nevizuální třída: ${instance.constructor.name}`);
-}
-
 // Sez. 15 cleanup: LIT fade system + BALLOON třída smazány (DD-23 „all-voxel" pivot).
 // Sez. 24 cleanup: FACTORY TOY ENGINE smazán (DD-32 pivot).
 
@@ -1254,24 +724,17 @@ function registerBehavior(instance) {
 //
 // Pozice (DD-12): voxelové potomky (CCUBES, TCUBES) snap-to-grid
 // přes Math.round — brání z-fightingu mezi sousedícími kostkami.
-// Nevoxelové (SPRITES) dostanou spojitou float pozici.
+// COMPOSITES (LAMP/DECOR) a LIQUID dostanou spojitou float pozici.
 function createMeshFor(instance) {
   let object3d;
 
-  if (instance instanceof PATH) {
-    // 1D křivka (DD-25 vrstva 3 Linie) — strip mesh sledující POINTS.
-    object3d = createPathFor(instance);
-  } else if (instance instanceof LAMP) {
+  if (instance instanceof LAMP) {
     // Pouliční lampa — sloupek + svítící hlava + PointLight. Group, float pozice.
     object3d = buildLamp(instance);
   } else if (instance instanceof DECOR) {
     // Krajinná dekorace (strom/keř/kámen/tráva) — Group s procedurálním obsahem
     // dle `instance.KIND` lookup v `DECOR_BUILDERS` (DD-49). Float pozice.
     object3d = createDecor(instance);
-  } else if (instance instanceof SPRITES) {
-    // 2D billboard — obrázek vždy otočený ke kameře. Nevoxelový potomek,
-    // pozice float bez snap-to-grid.
-    object3d = createSpriteFor(instance);
   } else if (instance instanceof TCUBES) {
     // Voxel s lowpoly vertex-color paletou (DD-41). Snap-to-grid.
     // Pozn.: Terrain TCUBES jdou batch path (DD-37 InstancedMesh), createMeshFor
@@ -1298,37 +761,23 @@ function createMeshFor(instance) {
   //     správnou instanci.
   //  2. castShadow + receiveShadow = objekt vrhá stín (blokuje světlo)
   //     a zároveň stín přijímá (jeho povrch může být stínován).
-  //
-  // Pozn. pro SPRITES: Three.js `Sprite` nemá `isMesh` (má `isSprite`) a
-  // stíny stejně nepodporuje — traverze ho přeskočí a to je záměr. Kořenový
-  // userData.instance z řádku výš stačí, raycaster najde sprite přímo.
   object3d.userData.instance = instance;
   object3d.traverse((child) => {
     if (child.isMesh) {
       child.userData.instance = instance;
-      // `noShadow` opt-out pro meshe, které jsou vizuální indikátory, ne
-      // fyzické objekty (např. bubble tail — tenký proužek na zemi). THREE
-      // default castShadow = false, takže stačí prostě přeskočit.
-      //
-      // Sez. 44 Fáze 6 add — paralelní `noReceiveShadow` opt-out (cast zachováno,
-      // jen receive vypnuto). Použito pro DECOR (DD-49 spec): krajinná dekorace
-      // vrhá stín na zem, ale sama nestíní okolními objekty (marginal perf save
-      // — listový/keřový mesh = mnoho fragmentů × shadow sampling per fragment;
-      // visual loss zanedbatelný, koruny stromů jsou facetované lowpoly, ne
-      // smooth surface kde by stínování bylo čitelné).
+      // `noShadow` opt-out pro meshe, které jsou vizuální indikátory (THREE
+      // default castShadow = false, stačí přeskočit). Sez. 44 Fáze 6 add —
+      // paralelní `noReceiveShadow` opt-out: DECOR vrhá stín na zem, ale sama
+      // nestíní okolními objekty (marginal perf save — listový/keřový mesh =
+      // mnoho fragmentů × shadow sampling per fragment; visual loss zanedbatelný,
+      // koruny stromů jsou facetované lowpoly).
       if (!child.userData.noShadow) {
         child.castShadow = true;
         child.receiveShadow = !child.userData.noReceiveShadow;
       }
     }
   });
-  // Pokud má instance vyplněný ANIMATE recept, zaregistruj ji pro per-frame
-  // update v render loopu. Bez ANIMATE (null) = statický objekt → přeskoč.
-  registerAnimator(object3d, instance);
-  // Mapa pro rychlý lookup mesh-u podle instance ID — používá
-  // `resolveSpeakerTarget` u dynamických ocásků. Plníme vždy, i pro instance
-  // bez SPEAKER (levné — Map put, vlastní spotřeba jen když jiný mesh míří
-  // na tuto instanci).
+  // Mapa pro rychlý lookup mesh-u podle instance ID — používá `setHoverHighlight`.
   meshByInstance.set(instance.ID, object3d);
   return object3d;
 }
@@ -1384,7 +833,7 @@ function createTCubeFor(instance) {
 //   v4 (-0.5,  0.5, -0.5)  apex top NW
 //   v5 ( 0.5,  0.5, -0.5)  apex top NE
 //
-// 5 faces se single-material atlas mapováním (DD-36):
+// 5 faces (DD-41 lowpoly vertex-color pipeline; sez. 48 D1 cleanup drop UV):
 //   BOTTOM  quad (v0,v3,v2,v1) na Y=−0.5,  normála (0,−1, 0)
 //   BACK    quad (v0,v1,v5,v4) na Z=−0.5,  normála (0, 0,−1)  vertikální stěna
 //   SLOPE   quad (v3,v2,v5,v4) šikmá,      normála (0, 1, 1)/√2  svah
@@ -1393,15 +842,12 @@ function createTCubeFor(instance) {
 //
 // Per-face vertices (non-shared) → flat shading bez `computeVertexNormals`
 // (každá face má vlastní normály = ostré hrany mezi facey, pixel-art look).
-// Celkem 18 vertices, 8 trojúhelníků, **1 atlas material** (DD-36 pattern):
-// per-face vertices non-shared = lowpoly flat look. UV attribute zachován
-// pro historickou kompatibilitu, `getRampGeom` (DD-41) ho stripuje v clone
+// Celkem 18 vertices, 8 trojúhelníků. `getRampGeom` (DD-41) clonuje raw geom
 // a doplňuje per-face vertex colors z `BLOCK_COLORS` palety.
 
 const TRRAMP_FACE_COUNT = 5;
-const TRRAMP_GEOM_CACHE = (() => {
+const _TRRAMP_RAW_GEOM = (() => {
   const SQRT2 = Math.SQRT2;
-  const N = TRRAMP_FACE_COUNT;
   // Pomocné lokální vertex pozice (zkráceně).
   const v0 = [-0.5, -0.5, -0.5];
   const v1 = [ 0.5, -0.5, -0.5];
@@ -1412,98 +858,47 @@ const TRRAMP_GEOM_CACHE = (() => {
 
   const positions = [];
   const normals = [];
-  const uvs = [];
   const indices = [];
-
-  // Atlas UV remap: face k → U ∈ [k/N, (k+1)/N]. Vstupní `uv*` je v lokálním
-  // [0..1] frame face, výsledek je posunut + zmenšen do atlas slotu k.
-  function remapU(uv, faceIdx) {
-    return [faceIdx / N + uv[0] / N, uv[1]];
-  }
 
   // Helper: přidá quad (4 vertices, 2 trojúhelníky) s jednou normálou per face.
   // CCW pořadí pro správnou face culling (Three.js front-face = CCW).
-  // `faceIdx` slouží jen k remap UV — geometrie je single-material (no groups).
-  function addQuad(p0, p1, p2, p3, n, uv0, uv1, uv2, uv3, faceIdx) {
+  function addQuad(p0, p1, p2, p3, n) {
     const startVert = positions.length / 3;
     positions.push(...p0, ...p1, ...p2, ...p3);
     normals.push(...n, ...n, ...n, ...n);
-    uvs.push(...remapU(uv0, faceIdx), ...remapU(uv1, faceIdx),
-            ...remapU(uv2, faceIdx), ...remapU(uv3, faceIdx));
     indices.push(startVert, startVert + 1, startVert + 2);
     indices.push(startVert, startVert + 2, startVert + 3);
   }
 
-  function addTri(p0, p1, p2, n, uv0, uv1, uv2, faceIdx) {
+  function addTri(p0, p1, p2, n) {
     const startVert = positions.length / 3;
     positions.push(...p0, ...p1, ...p2);
     normals.push(...n, ...n, ...n);
-    uvs.push(...remapU(uv0, faceIdx), ...remapU(uv1, faceIdx), ...remapU(uv2, faceIdx));
     indices.push(startVert, startVert + 1, startVert + 2);
   }
 
-  // Pořadí faceIdx (musí ladit s `RAMP_FACE_VERT_COUNTS.trramps` v G0b
+  // Pořadí face addů (musí ladit s `RAMP_FACE_VERT_COUNTS.trramps` v G0b
   // lowpoly builderu pro per-face vertex color mapping):
   // 0 = SLOPE, 1 = BOTTOM, 2 = BACK, 3 = LEFT, 4 = RIGHT.
-
+  //
   // CCW order pro každý face = vertices v takovém pořadí, aby cross product
   // (v[1]−v[0]) × (v[2]−v[0]) dal kladnou složku ve směru deklarované normály
-  // (Three.js front-face konvence). Bug fix proti první verzi: geometrická
-  // normála musí ladit s rendering normálou, jinak Three.js culluje nebo
-  // dochází k z-fighting.
+  // (Three.js front-face konvence).
 
   // SLOPE — quad (v3, v2, v5, v4), normála (0, 1, 1)/√2 (svah nakloněný k +Z).
-  // UV: v3 (SW dno) = (0,0), v2 (SE dno) = (1,0), v5 (NE apex) = (1,1), v4 (NW apex) = (0,1).
-  // → Textura natažená přes 1×√2 obdélník (pixel-art stretch ~41 %, akceptovatelné).
-  addQuad(
-    v3, v2, v5, v4,
-    [0, 1 / SQRT2, 1 / SQRT2],
-    [0, 0], [1, 0], [1, 1], [0, 1],
-    0,
-  );
-
+  addQuad(v3, v2, v5, v4, [0, 1 / SQRT2, 1 / SQRT2]);
   // BOTTOM — quad (v0, v1, v2, v3), normála (0, −1, 0).
-  // CCW při pohledu zezdola (cam na −Y looking +Y; v této orientaci je +X right, +Z up).
-  // UV: v0 = (0,0), v1 = (1,0), v2 = (1,1), v3 = (0,1).
-  addQuad(
-    v0, v1, v2, v3,
-    [0, -1, 0],
-    [0, 0], [1, 0], [1, 1], [0, 1],
-    1,
-  );
-
-  // BACK — quad (v0, v4, v5, v1), normála (0, 0, −1).
-  // Vertikální stěna na NORTH (Z=−0.5). CCW při pohledu z −Z stran (= ven z bloku).
-  // UV: v0 (W-bottom) = (0,0), v4 (W-top) = (0,1), v5 (E-top) = (1,1), v1 (E-bottom) = (1,0).
-  addQuad(
-    v0, v4, v5, v1,
-    [0, 0, -1],
-    [0, 0], [0, 1], [1, 1], [1, 0],
-    2,
-  );
-
+  addQuad(v0, v1, v2, v3, [0, -1, 0]);
+  // BACK — quad (v0, v4, v5, v1), normála (0, 0, −1). Vertikální stěna na NORTH.
+  addQuad(v0, v4, v5, v1, [0, 0, -1]);
   // LEFT — triangle (v0, v3, v4) na X=−0.5, normála (−1, 0, 0).
-  // CCW při pohledu z −X stran. Apex sloupec v4 → UV (0, 1) = top-left textury.
-  addTri(
-    v0, v3, v4,
-    [-1, 0, 0],
-    [0, 0], [1, 0], [0, 1],
-    3,
-  );
-
+  addTri(v0, v3, v4, [-1, 0, 0]);
   // RIGHT — triangle (v1, v5, v2) na X=+0.5, normála (1, 0, 0).
-  // CCW při pohledu z +X stran. Apex v5 → UV (1, 1) = top-right textury.
-  addTri(
-    v1, v5, v2,
-    [1, 0, 0],
-    [1, 0], [1, 1], [0, 0],
-    4,
-  );
+  addTri(v1, v5, v2, [1, 0, 0]);
 
   const geom = new THREE.BufferGeometry();
   geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geom.setAttribute("normal",   new THREE.Float32BufferAttribute(normals, 3));
-  geom.setAttribute("uv",       new THREE.Float32BufferAttribute(uvs, 2));
   geom.setIndex(indices);
   return geom;
 })();
@@ -1521,9 +916,8 @@ const TRRAMP_GEOM_CACHE = (() => {
 // v G0b lowpoly builderu (`getRampGeom("ttramps", surface)`).
 
 const TTRAMP_FACE_COUNT = 4;
-const TTRAMP_GEOM_CACHE = (() => {
+const _TTRAMP_RAW_GEOM = (() => {
   const SQRT3 = Math.sqrt(3);
-  const N = TTRAMP_FACE_COUNT;
   // 4 unique vertex pozice (lokálně, 1C blok centered v origin).
   const C = [-0.5, -0.5, -0.5];  // sdílený roh 3 perpendicular faces
   const X = [ 0.5, -0.5, -0.5];  // konec +X hrany
@@ -1532,69 +926,31 @@ const TTRAMP_GEOM_CACHE = (() => {
 
   const positions = [];
   const normals = [];
-  const uvs = [];
   const indices = [];
 
-  function remapU(uv, faceIdx) {
-    return [faceIdx / N + uv[0] / N, uv[1]];
-  }
-
-  function addTri(p0, p1, p2, n, uv0, uv1, uv2, faceIdx) {
+  function addTri(p0, p1, p2, n) {
     const startVert = positions.length / 3;
     positions.push(...p0, ...p1, ...p2);
     normals.push(...n, ...n, ...n);
-    uvs.push(...remapU(uv0, faceIdx), ...remapU(uv1, faceIdx), ...remapU(uv2, faceIdx));
     indices.push(startVert, startVert + 1, startVert + 2);
   }
 
-  // Pořadí faceIdx (musí ladit s `RAMP_FACE_VERT_COUNTS.ttramps` v G0b
+  // Pořadí face addů (musí ladit s `RAMP_FACE_VERT_COUNTS.ttramps` v G0b
   // lowpoly builderu pro per-face vertex color mapping):
   // 0 = SLOPE, 1 = BOTTOM, 2 = BACK, 3 = LEFT.
 
   // SLOPE — triangle (X, Y, Z), rovnostranný, normála (1, 1, 1)/√3.
-  // CCW při pohledu z venku (z opačného rohu).
-  // UV: rovnostranný v UV space — X = (0,0), Z = (1,0), Y = (0.5, 1) apex.
-  addTri(
-    X, Y, Z,
-    [1 / SQRT3, 1 / SQRT3, 1 / SQRT3],
-    [0, 0], [0.5, 1], [1, 0],
-    0,
-  );
-
+  addTri(X, Y, Z, [1 / SQRT3, 1 / SQRT3, 1 / SQRT3]);
   // BOTTOM — triangle (C, X, Z) na Y=−0.5, normála (0, −1, 0).
-  // CCW při pohledu z −Y stran (cam zezdola, looking +Y; +X right, +Z up).
-  // UV: C = (0,0), X = (1,0), Z = (0,1).
-  addTri(
-    C, X, Z,
-    [0, -1, 0],
-    [0, 0], [1, 0], [0, 1],
-    1,
-  );
-
+  addTri(C, X, Z, [0, -1, 0]);
   // BACK — triangle (C, Y, X) na Z=−0.5, normála (0, 0, −1).
-  // CCW při pohledu z −Z stran. UV: C (W-bottom) = (0,0), Y (W-top, apex) = (0,1),
-  // X (E-bottom) = (1,0). Apex v UV (0,1).
-  addTri(
-    C, Y, X,
-    [0, 0, -1],
-    [0, 0], [0, 1], [1, 0],
-    2,
-  );
-
+  addTri(C, Y, X, [0, 0, -1]);
   // LEFT — triangle (C, Z, Y) na X=−0.5, normála (−1, 0, 0).
-  // CCW při pohledu z −X stran. UV: C (N-bottom) = (0,0), Z (S-bottom) = (1,0),
-  // Y (N-top, apex) = (0,1). Symetrické s BACK — apex u UV.v=1.
-  addTri(
-    C, Z, Y,
-    [-1, 0, 0],
-    [0, 0], [1, 0], [0, 1],
-    3,
-  );
+  addTri(C, Z, Y, [-1, 0, 0]);
 
   const geom = new THREE.BufferGeometry();
   geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geom.setAttribute("normal",   new THREE.Float32BufferAttribute(normals, 3));
-  geom.setAttribute("uv",       new THREE.Float32BufferAttribute(uvs, 2));
   geom.setIndex(indices);
   return geom;
 })();
@@ -1630,12 +986,10 @@ const TTRAMP_GEOM_CACHE = (() => {
 //
 // Per-face vertices (non-shared) — flat shading bez computeVertexNormals.
 
-// Single-material atlas (DD-36) — 7 face × 5 unique texture keys (WALL_FULL je
-// na 2 sousedních quadech E+S, WALL_TRI na 2 sousedních triích N+W → sdílí
-// stejný atlas slot). Atlas má 5 slotů, UV remap na 1/5-tici v U-axis.
+// 7 face × 5 face groups (WALL_FULL na 2 sousedních quadech E+S, WALL_TRI na
+// 2 sousedních triích N+W → sdílí stejný palette slot v G0b lowpoly mapping).
 const TDRAMP_FACE_COUNT = 5;
-const TDRAMP_GEOM_CACHE = (() => {
-  const N = TDRAMP_FACE_COUNT;
+const _TDRAMP_RAW_GEOM = (() => {
   const v0 = [-0.5, -0.5, -0.5];
   const v1 = [ 0.5, -0.5, -0.5];
   const v2 = [ 0.5, -0.5,  0.5];
@@ -1648,110 +1002,45 @@ const TDRAMP_GEOM_CACHE = (() => {
 
   const positions = [];
   const normals = [];
-  const uvs = [];
   const indices = [];
 
-  function remapU(uv, faceIdx) {
-    return [faceIdx / N + uv[0] / N, uv[1]];
-  }
-
-  function addQuad(p0, p1, p2, p3, n, uv0, uv1, uv2, uv3, faceIdx) {
+  function addQuad(p0, p1, p2, p3, n) {
     const startVert = positions.length / 3;
     positions.push(...p0, ...p1, ...p2, ...p3);
     normals.push(...n, ...n, ...n, ...n);
-    uvs.push(...remapU(uv0, faceIdx), ...remapU(uv1, faceIdx),
-            ...remapU(uv2, faceIdx), ...remapU(uv3, faceIdx));
     indices.push(startVert, startVert + 1, startVert + 2);
     indices.push(startVert, startVert + 2, startVert + 3);
   }
-  function addTri(p0, p1, p2, n, uv0, uv1, uv2, faceIdx) {
+  function addTri(p0, p1, p2, n) {
     const startVert = positions.length / 3;
     positions.push(...p0, ...p1, ...p2);
     normals.push(...n, ...n, ...n);
-    uvs.push(...remapU(uv0, faceIdx), ...remapU(uv1, faceIdx), ...remapU(uv2, faceIdx));
     indices.push(startVert, startVert + 1, startVert + 2);
   }
 
   // SLOPE — diagonální šikmá plocha. Normála (−1, +1, −1)/√3 → ven k NW-up.
-  // UV: low corner v0 = (0.5, 0), high edge v6 = (0, 1), v4 = (1, 1).
-  addTri(
-    v0, v6, v4,
-    [-1 / SQRT3, 1 / SQRT3, -1 / SQRT3],
-    [0.5, 0], [0, 1], [1, 1],
-    0,
-  );
-
+  addTri(v0, v6, v4, [-1 / SQRT3, 1 / SQRT3, -1 / SQRT3]);
   // TOP — plochý trojúhelník na Y=+0.5. CCW (v6, v5, v4) dává +Y normálu.
-  // UV: v6 (NW-most of triangle) = (0, 0), v5 (peak SE) = (1, 1), v4 = (1, 0).
-  addTri(
-    v6, v5, v4,
-    [0, 1, 0],
-    [0, 0], [1, 1], [1, 0],
-    1,
-  );
-
-  // BOTTOM — quad (v0, v1, v2, v3) na Y=−0.5. Stejné jako TRRAMPS.
-  addQuad(
-    v0, v1, v2, v3,
-    [0, -1, 0],
-    [0, 0], [1, 0], [1, 1], [0, 1],
-    2,
-  );
-
+  addTri(v6, v5, v4, [0, 1, 0]);
+  // BOTTOM — quad (v0, v1, v2, v3) na Y=−0.5.
+  addQuad(v0, v1, v2, v3, [0, -1, 0]);
   // WALL_FULL E — quad (v4, v5, v2, v1) na X=+0.5. CCW pro +X normálu.
-  // UV: top→bottom, N→S. v4 (top-N) = (0, 1), v5 (top-S) = (1, 1), v2 (bot-S) = (1, 0), v1 (bot-N) = (0, 0).
-  addQuad(
-    v4, v5, v2, v1,
-    [1, 0, 0],
-    [0, 1], [1, 1], [1, 0], [0, 0],
-    3,
-  );
-
+  addQuad(v4, v5, v2, v1, [1, 0, 0]);
   // WALL_FULL S — quad (v5, v6, v3, v2) na Z=+0.5. CCW pro +Z normálu.
-  // UV: v5 (top-E) = (1, 1), v6 (top-W) = (0, 1), v3 (bot-W) = (0, 0), v2 (bot-E) = (1, 0).
-  addQuad(
-    v5, v6, v3, v2,
-    [0, 0, 1],
-    [1, 1], [0, 1], [0, 0], [1, 0],
-    3,
-  );
-
-  // WALL_TRI N — triangle (v0, v4, v1) na Z=−0.5. Pravoúhlý, normála (0,0,−1).
-  // UV: v0 (bot-W) = (0, 0), v4 (top-E, apex) = (1, 1), v1 (bot-E) = (1, 0).
-  addTri(
-    v0, v4, v1,
-    [0, 0, -1],
-    [0, 0], [1, 1], [1, 0],
-    4,
-  );
-
-  // WALL_TRI W — triangle (v0, v3, v6) na X=−0.5. Pravoúhlý, normála (−1,0,0).
-  // UV: v0 (bot-N) = (0, 0), v3 (bot-S) = (1, 0), v6 (top-S, apex) = (1, 1).
-  addTri(
-    v0, v3, v6,
-    [-1, 0, 0],
-    [0, 0], [1, 0], [1, 1],
-    4,
-  );
+  addQuad(v5, v6, v3, v2, [0, 0, 1]);
+  // WALL_TRI N — triangle (v0, v4, v1) na Z=−0.5, normála (0,0,−1).
+  addTri(v0, v4, v1, [0, 0, -1]);
+  // WALL_TRI W — triangle (v0, v3, v6) na X=−0.5, normála (−1,0,0).
+  addTri(v0, v3, v6, [-1, 0, 0]);
 
   const geom = new THREE.BufferGeometry();
   geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geom.setAttribute("normal",   new THREE.Float32BufferAttribute(normals,   3));
-  geom.setAttribute("uv",       new THREE.Float32BufferAttribute(uvs,       2));
   geom.setIndex(indices);
   return geom;
 })();
 
 
-// Sestaví 2D billboard pro SPRITES instanci. Vrací `THREE.Sprite` — speciální
-// Three.js objekt, který se sám stará o to, aby byl vždy otočený ke kameře
-// (tzv. billboard). Nepotřebuje per-frame `lookAt(camera)`, projekce se řeší
-// v shaderu. Pozice je float bez snap-to-grid (DD-12).
-//
-// Interpretace atributu `ASSET`:
-//  - `null` / nezadáno → šachovnicový billboard (fallback DD-07).
-//  - `string` → text vykreslený přes `makeBubbleTexture` jako dialog bubble.
-//
 // === buildLamp — pouliční lampa (LAMP COMPOSITES) ===
 // Victorian-style: vertikální sloup + horizontální paže + visící stínítko +
 // SpotLight uvnitř stínítka mířící kuželem dolů. Pozice float (DD-12, COMPOSITES
@@ -1868,135 +1157,6 @@ function createDecor(instance) {
   return group;
 }
 
-// Měřítko spritu: default `Sprite.scale` je 1×1×1. Pro bubble se poměr stran
-// vypočítá z plátna (aby se text nezkreslil), pro šachovnici drží čtvercový
-// formát. Jednotka délky 3D světa = stejná jako hrana voxelu, takže bubble
-// široká ~2 jednotky působí „úměrně" ke kostkám.
-function createSpriteFor(instance) {
-  let material;
-  let spriteWidth;
-  let spriteHeight;
-
-  if (typeof instance.ASSET === "string") {
-    // Text → canvas bubble (plochý zaoblený obdélník, bez ocásku). Poměr
-    // stran ~3.4:1 podle plátna 512×150. Cílová výška bubliny ve světě = 0.5 j.
-    const { texture, aspect } = makeBubbleTexture(instance.ASSET);
-    material = new THREE.SpriteMaterial({ map: texture });
-    spriteHeight = 0.5;
-    spriteWidth  = spriteHeight * aspect;
-  } else {
-    // Fallback: šachovnicový billboard (DD-07). Square 1×1, reuse sdílené textury.
-    material = new THREE.SpriteMaterial({ map: checkerboardTexture });
-    spriteWidth = spriteHeight = 1;
-  }
-
-  const sprite = new THREE.Sprite(material);
-  sprite.position.set(instance.X, instance.Y, instance.Z);
-  // `scale` spritu určuje jeho velikost ve světových jednotkách (jako kdyby
-  // kamera byla ortografická — sprite si drží apparent size podle vzdálenosti
-  // v perspektivě). Z-rozměr scale je u spritu ignorován, ale musí být > 0.
-  sprite.scale.set(spriteWidth, spriteHeight, 1);
-
-  // Bez vyplněného SPEAKER → bublina bez ocásku, sprite jako samostatný node.
-  if (!instance.SPEAKER) return sprite;
-
-  // S vyplněným SPEAKER → `Group` obsahující sprite (billboard) + ocásek
-  // (plnohodnotný 3D mesh). Group je v origin bez transformace, takže
-  // `sprite.position` = world pozice (čte ji `updateBubbleTail`). Sprite
-  // v Group billboarduje nezávisle na rodiči (Three.js Sprite si projekci
-  // řeší v shader-u podle kamery, ne hierarchie).
-  const group = new THREE.Group();
-  group.add(sprite);
-  const tail = buildBubbleTail();
-  group.add(tail);
-  bubbleTails.push({ sprite, tail, instance, bubbleHalfHeight: spriteHeight / 2 });
-  return group;
-}
-
-// === PATH — Linie (DD-25 vrstva 3) ============================================
-// 1D křivka jako plochý strip mesh. POINTS interpolovány Catmull-Rom curvou,
-// sample 64 bodů, levá/pravá strana strip podle tangenty (kolmá v XZ rovině).
-// UV scale 8× podél délky → textura se opakuje ~každého 1 j světové vzdálenosti
-// (s 8× úzkou cestou na šířku). Drobný Y offset +0.005 nad terrain proti
-// z-fightingu s grass top facemi.
-
-const PATH_WIDTH        = 0.5;   // šířka cesty v j
-const PATH_SEGMENTS     = 64;    // počet vzorků křivky
-const PATH_Y_OFFSET     = 0.005; // mírně nad terrain
-const PATH_UV_REPEAT    = 8;     // opakování textury podél délky
-
-const PATH_TEX_NAMES = {
-  dirt: ":path-dirt",
-};
-const _pathTexCache = new Map();
-function pathTexture(kind) {
-  let tex = _pathTexCache.get(kind);
-  if (!tex) {
-    const texName = PATH_TEX_NAMES[kind] ?? ":path-dirt";
-    tex = NAMED_TEXTURE_FACTORIES[texName]();
-    tex.wrapS = THREE.RepeatWrapping;
-    tex.wrapT = THREE.RepeatWrapping;
-    _pathTexCache.set(kind, tex);
-  }
-  return tex;
-}
-
-function createPathFor(instance) {
-  const group = new THREE.Group();
-  // PATH žije v world coords — instance.X/Y/Z není smysluplné, držíme group v origin.
-
-  const pts = instance.POINTS.map((p) => new THREE.Vector3(p[0], p[1] + PATH_Y_OFFSET, p[2]));
-  if (pts.length < 2) return group;
-
-  // Catmull-Rom spline → měkké zatáčky bez nutnosti ručních tangent vektorů.
-  const curve   = new THREE.CatmullRomCurve3(pts, false, "catmullrom", 0.5);
-  const samples = curve.getPoints(PATH_SEGMENTS);
-
-  const positions = [];
-  const uvs       = [];
-  const indices   = [];
-  const _tan = new THREE.Vector3();
-
-  for (let i = 0; i < samples.length; i++) {
-    const p = samples[i];
-    // Tangenta = směr na další bod (poslední bod kopíruje předchozí směr).
-    if (i < samples.length - 1) _tan.subVectors(samples[i + 1], p);
-    else                         _tan.subVectors(p, samples[i - 1]);
-    _tan.y = 0;
-    _tan.normalize();
-    // Kolmá v XZ rovině (rotace o 90°): (-tan.z, 0, tan.x). Šířka půlená.
-    const nx = -_tan.z * (PATH_WIDTH / 2);
-    const nz =  _tan.x * (PATH_WIDTH / 2);
-
-    positions.push(p.x - nx, p.y, p.z - nz);  // levý okraj
-    positions.push(p.x + nx, p.y, p.z + nz);  // pravý okraj
-
-    const v = (i / (samples.length - 1)) * PATH_UV_REPEAT;
-    uvs.push(0, v);
-    uvs.push(1, v);
-  }
-
-  for (let i = 0; i < samples.length - 1; i++) {
-    const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1;
-    indices.push(a, b, c,  b, d, c);
-  }
-
-  const geom = new THREE.BufferGeometry();
-  geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geom.setAttribute("uv",       new THREE.Float32BufferAttribute(uvs, 2));
-  geom.setIndex(indices);
-  geom.computeVertexNormals();
-
-  const mat = new THREE.MeshStandardMaterial({ map: pathTexture(instance.KIND ?? "dirt") });
-  const mesh = new THREE.Mesh(geom, mat);
-  // Shadow handling: traverze v `createMeshFor` nastaví cast=true, receive=true.
-  // Vlastní stín strip-mesh je benigní (cesta je 0.005 j nad ground, stín splyne
-  // s podkladem). Stromy nad cestou vrhají stín na ni → receive je užitečný.
-  group.add(mesh);
-
-  return group;
-}
-
 // === Terrain builder (DD-32, sez. 24; DD-41 lowpoly pipeline sez. 34) =======
 // `generateTerrain` (src/terrain.js) vrátí { blocks, ramps }; `buildScene`
 // spawne TCUBES + rampy do scény přes batch path (DD-37
@@ -2092,15 +1252,13 @@ function getTcubesKindGeom(kind) {
 }
 
 // === G0b Ramp vertex-color pipeline (sez. 34) ===============================
-// Izomorfně s `getTcubesKindGeom`: per (typ, surface) clone existující ramp
-// atlas geom (TRRAMP/TTRAMP/TDRAMP_GEOM_CACHE), strip UV, inject color
-// attribute. Atlas IIFE-cache zůstává jako "raw geom source" — cleanup
-// fáze G0 smaže jen atlas **materiály + texture tabulky**, geom IIFE může
-// zůstat (raw positions/normals/indices stále potřeba). Cleanup nice-to-have:
-// strip UV at source + rename na `_RAMP_RAW_GEOM_*` (delegováno na cleanup commit).
+// Izomorfně s `getTcubesKindGeom`: per (typ, surface) clone raw ramp geom
+// (`_TRRAMP_RAW_GEOM` / `_TTRAMP_RAW_GEOM` / `_TDRAMP_RAW_GEOM` — positions,
+// normals, indices bez UV po sez. 48 D1 cleanup) a inject color attribute
+// per face group.
 //
-// Per-typ vertex count per **logical face group** (matching faceIdx v IIFE
-// `addTri/addQuad`). TDRAMP má 7 fyzických faces ve 5 color groups (WALL_FULL =
+// Per-typ vertex count per **logical face group** (matching order addTri/addQuad
+// calls v raw IIFE). TDRAMP má 7 fyzických faces ve 5 color groups (WALL_FULL =
 // 2 quads × 4v = 8, WALL_TRI = 2 tris × 3v = 6).
 const RAMP_FACE_VERT_COUNTS = {
   trramps: [4, 4, 4, 3, 3],   // [SLOPE, BOTTOM, BACK, LEFT, RIGHT]
@@ -2127,16 +1285,15 @@ function getRampGeom(type, surface) {
   const palette     = BLOCK_COLORS[surface];
   const vertCounts  = RAMP_FACE_VERT_COUNTS[type];
   const paletteKeys = RAMP_FACE_PALETTE_KEYS[type];
-  const atlasGeom   = type === "trramps" ? TRRAMP_GEOM_CACHE
-                    : type === "ttramps" ? TTRAMP_GEOM_CACHE
-                    : type === "tdramp"  ? TDRAMP_GEOM_CACHE
+  const rawGeom     = type === "trramps" ? _TRRAMP_RAW_GEOM
+                    : type === "ttramps" ? _TTRAMP_RAW_GEOM
+                    : type === "tdramp"  ? _TDRAMP_RAW_GEOM
                     : null;
-  if (!palette || !vertCounts || !paletteKeys || !atlasGeom) {
+  if (!palette || !vertCounts || !paletteKeys || !rawGeom) {
     _lowpolyRampGeomCache.set(cacheKey, null);
     return null;
   }
-  const geom = atlasGeom.clone();
-  geom.deleteAttribute("uv");  // vertex colors nahrazují atlas texturu
+  const geom = rawGeom.clone();
   const totalVerts = vertCounts.reduce((a, b) => a + b, 0);
   const colorArr = new Float32Array(totalVerts * 3);
   let vertOffset = 0;
@@ -2274,10 +1431,9 @@ function createLiquidPlane(liquid) {
 // vrch grass-top, jinak dirt — vyjádřeno přes `palette.TOP` vs. `palette.SIDE`.
 
 // === Terrain InstancedMesh batches (sez. 31, DD-37) =========================
-// Sez. 30 stress test 100×100: 47k draw calls @ FPS 7 (CPU bound). Atlas
-// pipeline (DD-36) sjednotila geom + materiály, ale 1 `THREE.Mesh` = 1 draw
-// call → strop. Tady mergujeme N instancí stejného (geom, atlas mat) páru do
-// **1 `InstancedMesh`** = 1 draw call. Per-instance se liší jen matrix
+// Sez. 30 stress test 100×100: 47k draw calls @ FPS 7 (CPU bound). 1 `THREE.Mesh`
+// = 1 draw call → strop. Tady mergujeme N instancí stejného (geom, lowpoly mat)
+// páru do **1 `InstancedMesh`** = 1 draw call. Per-instance se liší jen matrix
 // (`setMatrixAt`) a barva (`setColorAt`, hover tint).
 //
 // Klíč batch:
@@ -2293,8 +1449,8 @@ function createLiquidPlane(liquid) {
 //
 // `meshByInstance` po refactoru drží 2 tvary hodnot (discriminated union):
 //   instance.ID → `{ batch, idx }`   pro terrain bloky/rampy (InstancedMesh)
-//   instance.ID → `Object3D`         pro non-terrain (PATH, SPRITES, slow-path
-//                                    TCUBES, water plane) — beze změny
+//   instance.ID → `Object3D`         pro non-terrain (slow-path TCUBES, water
+//                                    plane, LAMP, DECOR, LIQUID)
 const _terrainBatches = new Map();
 
 // Hover tint pro instanceColor (multiplikuje albedo v shaderu). MeshStandardMaterial
@@ -2519,8 +1675,8 @@ function spawnTerrain(params) {
 //
 // Dispose:
 //   - `batch.dispose()` uvolní GPU buffery instanceMatrix + instanceColor.
-//     Geometrii a materiál NEdisposovat (sdílené singletony — atlas mat
-//     cache + shared geom cache, dispose by zničil ostatní spawny).
+//     Geometrii a materiál NEdisposovat (sdílené singletony — `_lowpolyMat`
+//     + shared geom cache, dispose by zničil ostatní spawny).
 //   - Water `_waterGeom`/`_waterMat` taktéž sdílené, GC posbírá jen Mesh.
 function regenerateScene(params) {
   // 1) Terrain batchy (InstancedMesh).
@@ -2553,7 +1709,7 @@ function regenerateScene(params) {
 // Uvolnění klonovaných materiálů z lazy hover-clone-on-first-hover (single-mesh
 // case v `setHoverHighlight`). Bez tohoto by se klony akumulovaly v GPU paměti
 // při opakovaném `regenerateScene` (mesh remove sám nedrží GPU lifecycle).
-// Sdílený originál (`hoverOrigMat`) nedispose — patří atlasu / sdílené factory.
+// Sdílený originál (`hoverOrigMat`) nedispose — patří sdílené factory.
 function disposeHoverClones(root) {
   root.traverse((child) => {
     if (!child.isMesh) return;
@@ -2607,7 +1763,7 @@ function buildScene(scene) {
 buildScene(scene);
 
 // === Hover highlight (editor-like feedback) ===
-// Při najetí kurzoru na CUBES-potomka (kromě SPRITES) se objekt nažlutle.
+// Při najetí kurzoru na CUBES-potomka se objekt nažlutle.
 // Dva mechanismy podle toho, jak je instance reprezentována v `meshByInstance`:
 //
 //   (A) Batch case — `meshByInstance.get(ID) === { batch, idx }`.
@@ -2618,19 +1774,15 @@ buildScene(scene);
 //       ale per-instance v 1 batchi = ~0 GPU overhead, zero allocation.
 //
 //   (B) Single-mesh case — `meshByInstance.get(ID) === THREE.Object3D`.
-//       Non-terrain entity (PATH, slow-path TCUBES, water plane, budoucí
-//       COMPOSITES) zůstávají single-mesh. Hover přes lazy clone-on-first-hover
+//       Non-terrain entity (slow-path TCUBES, water plane, COMPOSITES jako
+//       LAMP/DECOR) zůstávají single-mesh. Hover přes lazy clone-on-first-hover
 //       (mutate emissive na klonovaném materiálu, sourozenci se sdíleným
 //       originálem zůstanou nedotknuti).
-//
-// SPRITES skip: 2D billboardy s SpriteMaterial nemají emissive komponentu;
-// KISS no-op.
 
 const HOVER_EMISSIVE_HEX = 0x404020;  // single-mesh path: žluté světélkování (R=0x40, G=0x40, B=0x20)
 
 function setHoverHighlight(instance, on) {
   if (!instance) return;
-  if (instance instanceof SPRITES) return;
   const ref = meshByInstance.get(instance.ID);
   if (!ref) return;
 
@@ -2699,17 +1851,6 @@ function formatValue(key, val) {
   if (typeof val === "number" && (key === "COLOR" || key.startsWith("TEXTURE_"))) {
     return "#" + val.toString(16).padStart(6, "0");
   }
-  // ANIMATE = recept chování (objekt `{ kind, ...params }`). V infotipu
-  // stačí zobrazit samotný `kind` — detailní parametry uživatel uvidí v kódu.
-  // Plná serializace by dala „[object Object]" přes escapeHtml.
-  if (key === "ANIMATE" && typeof val === "object") {
-    return val.kind || "object";
-  }
-  // POINTS na PATH = pole [x, y, z] trojic. Default `Array.toString()` je sklouže
-  // všechny čárky do plochého řetězce (nečitelné). Uzávorkujeme každý bod.
-  if (key === "POINTS" && Array.isArray(val)) {
-    return val.map((p) => `(${p.join(", ")})`).join(" → ");
-  }
   return val;
 }
 
@@ -2718,11 +1859,8 @@ function renderTooltip(instance) {
   // instance.constructor.name vrátí např. "CUBES" — použije se jako nadpis
   const header = instance.constructor.name;
   // Object.entries vytáhne [klíč, hodnota] páry z vlastních atributů instance.
-  // Nevyplněný `ANIMATE` (default null u statických entit) skryjeme — je to
-  // technický default, uživatele ruší. Nevyplněná TEXTURE_* zůstávají (tam je
-  // „—" sémantické: fallback na šachovnici, DD-07).
+  // Nevyplněná TEXTURE_* zůstávají s "—" (sémantické: fallback na šachovnici, DD-07).
   const rows = Object.entries(instance)
-    .filter(([key, val]) => !(key === "ANIMATE" && val == null))
     .map(([key, val]) =>
       `<div class="tt-row">
          <span class="tt-key">${escapeHtml(key)}</span>
@@ -2879,18 +2017,6 @@ window.addEventListener("resize", () => {
   composer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// === TIME tikání ===
-// setInterval volá callback každých N milisekund. 1000 ms = 1 s = 1 tick.
-// Render loop (animate) běží nezávisle na ~60 FPS.
-// Rozšířeno (DD-17): po inkrementu TIME.tick fire-uje všechny `tickHandlers`
-// — diskrétní chování (TIMER → ACTION) se probudí na nové hodnotě tiku.
-// Pořadí `advanceTime` → `updateTickHandlers` garantuje, že handler čte
-// aktualizovaný tick (ne starý).
-setInterval(() => {
-  advanceTime();
-  updateTickHandlers();
-}, 1000);
-
 // === Render loop ===
 // requestAnimationFrame = "zavolej mě, až bude vhodný čas překreslit".
 // Prohlížeč to obvykle dělá 60× za vteřinu, a synchronizuje to s refresh
@@ -2914,14 +2040,11 @@ const _perfHud = {
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
-  // Wall-clock v sekundách — plynulý parametr pro sinusy/rotace v
-  // `updateAnimations`. `performance.now()` vrací ms od spuštění stránky
-  // (high-resolution timer). TIME.tick by dával frame/sekundový counter —
-  // ten je lepší pro diskrétní události, ne pro plynulou animaci.
+  // Wall-clock v sekundách — plynulý parametr pro WORLD/atmosféru.
+  // `performance.now()` vrací ms od spuštění stránky (high-resolution timer).
   const now = performance.now() / 1000;
   const dt  = now - _lastFrameTime;
   _lastFrameTime = now;
-  updateAnimations(now);
   // WORLD tick + sun derivace (DD-38, sez. 32) — DAY_SPEED inkrementuje DAY,
   // updateSun přepočítá pozici DirectionalLight + intensity + sunMesh.
   // updateAtmosphere lerpuje sky/fog/ambient podle stejné daylight křivky.
@@ -2935,10 +2058,6 @@ function animate() {
     const wave = Math.sin(now * WATER_WAVE_OMEGA) * WATER_WAVE_AMP;
     for (const m of _waterMeshes) m.position.y = m.userData.waterBaseY + wave;
   }
-  // Ocásky dialogových bublin: přepočítáme až **po** animátorech, aby jsme
-  // četli aktuální `object3d.position` případných pohybujících se mluvčí
-  // (tbox_0002 orbituje, …).
-  updateBubbleTails();
   updateKeyboardCamera(dt);
   // DOF focus = vzdálenost kamera→target (= střed scény při OrbitControls).
   // BokehPass má `uniforms.focus` ve fragment shaderu; setujeme každý frame,
