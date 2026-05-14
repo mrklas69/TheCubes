@@ -10,9 +10,9 @@
 
 - [x] **Fáze 1: `%AUDIT:CODE` + cleanup** (sez. 48) — K1a-K1e + D1 + D2 + Sun toggle drop. DD-55 + commit `46f686d`. + Regrese fix TAU re-introduce (commit `c88aa4c`).
 - [x] **Fáze 2: `%AUDIT:DOCS`** (sez. 48) — drift sync 9 souborů + DD-55 entry + diary sez. 48 + IDEAS sez. 48 sync. Commit `8a88aa7`.
-- [~] **Fáze 3: IDEAS/TODO/DONE pruning** (sez. 48) — close cut. 3 drop kandidáti (2 MOVE → DONE D1 + TEXTURE_* sync, 1 DROP Biome populate), cadence 5/12 → 0/12 reset.
-- [ ] **Fáze 4: `%CALIBRATE`** — port z PocketStory + projektová definice v `docs/PROMPTS.md` + run (meta-audit AI spolupracovníka + řídících docs).
-- [ ] **Fáze 5: Close ceremonie** — README `## Status` update na v1.0 + git tag `v1.0-terrain` (annotated push) + IDEAS.md brain-dump pro post-close arc (FindPath multi-modal + generátor/transformátor/konzument supply chain).
+- [x] **Fáze 3: IDEAS/TODO/DONE pruning** (sez. 48) — 2 MOVE → DONE (D1 atlas IIFE + TEXTURE_* sync), 1 DROP (Biome populate obsoletní), cadence 5/12 → 0/12 reset, IDEAS post-close arc brain-dump (FindPath + supply chain). Commit `b28cbd2`.
+- [x] **Fáze 4: `%CALIBRATE`** (sez. 48) — port z PocketStory + projektová definice v `docs/PROMPTS.md` (commit `2144ae9`) + run + plný K+D implementace (memory rewrite + sed/browser smoke test docs + cadence policy + %BEGIN-FAST sub-prah + permissions cleanup). Commit `ab281fc`.
+- [ ] **Fáze 5: Close ceremonie** — README `## Status` update na v1.0 + git tag `v1.0-terrain` (annotated push) + IDEAS.md brain-dump A3 finalizace (už hotové ve Fázi 3 — `## Post-close arc: FindPath + supply chain` sekce).
 
 ## Otevřené M8+
 
