@@ -5,6 +5,13 @@ Projektový overlay nad `~/.claude/CLAUDE.md`. Globální pravidla (jazyk, feedb
 ## Code Style — rozšíření
 Komentáře česky o trochu **podrobnější** než globální default — user se JS i Three.js učí. Vysvětluj JS/Three-specifické konstrukce (modulový `import`, třída, `requestAnimationFrame`, perspektivní kamera, materiály, BufferGeometry, ShaderMaterial). Triviality stále nevysvětluj.
 
+## Edit/sed safety (sez. 48 lesson)
+
+Před každým **velkým sed range delete** (`sed -i 'N,Md' src/*.js`):
+1. **Pre-sed grep all symbols v range proti rest-of-file** — odhalí symboly definované uvnitř range a used mimo (memory `[[feedback_sed_caution]]` má pattern script). 2× incident (sez. 15 `buildVoxelModel` + sez. 48 `TAU` regrese).
+2. **Po sed: node --check + browser F12 console scan**, ne jen HTTP 200. ReferenceError je viditelný jen v F12 console (memory `[[feedback_browser_smoke_test_after_cleanup]]`).
+3. Pro velký refactor preferuj **multiple unique `Edit` operations** přes `sed Nd` — má unique anchor, žádné byte offsety, transparent diff.
+
 ## %THINK — rozšíření pro TheCubes
 Doplň globální body o:
 

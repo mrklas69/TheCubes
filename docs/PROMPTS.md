@@ -154,4 +154,32 @@ Seřazený seznam nálezů s prioritou (kritické / doporučené / kosmetické) 
 
 ---
 
+## Audit cadence policy (TheCubes adaptation)
+
+Globální `~/.claude/PROMPTS.md` definuje `%AUDIT:CODE` / `%AUDIT:DOCS` s implicit cadence threshold trackingem (každých N sezení). V TheCubes solo dev kadenci (sez. 41-48 = 8 sezení v jeden den) jsou tyto thresholdy **secondary** — primární trigger je vždy **user-driven**:
+
+- **Primary trigger:** user explicit *„spusť `%AUDIT:CODE`"* nebo součást ceremonii (M-Genesis arc Fáze 1/2/4).
+- **Secondary trigger** *(rainy-day hint)*: cadence threshold (`%AUDIT:CODE` 8 sezení, `%AUDIT:DOCS` 10 sezení, IDEAS/TODO/DONE pruning 12 sezení). Pokud žádný user-driven trigger nepřišel a threshold přetekl, AI při `%BEGIN` flagne *„cadence overflow N/M sezení — kandidát pro %AUDIT:* spuštění"*.
+
+**Why:** Sez. 38 byl `%AUDIT:CODE` na cadence (8/8), sez. 46 byl user-driven trigger (7/8), sez. 48 byl user-driven (1/8). Reálná data = user-driven dominuje. Cadence jako *„kdyby AI ne-flagnula, user by někdy zapomněl auditovat"* zachycuje 1/3 případů.
+
+**Track:** Cadence counter v `docs/TODO.md` `## Audit cadence` sekci, reset při každém run (user-driven nebo cadence trigger).
+
+---
+
+## `%BEGIN-FAST` — Rychlé re-entry pro multi-session days (sub-prah)
+
+> **Sub-prah, neaktivní default.** Spustit jen pokud user explicit napíše `%BEGIN-FAST` nebo *„rychlý start"*. Pro multi-session days (sez. 41-48 = 8 sezení/den) plný `%BEGIN` ritual opakován 8× zbytečně.
+
+Zkrácená `%BEGIN` sekvence:
+
+1. **Git sync** *(zachovat, vždy povinné)* — `git fetch && git status`.
+2. **Last diary tail** — `tail -30 docs/diary/$(date +%F).md` (= tail dnešního sezení).
+3. **Server check** — `netstat -ano | grep ':8000'` (skip pokud listening).
+4. *(Skip:)* read TODO/IDEAS/GLOSSARY/DESIGN_DECISIONS, target use case check, Kudos!/Censure! reminder, summary z Příště.
+
+**Trigger podmínka pro AI návrh** v normálním `%BEGIN`: pokud `git log -1 --format=%cr` říká *„X hours ago"* a X < 6, AI po kroku (1) Git sync navrhne *„poslední commit X h zpět — chceš `%BEGIN-FAST` nebo plný `%BEGIN`?"*.
+
+---
+
 *(Soubor průběžně rozšiřován o další makra, až budou potřeba.)*
