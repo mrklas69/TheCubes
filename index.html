@@ -283,6 +283,11 @@
         <input type="range" id="tc-season" min="0" max="3" step="1" value="1">
         <span class="tc-val" id="tc-season-val">Léto</span>
       </div>
+      <div class="tc-row climate-row">
+        <span class="tc-key">decor</span>
+        <input type="range" id="tc-decor-density" min="0" max="2" step="0.1" value="1">
+        <span class="tc-val" id="tc-decor-density-val">1.0×</span>
+      </div>
       <div class="tc-biome">► biome: <span id="tc-biome-val">Step / Prérie</span></div>
     </div>
   </div>
@@ -347,6 +352,7 @@
       const lat      = $("tc-latitude"), latVal   = $("tc-latitude-val");
       const hum      = $("tc-humidity"), humVal   = $("tc-humidity-val");
       const season   = $("tc-season"),   seasonVal = $("tc-season-val");
+      const decorDen = $("tc-decor-density"), decorDenVal = $("tc-decor-density-val");
       const biomeVal = $("tc-biome-val");
 
       // Sestaví aktuální parametry z UI stavu. Volaný z `change` handleru.
@@ -369,7 +375,9 @@
         // DD-50 follow-up (sez. 41) — plus seasonKey pro LEAF_AUTUMN paletu
         // (oak/bush v autumn). Bez season arg padá `decorSpec.season` na
         // default "summer" a slider season nemá efekt na decor listí.
-        const decorSpec = window.decorSpecForClimate?.(latKey, humKey, seasonKey) ?? { mode: "none" };
+        // Sez. 43 Fáze 6 — `densityMult` jako 4. arg (UI slider 0..2). 1.0 = baseline.
+        const densityMult = parseFloat(decorDen.value);
+        const decorSpec = window.decorSpecForClimate?.(latKey, humKey, seasonKey, densityMult) ?? { mode: "none" };
         return {
           size:     [parseInt(sizeX.value, 10), parseInt(sizeZ.value, 10)],
           relief:   parseInt(relief.value, 10),
@@ -453,11 +461,20 @@
         window.settings.setSeason(SEASON_KEYS[idx]);
       });
 
+      // Sez. 43 Fáze 6 — Decor density slider. `input` readout + WORLD mutate,
+      // `change` triggeruje regen (= scatter density mění počet decor entities).
+      decorDen.addEventListener("input", () => {
+        const v = parseFloat(decorDen.value);
+        decorDenVal.textContent = `${v.toFixed(1)}×`;
+        if (window.world) window.world.DECOR_DENSITY_MULT = v;
+      });
+
       // G3 (sez. 36) — regen na `change` (po dotažení slideru). Surface mix
       // se přepočítá z aktuálního Climate stavu (BIOME_SURFACES lookup).
       lat.addEventListener("change", onChange);
       hum.addEventListener("change", onChange);
       season.addEventListener("change", onChange);
+      decorDen.addEventListener("change", onChange);
 
       // Init (sez. 38 bug fix) — defer na DOMContentLoaded. Inline classic
       // `<script>` (tento IIFE) běží **synchroně při parsování HTML**, tj.

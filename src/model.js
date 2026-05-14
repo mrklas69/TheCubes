@@ -312,7 +312,7 @@ export class LAMP extends COMPOSITES {}
  * v `decorate` (Fáze 4) umístí dekorace mezi voxely.
  */
 export class DECOR extends COMPOSITES {
-  constructor(id, name, x, y, z, kind, seed = 0, scale = 1.0, snowed = false, season = "summer", description = "") {
+  constructor(id, name, x, y, z, kind, seed = 0, scale = 1.0, snowed = false, season = "summer", dead = false, description = "") {
     super(id, name, x, y, z, description);
     this.KIND   = kind;
     this.SEED   = seed;
@@ -328,6 +328,13 @@ export class DECOR extends COMPOSITES {
     // (jehličnan) je season-invariant. Propagovaný z `world.SEASON` přes
     // `decorSpec.season` → `decorate()` → `decoration.season` → DECOR.SEASON.
     this.SEASON = season;
+    // DEAD (sez. 43 Fáze 6) — boolean, true pro sušený strom v dry biomě.
+    // Builder priorita: dead > snowed > autumn > default. Oak/spruce dead =
+    // trunk-only (= skeleton bez listí/jehličí). Bush/flower dead = skip
+    // (defoliated entity = empty). Palm/cactus dead = trunk-only s BARK_BROWN.
+    // Stump/log dead je no-op (už dead wood). Propagace: `DEAD_PROB_BY_HUM`
+    // → `decorate()` rng roll → `decoration.dead` → DECOR.DEAD.
+    this.DEAD = dead;
   }
 }
 
@@ -464,6 +471,13 @@ export class WORLD extends OBJECTS {
     // (zima víc ledu na jezerech). Polar perpetually-winter, tropical/subtropical
     // season-invariant. Sub-prah: LEAF_AUTUMN paleta + DECOR_DENSITY sezonní modifier.
     this.SEASON = "summer";
+    // DECOR_DENSITY_MULT (sez. 43 Fáze 6) — UI slider multiplikátor 0..2 nad
+    // `DECOR_DENSITY` tabulkou (terrain.js). 1.0 = baseline (= tabulka beze
+    // změny). 0.0 = bez decor (= holá scéna). 2.0 = max density (= sum > 1.0
+    // znamená 100% fill rate jediným decor per cell — multi-decor je sub-prah,
+    // viz InstancedMesh refactor v TODO Speculative). Konzument: `decorate()`
+    // přes `decorSpec.densityMult` (readParams → buildScene path).
+    this.DECOR_DENSITY_MULT = 1.0;
   }
 }
 

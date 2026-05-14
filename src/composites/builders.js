@@ -31,8 +31,18 @@ import {
   ROCK_GRAY,
   GRASS_GREEN,
   BUSH_GREEN,
+  CACTUS_GREEN,
+  FLOWER_PETAL_RED,
+  FLOWER_PETAL_YELLOW,
+  FLOWER_PETAL_WHITE,
   SNOW_WHITE,
 } from "./toolkit.js";
+
+// `Y_AXIS` — sdílený unit-vector pro `setFromUnitVectors`. Použito v palm/cactus
+// builderech pro orientaci listů/paží do libovolného směru (apex Cone/Cylinder
+// se natočí ve směru `dir`). Three.js má `Object3D.DEFAULT_UP`, ale to je
+// mutable — vlastní const je bezpečnější.
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
 // === Pomocné funkce =========================================================
 // `randRange(rng, lo, hi)` — uniformní float ∈ [lo, hi). `rng()` vrací [0, 1).
@@ -103,6 +113,15 @@ export function buildSpruce(group, opts = {}) {
   //
   // Spruce je **jehličnan** — autumn season ho nepřebarvuje (LEAF_GREEN drží
   // i v podzimu). LEAF_AUTUMN paletu používají jen listnaté: oak + bush.
+  //
+  // Sez. 43 Fáze 6 add — `dead` flag priorita `dead > snowed > default`.
+  // Dead spruce = no tiers (skeleton/sušený), trunk-only render. Pokud `dead`,
+  // přeskočíme tier loop celý.
+  if (opts.dead) {
+    group.rotation.y = randRange(rng, 0, Math.PI * 2);
+    group.scale.multiplyScalar(scale);
+    return group;
+  }
   const leafColor = opts.snowed ? SNOW_WHITE : LEAF_GREEN;
   for (let i = 0; i < tierCount; i++) {
     // Lerp radius dle pozice patra od dole nahoru (i=0 dole, i=tierCount-1 top).
@@ -154,7 +173,12 @@ export function buildOak(group, opts = {}) {
   //   spring/summer → LEAF_GREEN, autumn → LEAF_AUTUMN, winter → bare trunk.
   // Build cluster geom only when potřeba — getGeomCache je lazy, kdyby všechny
   // duby v scéně byly snowed, geom cache by ho nevytvořila vůbec.
-  if (!opts.snowed) {
+  //
+  // **Sez. 43 Fáze 6 add — `dead` flag priorita `dead > snowed > autumn > default`.**
+  // Dead oak = trunk-only (sušený strom v dry biomě). Visually podobné snowed
+  // oak (oba kmen-only), KISS: stejná větev. Sub-prah pro `BARK_DEAD` darker
+  // paletu kdyby visual differentiation potřeba.
+  if (!opts.snowed && !opts.dead) {
     const clusterGeom = getGeomCache("oak", "cluster",
       () => new THREE.IcosahedronGeometry(1.0, 0));
 
@@ -207,7 +231,10 @@ export function buildBush(group, opts = {}) {
   // přijde jen non-snowed call. Defenzivně: pokud caller přímo passne
   // `snowed: true` (dev/test), vrátíme prázdnou Group (= keř bez listí, bez
   // kmenu = neviditelný). Symetrie s `buildOak` snowed = kmen-only.
-  if (opts.snowed) {
+  //
+  // **Sez. 43 Fáze 6 add — `dead` flag.** Defoliated bush = stejné jako snowed
+  // (bez listí, bez kmenu = prázdný entity). KISS: skip i pro dead.
+  if (opts.snowed || opts.dead) {
     group.scale.multiplyScalar(scale);
     return group;
   }
@@ -338,6 +365,279 @@ export function buildGrassTuft(group, opts = {}) {
   return group;
 }
 
+// === buildPalm — palma (vysoký úzký kmen + radiální listy) ==================
+// Anatomie:
+//   - kmen: vysoký úzký Cylinder (radius 0.05/0.08, height 1.8-2.6),
+//     mírně se zužuje nahoru. 6 segmentů = hexagonal "vrubovaný" profil.
+//   - 5-7 listy: dlouhé úzké Cone (radius 0.08, height 0.9, 4 segmenty =
+//     čtyřboký jehlan), distribuované radiálně z apex kmene s tilt 45-80° od
+//     vertikály (= listy „padají" ven a mírně dolů jako u skutečné palmy).
+//
+// Orientace listů: každý list má apex Cone (=+Y) natočen ve směru `dir`
+// pomocí `quaternion.setFromUnitVectors(Y_AXIS, dir)`. Pozice = trunk apex
+// + dir × half-height (= base listu u apex kmene, tip ven).
+//
+// Sez. 43 Fáze 6 add. Tropical.wet primary, tropical.mid sub-dominant.
+export function buildPalm(group, opts = {}) {
+  const seed = opts.seed ?? 0;
+  const scale = opts.scale ?? 1.0;
+  const rng = mulberry32(seed);
+
+  const frondCount = randInt(rng, 5, 7);
+  const trunkHeight = randRange(rng, 1.8, 2.6);
+
+  // Kmen — výrazně vyšší než oak (1.8-2.6 vs. oak 0.9-1.3), tenký.
+  const trunkGeom = getGeomCache("palm", "trunk",
+    () => new THREE.CylinderGeometry(0.05, 0.08, 1.0, 6));
+  const trunk = new THREE.Mesh(trunkGeom, lowpolyMat(BARK_BROWN));
+  trunk.scale.y = trunkHeight;
+  trunk.position.y = trunkHeight / 2;
+  group.add(trunk);
+
+  // Frond geom: Cone(0.08, 0.9, 4) — čtyřboký jehlan, apex v +Y, base v -Y,
+  // pivot uprostřed. Half-height = 0.45.
+  // Snowed defenzivně: tropical biomy ve snowSpec nemají snow (DD-47), ale
+  // pokud by si user toggleoval climate ručně → bílé listy. Konzistence s oak.
+  const frondGeom = getGeomCache("palm", "frond",
+    () => new THREE.ConeGeometry(0.08, 0.9, 4));
+
+  // Autumn → LEAF_AUTUMN (botanicky reálná palma nemění barvy, ale konzistence
+  // s globálním season UI; sub-prah pro „tropical season cycle invariant").
+  // Snowed → bílé listy.
+  let frondColor = LEAF_GREEN;
+  if (opts.snowed) frondColor = SNOW_WHITE;
+  else if (opts.season === "autumn") frondColor = LEAF_AUTUMN;
+
+  for (let i = 0; i < frondCount; i++) {
+    const frond = new THREE.Mesh(frondGeom, lowpolyMat(frondColor));
+
+    // Radial angle + tilt od vertikály (45-80°).
+    const angle = (i / frondCount) * Math.PI * 2 + randRange(rng, -0.2, 0.2);
+    const tilt = randRange(rng, Math.PI / 4, Math.PI / 2.2);
+
+    // Směr apex listu v 3D. tilt=0 → svisle (0,1,0). tilt=π/2 → vodorovně.
+    // Sphere coordinates: dir = (cos(angle)·sin(tilt), cos(tilt), sin(angle)·sin(tilt)).
+    const dir = new THREE.Vector3(
+      Math.cos(angle) * Math.sin(tilt),
+      Math.cos(tilt),
+      Math.sin(angle) * Math.sin(tilt),
+    );
+
+    // Pozice listu = trunk apex (Y=trunkHeight) + dir × half-height (= base
+    // listu u apex kmene, apex listu vyčnívá ven po dir × 0.9 délka).
+    frond.position.set(
+      dir.x * 0.45,
+      trunkHeight + dir.y * 0.45,
+      dir.z * 0.45,
+    );
+
+    // Orientace: +Y osa cone se natočí ve směru dir (quaternion shortest-arc rotation).
+    frond.quaternion.setFromUnitVectors(Y_AXIS, dir);
+
+    group.add(frond);
+  }
+
+  group.rotation.y = randRange(rng, 0, Math.PI * 2);
+  group.scale.multiplyScalar(scale);
+  return group;
+}
+
+// === buildCactus — kaktus (saguaro-like sloupec + paže) =====================
+// Anatomie:
+//   - hlavní sloupec: vysoký Cylinder (radius 0.15-0.20, height 1.0-1.5),
+//     8 segmentů = octagonal profil. Geom sdílená přes scale (unit cylinder
+//     → trunk.scale.set).
+//   - 0-2 paže: kratší válce (length 0.5-0.8, radius 60-80 % trunk) vyrůstající
+//     z mid-height pod úhlem 30-60° od vertikály. Pivot na base paže
+//     (= apex Y konec po `setFromUnitVectors`), umístěn na side trunk.
+//
+// CACTUS_GREEN paleta (toolkit.js sez. 43 add). Subtropical.dry primary feature
+// (žádný snow per DD-47, defenzivně snowed = white tip přes recolorTopChild).
+// `dead` flag → kmen-only BARK_BROWN (sušený kaktus, sub-prah Fáze 6 priorita).
+export function buildCactus(group, opts = {}) {
+  const seed = opts.seed ?? 0;
+  const scale = opts.scale ?? 1.0;
+  const rng = mulberry32(seed);
+
+  const trunkHeight = randRange(rng, 1.0, 1.5);
+  const trunkRadius = randRange(rng, 0.15, 0.20);
+  const armCount = randInt(rng, 0, 2);
+
+  // Unit cylinder (radius=1, height=1) — scale per instance. Sdílená geom
+  // napříč cactus, scale.set diferencuje velikost.
+  const colGeom = getGeomCache("cactus", "column",
+    () => new THREE.CylinderGeometry(1.0, 1.0, 1.0, 8));
+
+  // `dead` priorita: kmen-only, BARK_BROWN (vyschlý kaktus). Žádné paže.
+  // Priorita per TODO: dead > snowed > default. Pro cactus snowed je hypotetické
+  // (subtropical.dry žádný snow), ale konzistence s ostatními buildery.
+  const trunkColor = opts.dead ? BARK_BROWN : CACTUS_GREEN;
+  const trunk = new THREE.Mesh(colGeom, lowpolyMat(trunkColor));
+  trunk.scale.set(trunkRadius, trunkHeight, trunkRadius);
+  trunk.position.y = trunkHeight / 2;
+  group.add(trunk);
+
+  const arms = [trunk];  // pro snow cap recolor (snowed → top arm/trunk bílý)
+
+  if (!opts.dead) {
+    for (let i = 0; i < armCount; i++) {
+      const armLength = randRange(rng, 0.5, 0.8);
+      const armRadius = trunkRadius * randRange(rng, 0.6, 0.8);
+      const arm = new THREE.Mesh(colGeom, lowpolyMat(CACTUS_GREEN));
+      arm.scale.set(armRadius, armLength, armRadius);
+
+      // Směr paže: ven do `angle` + tilt 30-60° od vertikály (= paže šikmo vzhůru).
+      const angle = randRange(rng, 0, Math.PI * 2);
+      const tilt = randRange(rng, Math.PI / 6, Math.PI / 3);
+      const dir = new THREE.Vector3(
+        Math.cos(angle) * Math.sin(tilt),
+        Math.cos(tilt),
+        Math.sin(angle) * Math.sin(tilt),
+      );
+
+      // Base paže na side trunk (radial offset = trunkRadius), výška ~0.4-0.7 trunk.
+      // Pozice mid paže = base + dir × half-length (apex Cylinder vyčnívá ven).
+      const armBaseHeight = randRange(rng, 0.4, 0.7) * trunkHeight;
+      arm.position.set(
+        dir.x * (trunkRadius + armLength * 0.5),
+        armBaseHeight + dir.y * armLength * 0.5,
+        dir.z * (trunkRadius + armLength * 0.5),
+      );
+      arm.quaternion.setFromUnitVectors(Y_AXIS, dir);
+
+      group.add(arm);
+      arms.push(arm);
+    }
+  }
+
+  // Snowed → top element (= nejvyšší arm/trunk) bílý. Defenzivní pro
+  // konzistenci, subtropical.dry reálně snow neprodukuje.
+  if (opts.snowed) recolorTopChild(arms, SNOW_WHITE);
+
+  group.scale.multiplyScalar(scale);
+  return group;
+}
+
+// === buildFlower — louka kvítek (stem + bloom) ==============================
+// Anatomie:
+//   - stem: tenký Cylinder (radius 0.015, height 0.20-0.30), GRASS_GREEN.
+//     4 segmenty = pixel-art úzký stonek.
+//   - bloom: malý Icosahedron (radius 0.05-0.08, detail=0 lowpoly) na top stem.
+//     Per-instance hue: red/yellow/white picked z 3-color palety podle seed.
+//
+// Slight tilt z vertikály — flower head ne přesně svislá. Snowed/dead → skip
+// (drobná květina sníh schová, dead flower = no realistic withered visual KISS).
+// Sez. 43 Fáze 6 add. Temperate.wet/mid louka detail.
+export function buildFlower(group, opts = {}) {
+  const seed = opts.seed ?? 0;
+  const scale = opts.scale ?? 1.0;
+  const rng = mulberry32(seed);
+
+  // Snowed/dead → skip entire (KISS, no withered visual). Symetrické s bush.
+  if (opts.snowed || opts.dead) {
+    group.scale.multiplyScalar(scale);
+    return group;
+  }
+
+  const stemHeight = randRange(rng, 0.20, 0.30);
+
+  // Stem — thin cylinder, GRASS_GREEN matches grass blade.
+  const stemGeom = getGeomCache("flower", "stem",
+    () => new THREE.CylinderGeometry(0.015, 0.015, 1.0, 4));
+  const stem = new THREE.Mesh(stemGeom, lowpolyMat(GRASS_GREEN));
+  stem.scale.y = stemHeight;
+  stem.position.y = stemHeight / 2;
+  group.add(stem);
+
+  // Bloom — pick z 3-color paletky (RNG-driven hue variation).
+  const FLOWER_COLORS = [FLOWER_PETAL_RED, FLOWER_PETAL_YELLOW, FLOWER_PETAL_WHITE];
+  const petalColor = FLOWER_COLORS[randInt(rng, 0, 2)];
+  const bloomRadius = randRange(rng, 0.05, 0.08);
+  // Unit-radius Icosahedron (sdílená s rock/oak cluster), scale per instance.
+  const bloomGeom = getGeomCache("flower", "bloom",
+    () => new THREE.IcosahedronGeometry(1.0, 0));
+  const bloom = new THREE.Mesh(bloomGeom, lowpolyMat(petalColor));
+  bloom.scale.set(bloomRadius, bloomRadius, bloomRadius);
+  bloom.position.y = stemHeight;
+  group.add(bloom);
+
+  // Slight tilt — flower head ne přesně svislá. Rotace celé group kolem
+  // origin (= base stem) → stem se nakloní jako květina ve větru.
+  // Tilt magnitude ~0.1-0.25 rad (5-15°) — subtle.
+  const tiltAngle = randRange(rng, 0, Math.PI * 2);
+  const tiltMag = randRange(rng, 0.1, 0.25);
+  group.rotation.set(Math.cos(tiltAngle) * tiltMag, 0, Math.sin(tiltAngle) * tiltMag);
+
+  group.scale.multiplyScalar(scale);
+  return group;
+}
+
+// === buildStump — pařez (krátký tlustý válec) ===============================
+// Krátký Cylinder, BARK_BROWN. Stump je už "dead wood" by koncept — `dead`
+// flag no-op, snowed → top disc bílý.
+// Sez. 43 Fáze 6 add. Temperate woodland clearings + subtropical.wet detail.
+export function buildStump(group, opts = {}) {
+  const seed = opts.seed ?? 0;
+  const scale = opts.scale ?? 1.0;
+  const rng = mulberry32(seed);
+
+  const stumpHeight = randRange(rng, 0.30, 0.50);
+  const stumpRadius = randRange(rng, 0.18, 0.28);
+
+  // Unit cylinder (radius=1, height=1) — scale per instance, 8 segments octagonal.
+  const stumpGeom = getGeomCache("stump", "trunk",
+    () => new THREE.CylinderGeometry(1.0, 1.0, 1.0, 8));
+  const stump = new THREE.Mesh(stumpGeom, lowpolyMat(BARK_BROWN));
+  stump.scale.set(stumpRadius, stumpHeight, stumpRadius);
+  stump.position.y = stumpHeight / 2;
+  group.add(stump);
+
+  // Snowed → thin SNOW_WHITE disc na top face (~ 4 cm sníh na pařezu).
+  if (opts.snowed) {
+    const snowCap = new THREE.Mesh(stumpGeom, lowpolyMat(SNOW_WHITE));
+    snowCap.scale.set(stumpRadius * 0.95, 0.04, stumpRadius * 0.95);
+    snowCap.position.y = stumpHeight + 0.02;
+    group.add(snowCap);
+  }
+
+  group.rotation.y = randRange(rng, 0, Math.PI * 2);
+  group.scale.multiplyScalar(scale);
+  return group;
+}
+
+// === buildLog — ležící kmen (horizontal cylinder) ===========================
+// Cylinder rotated 90° kolem X → osa válce vodorovná. Délka 0.5-0.8, radius
+// 0.10-0.15. Group origin u ground, log mesh posunutý nahoru o logRadius
+// (= log sedí na zemi). Random Y rotace celé group → log v libovolném směru.
+// Sez. 43 Fáze 6 add. Same biomy jako stump (woodland clean-up).
+export function buildLog(group, opts = {}) {
+  const seed = opts.seed ?? 0;
+  const scale = opts.scale ?? 1.0;
+  const rng = mulberry32(seed);
+
+  const logLength = randRange(rng, 0.5, 0.8);
+  const logRadius = randRange(rng, 0.10, 0.15);
+
+  // Unit cylinder shared with stump.
+  const logGeom = getGeomCache("log", "trunk",
+    () => new THREE.CylinderGeometry(1.0, 1.0, 1.0, 8));
+  const log = new THREE.Mesh(logGeom, lowpolyMat(BARK_BROWN));
+  log.scale.set(logRadius, logLength, logRadius);
+  // Rotate 90° kolem X — Y axis cylinderu → −Z axis world (lying horizontally).
+  log.rotation.x = Math.PI / 2;
+  // Po rotaci je log osa horizontální. Y pozice mesh = logRadius (= radius nad
+  // ground, takže spodek logu se dotýká země v group origin Y=0).
+  log.position.y = logRadius;
+  group.add(log);
+
+  // Snowed/dead na log = no-op (log je už dead wood). Pro symetrii s ostatními
+  // buildery handle defensively (snowed by mohlo přidat thin top strip, KISS skip).
+
+  group.rotation.y = randRange(rng, 0, Math.PI * 2);
+  group.scale.multiplyScalar(scale);
+  return group;
+}
+
 // === DECOR_BUILDERS lookup ==================================================
 // Mapping KIND string → builder function. `createDecor(instance)` v main.js
 // volá `DECOR_BUILDERS[instance.KIND](group, { seed, scale })`. Pokud KIND
@@ -348,4 +648,9 @@ export const DECOR_BUILDERS = {
   bush: buildBush,
   rock: buildRock,
   grass_tuft: buildGrassTuft,
+  palm: buildPalm,
+  cactus: buildCactus,
+  flower: buildFlower,
+  stump: buildStump,
+  log: buildLog,
 };

@@ -40,6 +40,16 @@ export const LEAF_AUTUMN = 0xc8722a;
 export const ROCK_GRAY   = 0x6e6e72;
 export const GRASS_GREEN = 0x6aaa3a;
 export const BUSH_GREEN  = 0x4d8a30;
+// CACTUS_GREEN — sage-green saguaro odstín (mírně desaturovaný, mezi BUSH a šedo-zelenou).
+// Méně sytý než BUSH_GREEN (0x4d8a30) protože reálný kaktus má voskovou cuticle
+// + světlejší surface. Hex zvolen po porovnání referenčních saguaro fotek.
+// Sez. 43 Fáze 6 add (cactus KIND v subtropical.dry).
+export const CACTUS_GREEN = 0x4a7a4a;
+// Sez. 43 Fáze 6 add — `buildFlower` (temperate.wet louka kvítky) má per-instance
+// hue picked z 3-color paletky. Realistická louka = mix odstínů, RNG-driven.
+export const FLOWER_PETAL_RED    = 0xd84d3a;  // warm red (vlčí mák, pelargonie)
+export const FLOWER_PETAL_YELLOW = 0xf0c040;  // warm yellow (pampeliška, blatouch)
+export const FLOWER_PETAL_WHITE  = 0xf5f0e0;  // off-white slightly warm (sedmikráska)
 // SNOW_WHITE = stejný off-white jako `BLOCK_COLORS.*_snow.TOP` v main.js
 // (DD-47). Konzistence napříč terénem (`grass_snow.TOP`) a DECOR snow caps
 // (sez. 40, snowed scatter response). Pure 0xffffff by oslnilo při bright sun.
@@ -120,7 +130,8 @@ export { mulberry32 };
 // Není v produkční path, jen smoke test pre-Fáze 2.
 if (typeof window !== "undefined") {
   window.toolkit = {
-    BARK_BROWN, LEAF_GREEN, LEAF_AUTUMN, ROCK_GRAY, GRASS_GREEN, BUSH_GREEN,
+    BARK_BROWN, LEAF_GREEN, LEAF_AUTUMN, ROCK_GRAY, GRASS_GREEN, BUSH_GREEN, CACTUS_GREEN,
+    FLOWER_PETAL_RED, FLOWER_PETAL_YELLOW, FLOWER_PETAL_WHITE,
     lowpolyMat,
     getGeomCache,
     mulberry32,
