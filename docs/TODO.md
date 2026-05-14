@@ -4,7 +4,7 @@
 
 > Hotové úkoly: `docs/DONE.md`. Designová rozhodnutí: `docs/DESIGN_DECISIONS.md`.
 >
-> **Recent DONE (sez. 34-46):** Terrain G0..G6 cesta (DD-41 lowpoly vertex-color → DD-42 LATITUDE/HUMIDITY → DD-44 BIOME_SURFACES → DD-45 fBm/ridge³ → DD-46 smoothstep bimodal → DD-47 snow + LIQUID prototype). WORLD: DD-38 DAY/DAY_SPEED, DD-48 atmospheric, DECOR_DENSITY_MULT (sez. 43). DECOR: DD-49 procedural composites, DD-50 SEASON, DD-51 LEAF_AUTUMN + winter defoliation, DD-52 slope-aware Y na rampách, Fáze 6 close (sez. 43+44 = 9/9 položek). **Sez. 45:** DD-54 LIQUID class (**5. vrstva DD-25 extension: Tekutiny**, skeleton prototype single-cell pod CUBES), `%BEGIN` target use case addendum (krok 2.5 v PROMPTS.md), HSL hue shift sky/sun (`_lerpHsl` helper, DD-48 follow-up). **Sez. 46:** `%AUDIT:CODE` threshold trigger — 10 fixů LIQUID/DD-54 drift v src/terrain.js × 2 + README + IDEAS + GLOSSARY/README sync DD-50..54 + M8+ řádek + Plán sekce post-sez. 45 refresh + main.js komentáře + model.js TTUNELS reference drop. Cadence reset 7/8 → 0/8. Detail v `DONE.md` a `DESIGN_DECISIONS.md`.
+> **Recent DONE (sez. 34-47):** Terrain G0..G6 cesta (DD-41 lowpoly vertex-color → DD-42 LATITUDE/HUMIDITY → DD-44 BIOME_SURFACES → DD-45 fBm/ridge³ → DD-46 smoothstep bimodal → DD-47 snow + LIQUID prototype). WORLD: DD-38 DAY/DAY_SPEED, DD-48 atmospheric, DECOR_DENSITY_MULT (sez. 43). DECOR: DD-49 procedural composites, DD-50 SEASON, DD-51 LEAF_AUTUMN + winter defoliation, DD-52 slope-aware Y na rampách, Fáze 6 close (sez. 43+44 = 9/9 položek). **Sez. 45:** DD-54 LIQUID class (**5. vrstva DD-25 extension: Tekutiny**, skeleton prototype single-cell pod CUBES), `%BEGIN` target use case addendum (krok 2.5 v PROMPTS.md), HSL hue shift sky/sun (`_lerpHsl` helper, DD-48 follow-up). **Sez. 46:** `%AUDIT:CODE` threshold trigger — 10 fixů LIQUID/DD-54 drift. Cadence reset 7/8 → 0/8. **Sez. 47:** SEASON expansion 6-pack (DD-50 plný scope): sky tint + sun tint v `updateAtmosphere`/`updateSun` přes `_applyHslShift` helper + SEASON_SKY_DELTA / SUN_SEASON_DELTA tabulky, sun horizon extend do −15°, polar season variace v `snowSpecForLatitude` + `waterSpecForClimate` (POLAR_SNOW/FREEZE_BY_SEASON tabulky) + refactor mode `"temperate"` → `"patches"` (sloučení polar+temperate), slider DAY sync 4 Hz, ice canvas texture (Canvas2D 30 white blobs). Žádný nový DD. Detail v `DONE.md` a `DESIGN_DECISIONS.md`.
 
 ## Otevřené M8+
 
@@ -40,13 +40,12 @@
 
 ## WORLD / atmosféra
 
-- [ ] **Slider DAY sync z value** — periodic update (throttle ~4×/s) z `world.DAY` zpět do DOM `#set-day` inputu, aby při auto-advance (`DAY_SPEED > 0`) slider neztuhl. Známé omezení z DD-38, kosmetické.
 - [ ] **Per-cluster wave fáze** *(DD-48 follow-up)* — současný water wave je global synchroní (všechny meshe stejná fáze). Pro realistic „každé jezero vlastní vlnka" potřeba per-cluster offset (seed-based). Závislost: BFS clustering (DD-54 sub-prah) — bez clusteringu by per-cluster = per-cell = velké pole náhodných fází bez „lake" sémantiky.
-- [ ] **Sky/sun color season modifier** *(DD-50 follow-up plný scope)* — DD-48 `_skyDay` / `_skyDusk` keypoints jsou season-invariant. Sezonní subtle tint (winter colder modřejší, summer warmer žlutější).
-- [ ] **Snow accumulation animace přes DAY_SPEED** *(DD-50 follow-up plný scope)* — temporal evolution (sníh roste v zimě, taje na jaře) přes WORLD.DAY × SEASON interpolation.
+- [ ] **Snow accumulation animace přes DAY_SPEED × SEASON** *(DD-50 follow-up plný scope, velký kus ~150 ř.)* — temporal evolution (sníh roste v zimě, taje na jaře) přes per-cell state `accumulationLevel ∈ [0,1]` + per-frame integrator dle `world.DAY × world.SEASON`. State persistence napříč regen problem.
 - [ ] **Snow noise patches calibration** *(DD-47 follow-up)* — temperate snow dnes sort+rank top 30 % s `altBias = 0.3`. Pokud user feedback „moc/málo sněhu v mírném pásmu", tweak: `snowSpec.patchThreshold` (0.7 = 30 %) a/nebo `snowSpec.altBias` (0.3). Možná `freezeRatio` per HUMIDITY (wet temperate = víc sněhu než mid).
-- [ ] **Polar season variace** *(DD-50 follow-up plný scope)* — polar summer ablation (méně led, méně sníh), polar winter permanentní 1.0 napříč. Vyžaduje rozdvojit polar branch v `snowSpecForLatitude` / `waterSpecForClimate`.
-- [ ] **Ice canvas texture** *(DD-47 follow-up)* — `_iceMat.color = 0xd9e8ec` je solid. Reálný „zasněžený led" by měl noise patches (= partially zasněžený, partially čistý led). Canvas texture s bílo-modrými skvrnami nebo vertex colors per plane corner.
+- [ ] **Sky tint kalibrace** *(sez. 47 sub-prah)* — pokud user feedback „moc subtle" nebo „moc distinct", tweak `SEASON_SKY_DELTA` / `SUN_SEASON_DELTA` deltas.
+- [ ] **Ice texture per-cluster variation** *(sez. 47 sub-prah)* — sdílená texture napříč všechny ice meshes = 100×100 polar = identický pattern napříč cells = tile-grid může být vidět. Pokud rušivé, per-mesh texture nebo per-cluster (závisí na BFS clustering).
+- [ ] **Smooth fade sun pod horizontem** *(sez. 47 sub-prah)* — pokud user signal „sun září v zemi" (mesh `fog: false`), alpha fade na intervalu Y [0, SUN_HORIZON_Y_MIN] místo hard cutoff.
 
 ## Sez. 42 sub-prahy (perf + meta)
 
@@ -74,6 +73,6 @@ Kandidáti bez explicit user signal — drží se jako kotvy, neaktivní:
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — **0/8** *(sez. 46 RESET — threshold trigger satisfied, 10 fixů LIQUID/DD-54 drift + README/GLOSSARY sync; viz DONE.md)*. Next: ~sez. 54.
-- **`%AUDIT:DOCS`** — **7/10** *(sez. 40-46 jen impl/audit-code)*. Next: ~sez. 49.
-- **IDEAS/TODO pruning** — **3/12** *(sez. 43 full pruning DONE)*. Next: ~sez. 55.
+- **`%AUDIT:CODE`** — **1/8** *(sez. 47 tick — SEASON expansion, sez. 46 reset)*. Next: ~sez. 54.
+- **`%AUDIT:DOCS`** — **8/10** *(sez. 40-47 jen impl/audit-code)*. Next: ~sez. 49.
+- **IDEAS/TODO pruning** — **4/12** *(sez. 43 full pruning DONE + sez. 46/47 přiměřený pruning)*. Next: ~sez. 55.

@@ -331,34 +331,34 @@ export function generateTerrain({ size, relief, surfaces, seed = 42, snowSpec = 
     c.y_top = c.h + (SURFACE_Y_OFFSET[c.surface] ?? 0);
   }
 
-  // === Krok 3.5: Snow flag per cell (sez. 38, DD-47) ===
+  // === Krok 3.5: Snow flag per cell (sez. 38 DD-47, sez. 47 unified patches) ===
   // `snowSpec.mode`:
-  //   "polar"     → všechny cells snowed (= jednotně bílá scéna).
-  //   "temperate" → cells s `y_top >= altThreshold` vždy (= vrcholky hor)
+  //   "patches"   → cells s `y_top >= altThreshold` vždy (= vrcholky hor)
   //                 + **top N % zbylých cells dle altitude-biased noise score**,
-  //                 kde N% = `1 − patchThreshold` (default 30 %). Score per cell
+  //                 kde N % = `1 − patchThreshold` (default 30 %). Score per cell
   //                 = `snowNoise(x,z) + altNorm × altBias`; sort descending, vyber
   //                 prvních N %. Izomorfie s biome assignment v Kroku 2 (sort+rank).
   //                 Důvod (sez. 38 user feedback): předchozí lerp-threshold
   //                 přístup zvyšoval celkovou plochu sněhu (= sníh všude), tento
-  //                 sort+rank **zachová stochastickou 30 % plochu**, jen ji
-  //                 přesune k vyšším cells. Vrcholy stále nemusí být zasněžené
-  //                 (noise drift), nížiny příležitostně sníh dostanou (= mikro-
-  //                 klimatický noise).
+  //                 sort+rank **zachová stochastickou plochu**, jen ji přesune
+  //                 k vyšším cells. Vrcholy stále nemusí být zasněžené (noise
+  //                 drift), nížiny příležitostně sníh dostanou (= mikroklimatický
+  //                 noise). Konzumenti: polar (altThreshold=0, altBias=0.1, season-
+  //                 aware patchThreshold), temperate (altThreshold=6, altBias=0.3,
+  //                 season-aware patchThreshold). Polar winter (patchThreshold=0)
+  //                 = bit-identical s dřívějším mode `polar` shortcut.
   //   "none"      → žádný sníh (tropical / subtropical).
   // Sníh modifikuje **jen top voxel surface** (= `_snow` postfix na kindu);
   // sloupcové vrstvy (dirt/stone) zůstávají bez snow (= "sníh leží shora").
   // Pro rampy se sníh propaguje z dest cell (= ramp surface dědí snowed flag
   // ze source cell svahu, viz Pass 2).
-  const snowNoise = (snowSpec.mode === "temperate")
+  const snowNoise = (snowSpec.mode === "patches")
     ? makeValueNoise(sx, sz, 0.08, seed + 2)  // seed +2 = nezávislý sample (height +0, biome +1)
     : null;
   const snowAltThreshold   = snowSpec.altThreshold   ?? 6;
   const snowPatchThreshold = snowSpec.patchThreshold ?? 0.7;
   const snowAltBias        = snowSpec.altBias        ?? 0.3;
-  if (snowSpec.mode === "polar") {
-    for (const c of cells) c.snowed = true;
-  } else if (snowSpec.mode === "temperate") {
+  if (snowSpec.mode === "patches") {
     // Pre-compute min/max y_top pro altitude normalize.
     let _snowMinY = Infinity, _snowMaxY = -Infinity;
     for (const c of cells) {
@@ -1108,7 +1108,10 @@ export function surfacesForBiome(latitude, humidity) {
 //   `WATER_FREEZE_BY_SEASON[season]` → temperate `waterSpec.freezeRatio`.
 //     summer 0.0 = no ice; spring 0.2; autumn 0.3; winter 0.7.
 //
-// Polar `freezeRatio` zůstává 1.0 (vše led) napříč seasony — fix sub-prah.
+// Polar season-aware ablation (sez. 47, DD-50 plný scope): polar `patchThreshold`
+// + `freezeRatio` per season — winter baseline (max snow/ice), summer ablation,
+// spring/autumn mezi. Kalibrace dle reálné glaciologie (sea ice Arctic 70 %
+// ablation extent, Greenland surface melt 30-70 % area).
 export const SEASONS = ["spring", "summer", "autumn", "winter"];
 
 const SNOW_PATCH_BY_SEASON = {
@@ -1125,15 +1128,45 @@ const WATER_FREEZE_BY_SEASON = {
   winter: 0.7,
 };
 
-// Helper: snowSpec dle LATITUDE × SEASON (sez. 38 DD-47, sez. 40 DD-50).
-// Polar = jednotně bílo (sezon-invariant). Temperate = vrcholky hor (Y ≥ 6)
-// + klastrované patches; **`patchThreshold` per season** (winter více sněhu).
-// Jiné latitudy = bez sněhu napříč seasony.
+// POLAR tabulky (sez. 47). Polar winter = baseline (100 % snow + 100 % ice),
+// summer = ablation (60 % snow + 40 % ice), spring/autumn mezi. patchThreshold
+// inverse: 0 = 100 % cells snowed, 1 = 0 %.
+const POLAR_SNOW_BY_SEASON = {
+  spring: 0.15,  // 85 % snow
+  summer: 0.40,  // 60 % snow (ablation)
+  autumn: 0.15,
+  winter: 0.00,  // 100 % snow (= dnešní default, bit-identical)
+};
+const POLAR_FREEZE_BY_SEASON = {
+  spring: 0.7,
+  summer: 0.4,  // ablation — 60 % liquid surface
+  autumn: 0.7,
+  winter: 1.0,  // = dnešní default
+};
+
+// Helper: snowSpec dle LATITUDE × SEASON (sez. 38 DD-47, sez. 40 DD-50, sez. 47 polar).
+// **Mode `patches`** = unified sort+rank algoritmus (rename z dřívějšího `temperate`,
+// sez. 47): cells nad `altThreshold` vždy snowed, zbytek sort+rank po (noise +
+// altBias × altNorm), top (1 − patchThreshold) % snowed. Polar dostane patches
+// s altThreshold=0 (žádné mountain pass) + altBias=0.1 (mírný k vyšším). Temperate
+// drží altThreshold=6 + altBias=0.3. Jiné latitudy = `mode: "none"`.
 export function snowSpecForLatitude(latitude, season = "summer") {
-  if (latitude === "polar")    return { mode: "polar" };
+  if (latitude === "polar") {
+    // Polar nemá "always-snowed mountain" sémantiku — celá scéna je polar zone.
+    // `altThreshold = Infinity` = žádné Pass 1 cells, vše do Pass 2 sort+rank,
+    // patchThreshold řídí procento snowed cells přesně. Bez tohoto by polar
+    // summer (patchThreshold=0.40) chytal většinu cells s y_top≥0 v Pass 1
+    // jako always-snowed a ablation by nefungovala.
+    return {
+      mode: "patches",
+      altThreshold: Infinity,
+      patchThreshold: POLAR_SNOW_BY_SEASON[season] ?? 0.0,
+      altBias: 0.1,
+    };
+  }
   if (latitude === "temperate") {
     return {
-      mode: "temperate",
+      mode: "patches",
       altThreshold: 6,
       patchThreshold: SNOW_PATCH_BY_SEASON[season] ?? 1.00,
       altBias: 0.3,
@@ -1142,14 +1175,14 @@ export function snowSpecForLatitude(latitude, season = "summer") {
   return { mode: "none" };
 }
 
-// Helper: waterSpec dle LATITUDE × HUMIDITY × SEASON (sez. 38 DD-47, sez. 40 DD-50).
-// `dry` = bez vody (poušť bez jezer). `wet`/`mid` = water enabled, freezeRatio
-// dle latitude. **Temperate `freezeRatio` per season** (winter víc ledu).
-// Polar = 1.0 napříč (vše led), sub/tropical = 0.0 napříč.
+// Helper: waterSpec dle LATITUDE × HUMIDITY × SEASON (sez. 38 DD-47, sez. 40 DD-50,
+// sez. 47 polar). `dry` = bez vody (poušť bez jezer). `wet`/`mid` = water enabled,
+// `freezeRatio` per latitude+season — polar+temperate season-aware, sub/tropical
+// = 0.0 invariant.
 export function waterSpecForClimate(latitude, humidity, season = "summer") {
   if (humidity === "dry") return { enabled: false };
   let freezeRatio;
-  if (latitude === "polar")          freezeRatio = 1.0;
+  if (latitude === "polar")          freezeRatio = POLAR_FREEZE_BY_SEASON[season] ?? 1.0;
   else if (latitude === "temperate") freezeRatio = WATER_FREEZE_BY_SEASON[season] ?? 0.0;
   else                               freezeRatio = 0.0;
   return { enabled: true, freezeRatio };

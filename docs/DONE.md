@@ -1246,3 +1246,75 @@ User: **„Oprav vše!"** = volba A (K1-K4 + D1-D4 + S1-S2). 10 paralelních Edi
 - Memory `MEMORY.md` index description sync.
 
 Žádný nový DD (audit pass = procedural maintenance).
+
+---
+
+## Sez. 47 — SEASON expansion 6-pack (DD-50 plný scope: sky + sun tint, polar variace, slider sync, ice texture)
+
+Sezení Příště sez. 46 (po threshold-reset audit) — 4 volitelné směry (WORLD/atmosféra zbytek, LIQUID BFS clustering, fyzika kapalin, deeper audit). User vybral atmosféru zbytek → expansion DD-50 SEASON impact do dalších layers. 6 kusů + 1 bug fix + 1 refactor v jednom sezení.
+
+### A. Sky season tint (B1)
+
+`src/main.js`: `SEASON_SKY_DELTA` tabulka (spring/summer/autumn/winter) s HSL deltas {dh ±0.005-0.025, ms ×0.80-1.10, ml ×0.95-1.03). `_applyHslShift(color, delta)` helper season-agnostic — reuse `_hslA` scratch (zero alok). Volání v `updateAtmosphere()` post-lerp, scope `world.LATITUDE === "temperate"` (per A2=A — polar/tropical mají season-invariant snow/water, drží konzistenci). `sceneFog.color.copy()` propaguje tint na fog automaticky. Subtle (Q1=A) — viditelné v summer↔winter porovnání, sotva v isolaci. Summer = baseline {0,1,1} no-op (zero regression).
+
+Pattern „base × season modifier" izomorfní s DECOR_DENSITY sezonním modifikátorem (sez. 43, autumn ×0.8 leaves / winter ×0.5).
+
+### B. Sun season tint (B1 sub-prah A3=A NO → user wave 2)
+
+`SUN_SEASON_DELTA` tabulka vedle SKY (mírnější deltas — sun = eye attracter, menší plocha visual punch větší + na poledni white maskuje saturaci). Refactor `_seasonTint(color, season)` na nižší abstrakci `_applyHslShift(color, delta)` (helper season-agnostic, caller dodá delta z příslušné DELTA tabulky). Volání v `updateSun()` po piecewise color lerp (`_sunColorSunrise → _sunColorMid → _sunColorNoon`), scope temperate. Visual delta primárně v dusk/sunrise fázi (sun colored hue) — na poledni sun=white → tint mizí (správné).
+
+### C. Sun horizon extend do −15° (sez. 47 user request bonus)
+
+`SUN_HORIZON_Y_MIN = SUN_DISTANCE * Math.sin(THREE.MathUtils.degToRad(-15))` ≈ −4.21 j. `sunMesh.visible` check posunut z `sun.position.y > 0` (matematický horizon) na `> SUN_HORIZON_Y_MIN` — sun se vyhne „skokovému zmizení" na sunset/sunrise. DirectionalLight intensity zůstává `Math.max(0, negCosA)` (sun pod horizontem nesvítí, jen vizuální cue).
+
+### D. Polar season variace (B3) — DD-50 plný scope
+
+Polar je dnes jediná LATITUDE, která SEASON ignoruje (model.js:491 explicit „polar perpetually-winter"). Glaciologicky reálná polar summer ablation (Arctic sea-ice ~70 % ablation extent, Greenland surface melt 30-70 % area). `src/terrain.js`:
+- **`POLAR_SNOW_BY_SEASON`** {spring:0.15, summer:0.40, autumn:0.15, winter:0.00} — `patchThreshold` inverse (winter=100 % snow, summer=60 %).
+- **`POLAR_FREEZE_BY_SEASON`** {spring:0.7, summer:0.4, autumn:0.7, winter:1.0}.
+- **`snowSpecForLatitude` polar branch** → `mode: "patches"` s `altThreshold: Infinity` + `altBias: 0.1` + season-aware `patchThreshold`.
+- **`waterSpecForClimate` polar branch** → `freezeRatio = POLAR_FREEZE_BY_SEASON[season] ?? 1.0`.
+
+### D-refactor. Mode `"temperate"` → `"patches"` (DRY/KISS)
+
+Mode jméno `"temperate"` popisuje *biome*, ne *algoritmus*. Rename na `"patches"` (= sort+rank sémantika). Polar+temperate sloučeny na jeden code path v `terrain.js` Krok 3.5 — polar `if` branch odstraněn (~12 ř.), reuse sort+rank s odlišnými parametry. Volba A z user Q1.
+
+### D-bug. Polar `altThreshold = 0` → `Infinity`
+
+Bug v polar logice review: `altThreshold = 0` znamená Pass 1 chytá všechny cells s `y_top >= 0` jako always-snowed → `patchThreshold` nemá vliv. Fix: `altThreshold = Infinity` (= žádné Pass 1 cells, vše do Pass 2 sort+rank, patchThreshold řídí procento snowed cells přesně).
+
+### E. Slider DAY sync z value (D2 — DD-38 kotva)
+
+`index.html` DOMContentLoaded: `setInterval(250ms)` (= 4 Hz throttle) update `dayInput.value` + readout text z `world.DAY`. Skip pokud `world.DAY_SPEED === 0` (paused) nebo `document.activeElement === dayInput` (user actively dragging — bez activeElement check by slider mid-drag rewrite user input). Drží slider live při auto-advance.
+
+### F. Ice canvas texture (D3 — DD-47 follow-up)
+
+`src/main.js`: `makeIceCanvasTexture()` generator — 128×128 Canvas2D, base `#d9e8ec` (= dnešní _iceMat solid color, teď v textuře) + 30 bílých radial blobs (r=4..12 px, center alpha 0.7) = „zasněžený led" patches. `_iceTexture` shared napříč scénou (jedna v paměti). `_iceMat.color` 0xd9e8ec → 0xffffff (unbiased, texture barva dominuje) + `map: _iceTexture`. `wrapS/wrapT = RepeatWrapping` (default repeat 1×1 — single-cell LIQUID po DD-54 prototype).
+
+### User verdikty (testů v browseru)
+
+- **Sky tint:** „Je to skvělé." (po A1+A2+A3+A4=A defaults)
+- **Sun tint + horizon:** „Test OK."
+- **Polar variace:** „Test OK."
+- **Slider sync + ice texture:** „Parádní finalizace, zlepšení, dotažení. Já už byl s výsledkem spokojený před 5 sezeními, ale stálo to za to!"
+
+### Audit cadence po sez. 47
+
+- `%AUDIT:CODE` — **1/8** (sez. 46 reset → sez. 47 tick). Next: ~sez. 54.
+- `%AUDIT:DOCS` — **8/10**. Next: ~sez. 49.
+- IDEAS/TODO pruning — **4/12**. Next: ~sez. 55.
+
+### Soubory dotčeny
+
+- `src/main.js` ~75 / −10 ř. (SEASON_SKY_DELTA + SUN_SEASON_DELTA + _applyHslShift + SUN_HORIZON_Y_MIN + makeIceCanvasTexture + _iceTexture + _iceMat color/map swap + volání v updateAtmosphere/updateSun + sunMesh.visible threshold).
+- `src/terrain.js` ~25 / −15 ř. (POLAR_SNOW_BY_SEASON + POLAR_FREEZE_BY_SEASON tabulky, snowSpecForLatitude polar branch + temperate rename na patches, waterSpecForClimate polar branch, Krok 3.5 polar if odstranění + komentáře refresh).
+- `src/model.js` ~10 / −7 ř. (JSDoc + inline komentář SEASON konzumentů rozšířit o polar season-aware + sky/sun tint).
+- `index.html` ~13 / 0 ř. (setInterval DAY sync 4 Hz).
+- `docs/GLOSSARY.md` ~1 / −1 ř. (SEASON entry sync — polar season-aware + sky/sun tint).
+- `docs/TODO.md` (% END update).
+- `docs/DIARY.md` +1 ř.
+- `docs/diary/2026-05-14.md` + Sezení 47 sekce.
+- `docs/DONE.md` + tato sekce.
+- Memory `MEMORY.md` description sync.
+
+Žádný nový DD (A4=A — sky tint a polar variace = DD-50 plný scope follow-up implementation; sub-prah byl explicit v DD-50 entry, dnes plněn).

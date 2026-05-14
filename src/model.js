@@ -488,8 +488,10 @@ export class TIMER extends OBJECTS {
  *     (display-only). G3 konzument: `surfaces` mix z biome lookup. Default `mid`.
  *   - `SEASON ∈ {spring, summer, autumn, winter}` — roční období (DD-50, sez. 40).
  *     Default `summer`. Konzumenti: `snowSpecForLatitude` + `waterSpecForClimate`
- *     pro temperate biom (zima víc sněhu/ledu, léto bez). Polar/tropical season-
- *     invariant.
+ *     pro temperate i polar biom — temperate (zima víc sněhu/ledu, léto bez),
+ *     polar season-aware ablation od sez. 47 (winter max, summer méně sněhu/ledu).
+ *     Tropical/subtropical season-invariant. Plus sky/sun tint v `updateAtmosphere`
+ *     a `updateSun` pro temperate LATITUDE (sez. 47).
  *
  * Politika DD-29 stále platí: nové atributy přibudou jen s živým konzumentem.
  */
@@ -511,11 +513,12 @@ export class WORLD extends OBJECTS {
     this.HUMIDITY = "mid";
     // SEASON = roční období (DD-50, sez. 40). 4 enum: "spring" | "summer" |
     // "autumn" | "winter". Default summer = "léto" (= dnešní bezsezonní stav).
-    // Konzument (minimal scope): `snowSpecForLatitude(lat, season)` v terrain.js
-    // modifikuje temperate snowPatchThreshold (zima víc sněhu, léto bez), plus
-    // `waterSpecForClimate(lat, hum, season)` modifikuje temperate freezeRatio
-    // (zima víc ledu na jezerech). Polar perpetually-winter, tropical/subtropical
-    // season-invariant. Sub-prah: LEAF_AUTUMN paleta + DECOR_DENSITY sezonní modifier.
+    // Konzumenti: `snowSpecForLatitude(lat, season)` + `waterSpecForClimate
+    // (lat, hum, season)` v terrain.js — temperate i polar season-aware
+    // (sez. 47 plný scope; polar summer ablation 60 % snow + 40 % ice, winter
+    // max). Tropical/subtropical season-invariant. Plus sky/sun tint v main.js
+    // pro temperate LATITUDE (sez. 47). LEAF_AUTUMN paleta + DECOR_DENSITY
+    // sezonní modifier (DD-51, sez. 41+43).
     this.SEASON = "summer";
     // DECOR_DENSITY_MULT (sez. 43 Fáze 6) — UI slider multiplikátor 0..2 nad
     // `DECOR_DENSITY` tabulkou (terrain.js). 1.0 = baseline (= tabulka beze

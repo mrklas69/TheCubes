@@ -515,6 +515,20 @@
         window.settings.setDaySpeed(v);
         speedVal.textContent = v.toFixed(3);
       });
+
+      // DAY slider auto-sync (sez. 47, TODO DD-38 kotva). Při DAY_SPEED > 0
+      // auto-advance v render loopu mutuje world.DAY, ale slider zůstává na
+      // poslední user-set hodnotě. Throttled 4 Hz update zpět z world.DAY do
+      // DOM slideru. Skip pokud user actively drag (activeElement check —
+      // jinak slider by „přepisoval" user input mid-drag). Skip pokud paused
+      // (DAY_SPEED===0) = ne zbytečný DOM write per tick.
+      setInterval(() => {
+        if (!window.world || window.world.DAY_SPEED === 0) return;
+        if (document.activeElement === dayInput) return;
+        const v = window.world.DAY;
+        dayInput.value = v.toFixed(2);
+        dayVal.textContent = v.toFixed(2);
+      }, 250);
     })();
   </script>
 </body>

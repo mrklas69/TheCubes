@@ -165,8 +165,17 @@ scene.add(sun);
 // na obloze (realistická distance perspective).
 //
 // Pozice sync-uje `updateSun()` v render loopu (DD-38, sez. 32) — drží sun mesh
-// v 5× radiusu DirectionalLight. V noci (sun.position.y < 0) sunMesh.visible=false.
+// v 5× radiusu DirectionalLight. V noci (sun.position.y < SUN_HORIZON_Y_MIN)
+// sunMesh.visible=false.
 const SUN_DISTANCE_SCALE = 5;
+// Threshold viditelnosti sun mesh pod obzorem (sez. 47, user request). Default
+// scéna by hidla sun přesně na Y=0 (matematický horizon) — vizuálně „skokově
+// zmizí" při sunset. Drží mesh visible do altitude angle -15° = sun mírně pod
+// horizon, vidí se „za kopci" než zmizí úplně. Math: altitude = asin(y / SUN_
+// DISTANCE), -15° → y = SUN_DISTANCE · sin(-15°) ≈ -0.259 · SUN_DISTANCE ≈ -4.21.
+// DirectionalLight intensity = 0 (Math.max(0, negCosA)) v podstatě stejně držena
+// — sun pod horizontem nesvítí, jen visible „za scénou" jako vizuální cue.
+const SUN_HORIZON_Y_MIN = SUN_DISTANCE * Math.sin(THREE.MathUtils.degToRad(-15));
 
 // Sun color paleta (sez. 38). 3-keypoint piecewise lerp dle `daylight` (= max(0, -cos α)).
 // Symetrický před/po poledni — atmospheric warming při sunrise/sunset reálné Země,
@@ -206,6 +215,41 @@ function _lerpHsl(target, a, b, t) {
   const s = _hslA.s + (_hslB.s - _hslA.s) * t;
   const l = _hslA.l + (_hslB.l - _hslA.l) * t;
   target.setHSL(h, s, l);
+}
+
+// SEASON tint deltas (DD-50 follow-up, sez. 47). Pattern „base × season modifier"
+// — izomorfní s DECOR_DENSITY sezonním modifikátorem (sez. 43). Aplikuje se POST
+// day/night lerp v `updateAtmosphere`/`updateSun`, scoped jen na LATITUDE=temperate
+// (polar a tropical mají season-invariant snow/water spec, drží konzistenci).
+//
+// Subtle deltas (Q1=A, sez. 47): h ±0.005-0.025, s ×0.80-1.10, l ×0.95-1.03.
+// Viditelné v summer↔winter porovnání, sotva v isolaci. Summer = baseline {0,1,1}
+// (no-op, drží existing look). Pořadí čtyř enum vibe-driven: spring fresh +mírně
+// teplé, autumn golden shift (víc saturace, mírně tmavší), winter cool +desatured
+// +dimmer. Sun má vlastní (mírnější) sadu — sun = eye attracter (menší plocha,
+// větší visual punch), plus na poledni sun=white → s mizí v desaturaci.
+const SEASON_SKY_DELTA = {
+  spring: { dh: -0.005, ms: 1.03, ml: 1.02 },
+  summer: { dh:  0.000, ms: 1.00, ml: 1.00 },
+  autumn: { dh: -0.025, ms: 1.10, ml: 0.98 },
+  winter: { dh: +0.020, ms: 0.80, ml: 0.95 },
+};
+const SUN_SEASON_DELTA = {
+  spring: { dh: +0.005, ms: 0.98, ml: 1.01 },
+  summer: { dh:  0.000, ms: 1.00, ml: 1.00 },
+  autumn: { dh: -0.015, ms: 1.05, ml: 0.99 },
+  winter: { dh: +0.015, ms: 0.92, ml: 0.97 },
+};
+// In-place HSL shift na `color` podle `delta` ({dh, ms, ml}). Reuse `_hslA` scratch
+// (zero alokace). `(h + dh + 1) % 1` wrap (JS % vrací záporky), s/l clamp do [0, 1]
+// proti přetečení (např. baseline s=0.95 × ms=1.10 = 1.045 → clamp 1.0).
+// Helper je season-agnostic — caller dodá delta z příslušné DELTA tabulky.
+function _applyHslShift(color, delta) {
+  color.getHSL(_hslA);
+  const h = (_hslA.h + delta.dh + 1) % 1;
+  const s = Math.min(1, Math.max(0, _hslA.s * delta.ms));
+  const l = Math.min(1, Math.max(0, _hslA.l * delta.ml));
+  color.setHSL(h, s, l);
 }
 const sunMesh = new THREE.Mesh(
   new THREE.SphereGeometry(1.5, 16, 16),
@@ -269,11 +313,20 @@ function updateSun() {
   } else {
     _lerpHsl(sun.color, _sunColorMid, _sunColorNoon, (daylight - 0.5) * 2);
   }
-  // Sun mesh follow + skip render v noci (Y<0 = pod scénou = stejně neviditelné).
+  // SEASON tint post-lerp, jen pro temperate (sez. 47, DD-50 follow-up).
+  // Mírnější deltas než sky (sun = eye attracter). Na poledni sun=white →
+  // saturation modifier je no-op (white H undefined, S=0), hue shift se projeví
+  // jen v dusk/sunrise fázi kdy sun má colored hue.
+  if (world.LATITUDE === "temperate") {
+    _applyHslShift(sun.color, SUN_SEASON_DELTA[world.SEASON] ?? SUN_SEASON_DELTA.summer);
+  }
+  // Sun mesh follow + skip render hluboko pod obzorem (sez. 47). Threshold
+  // SUN_HORIZON_Y_MIN = -15° altitude (~-4.21 j) drží mesh visible krátce po
+  // sunset/před sunrise — vyhne se „skokovému zmizení" na matematickém horizontu.
   // AND s `_sunUserVisible` — pokud user vypne toggle v settings panelu, hide
   // se zachová i v poledne (toggle = user override, ne overflow flag).
   sunMesh.position.copy(sun.position).multiplyScalar(SUN_DISTANCE_SCALE);
-  sunMesh.visible = _sunUserVisible && sun.position.y > 0;
+  sunMesh.visible = _sunUserVisible && sun.position.y > SUN_HORIZON_Y_MIN;
 }
 
 // Day/night atmospheric lerp. Driver: `world.DAY` (DD-38). 3 konzumenti:
@@ -300,6 +353,12 @@ function updateAtmosphere() {
     _lerpHsl(scene.background, _skyNight, _skyDusk, negCosA + 1);
   } else {
     _lerpHsl(scene.background, _skyDusk, _skyDay, negCosA);
+  }
+  // SEASON tint post-lerp, jen pro temperate (sez. 47, DD-50 follow-up).
+  // `sceneFog.color.copy()` níž automaticky picknе tintovanou barvu = fog
+  // splývá s tintovaným nebem bez separátního volání.
+  if (world.LATITUDE === "temperate") {
+    _applyHslShift(scene.background, SEASON_SKY_DELTA[world.SEASON] ?? SEASON_SKY_DELTA.summer);
   }
   sceneFog.color.copy(scene.background);
   const daylight = Math.max(0, negCosA);
@@ -2121,10 +2180,47 @@ const _waterMat = new THREE.MeshStandardMaterial({
   roughness:    0.25,
   side:         THREE.DoubleSide,
 });
+// Ice canvas texture generator (sez. 47, DD-47 follow-up). Solid `0xd9e8ec`
+// → bílo-modré patches pattern. Canvas2D random radial blobs s alpha gradient
+// = "zasněžený led" texture. 128×128 px = balance detail vs. memory (~64 kB
+// RGBA). `repeat = 1×1` default = jedna texture instance per LIQUID mesh
+// (= per cell pro DD-54 single-cell prototype). Sdílená napříč všechny ice
+// meshes (jedna texture v paměti).
+//
+// Pattern: base `#d9e8ec` (= dnešní _iceMat color) + ~30 bílých radial blobs
+// (radius 4..12 px, center alpha 0.7) → "vločkové" splotches simulující frost
+// patches/snow dust on ice. Random seed-less (Math.random) = každý reload
+// jiná texture, ale jedna sdílená napříč scénou v daném runu.
+function makeIceCanvasTexture() {
+  const size = 128;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#d9e8ec";
+  ctx.fillRect(0, 0, size, size);
+  const stamps = 30;
+  for (let i = 0; i < stamps; i++) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const r = 4 + Math.random() * 8;
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, "rgba(255,255,255,0.7)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+const _iceTexture = makeIceCanvasTexture();
 const _iceMat = new THREE.MeshStandardMaterial({
-  // Color shift bělejší (sez. 38 user feedback "led jemně zasněžený").
-  // Lerp(0xc0d8e0, 0xffffff, ~0.4) = `0xd9e8ec` — světlejší modrobílá, snowy.
-  color:        0xd9e8ec,
+  // Color 0xffffff (unbiased) — texture barva (`0xd9e8ec` base + bílé patches)
+  // dominuje výsledné barvě. Sez. 47: bílo-modré patches z `_iceTexture`
+  // nahrazují dřívější solid `0xd9e8ec` (= dnes integrované v textuře jako
+  // base color).
+  color:        0xffffff,
+  map:          _iceTexture,
   transparent:  true,
   opacity:      0.85,
   metalness:    0.05,
