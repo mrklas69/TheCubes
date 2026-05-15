@@ -12,7 +12,7 @@
 - [x] **Fáze 2: `%AUDIT:DOCS`** (sez. 48) — drift sync 9 souborů + DD-55 entry + diary sez. 48 + IDEAS sez. 48 sync. Commit `8a88aa7`.
 - [x] **Fáze 3: IDEAS/TODO/DONE pruning** (sez. 48) — 2 MOVE → DONE (D1 atlas IIFE + TEXTURE_* sync), 1 DROP (Biome populate obsoletní), cadence 5/12 → 0/12 reset, IDEAS post-close arc brain-dump (FindPath + supply chain). Commit `b28cbd2`.
 - [x] **Fáze 4: `%CALIBRATE`** (sez. 48) — port z PocketStory + projektová definice v `docs/PROMPTS.md` (commit `2144ae9`) + run + plný K+D implementace (memory rewrite + sed/browser smoke test docs + cadence policy + %BEGIN-FAST sub-prah + permissions cleanup). Commit `ab281fc`.
-- [ ] **Fáze 5: Close ceremonie** — README `## Status` update na v1.0 + git tag `v1.0-terrain` (annotated push) + IDEAS.md brain-dump A3 finalizace (už hotové ve Fázi 3 — `## Post-close arc: FindPath + supply chain` sekce).
+- [x] **Fáze 5: Close ceremonie** (sez. 49, 2026-05-15) — README `## Status` trim na krátký + odkazy, diary final summary, memory kotva `project_m_genesis_close.md`, annotated tag `v1.0-terrain` push. **M-Genesis arc CLOSED.**
 
 ## Otevřené M8+
 
@@ -78,6 +78,6 @@ Kandidáti bez explicit user signal — drží se jako kotvy, neaktivní:
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — **0/8** *(sez. 48 user-driven trigger + reset — K1+D1+D2 cleanup)*. Next: ~sez. 56.
-- **`%AUDIT:DOCS`** — **0/10** *(sez. 48 trigger + reset — M-Genesis arc Fáze 2)*. Next: ~sez. 58.
-- **IDEAS/TODO/DONE pruning** — **0/12** *(sez. 48 Fáze 3 reset — 2 MOVE → DONE D1+TEXTURE_* sync, 1 DROP Biome populate obsoletní)*. Next: ~sez. 60.
+- **`%AUDIT:CODE`** — **1/8** *(sez. 48 user-driven trigger + reset; sez. 49 close ceremonie tick)*. Next: ~sez. 56.
+- **`%AUDIT:DOCS`** — **1/10** *(sez. 48 trigger + reset; sez. 49 close ceremonie tick)*. Next: ~sez. 58.
+- **IDEAS/TODO/DONE pruning** — **1/12** *(sez. 48 Fáze 3 reset; sez. 49 close ceremonie tick)*. Next: ~sez. 60.
