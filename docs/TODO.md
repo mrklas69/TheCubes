@@ -6,7 +6,16 @@
 >
 > **Recent DONE (sez. 34–49):** Terrain G0..G6 cesta (DD-41 lowpoly vertex-color → DD-42 LATITUDE/HUMIDITY → DD-44 BIOME_SURFACES → DD-45 fBm/ridge³ → DD-46 smoothstep bimodal → DD-47 snow + LIQUID prototype). WORLD: DD-38 DAY/DAY_SPEED, DD-48 atmospheric, DECOR_DENSITY_MULT. DECOR: DD-49 procedural composites, DD-50 SEASON, DD-51 LEAF_AUTUMN + winter defoliation, DD-52 slope-aware Y. DD-54 LIQUID class. **Sez. 48 M-Genesis cleanup (DD-55):** K1+D1+D2 YAGNI drop (~580 ř.) + atlas IIFE + UI Sun toggle. Model 13 → 8 tříd. **Sez. 49 M-Genesis CLOSE:** Fáze 5 ceremonie + tag `v1.0-terrain` + post-close K1 face material dispatch drop (~250 ř.). Detail v `DONE.md` (sez. 49 + M-Genesis arc meta-záznam).
 
-## Otevřené M8+
+## v1.1-voxel-mvp arc (aktivní, sez. 51+)
+
+> **DD-56 (sez. 50, 2026-05-15):** Voxel-native surovinový model. Cíl: prezentace surovin a test manipulace. VOXEL = atomární sub-cube (V=4, 64/cube), 4 resources (wood/stone/sand/water), `VOXELS` atribut na tile (žádná STORAGE třída), InstancedMesh per resource batch, BALLOON revert + INVENTORY/MISSION + AIR pathfind. Plný kontext v `docs/DESIGN_DECISIONS.md` DD-56.
+
+- [ ] **Sezení 51 — render core + rainbow rubik init** *(~250 ř.)* — `src/resources.js` RESOURCE_REGISTRY (4 typy: wood/stone/sand/water, per-type { color, state, density }). `model.js` `VOXELS` atribut na CUBES (lazy-init Map). `main.js` InstancedMesh per resource_type batch, stack mode layer-by-layer dispatch. Init test: náhodná volná cell, `cell.VOXELS = Map([['wood',16],['stone',16],['sand',16],['water',16]])`. Acceptance: rainbow rubik vidět, vrstvy správně ordered.
+- [ ] **Sezení 52 — scatter + chop interakce** *(~150 ř.)* — `terrain.js` Krok 8 OnLoad scatter (per biome density tabulka, scatter mode = random rotation per instance). DECOR_SPEC rozšířen o `RESOURCE_YIELD` (spruce/oak/palm → wood, rock → stone, stump/log/cactus → wood). Click handler: left-click decor → instant break (decor mizí, voxely spawn na cell). Overflow: BFS max 3 hops hledat volné okolní místo (A11 emise varianta).
+- [ ] **Sezení 53 — BALLOON transport** *(~250 ř.)* — revert M4 BALLOON z gitu (sez. 4 commit šablona) + rozšíření `INVENTORY` (Map, cap 4) + `MISSION` state machine. Per-frame AIR lerp (direct vector, no A*, speed ~3 cells/sec). Click UI: 1. click resource node = `goingToPickup`, 2. click target tile = `goingToDropoff`. Right-click cancel. Koš = plošina 4×1×1, 4 mini voxel slots viditelné vedle sebe (A16). LIFO pick prioritization. Cílený drop full → zamítnout (A11 cílený varianta).
+- [ ] **Sezení 54 — close ceremonie v1.1** — Rubik acceptance test (perf 60 FPS @ 20×20 + inverted rainbow emergent), bug bash, docs sync (GLOSSARY voxel pojmy, README v1.1 status, DIARY index), `%CALIBRATE` lite (= post-arc reflection), annotated tag `v1.1-voxel-mvp`, memory kotva `project_v1_1_voxel_mvp_close.md` per M-Genesis arc pattern.
+
+## Otevřené M8+ (post-v1.1)
 
 - [ ] **`.glb`/glTF asset import pipeline** — `GLTFLoader` + AssetCache + shadow setup pro načítané meshe. Otevírá: (a) hezčí lampu z user-poskytnutého PBR Street Props balíčku, (b) Stickman integraci, (c) dekorativní obyvatele scény. Vyžaduje nový DD (asset pipeline = strukturální).
 - [ ] **Integrace externího Stickmana** — TBD způsob: `[A]` `.glb` import (závislé na asset pipeline výš), `[B]` sibling ES module `../Stickman/src/...`, `[C]` jiné. Otevře novou DD při rozhodnutí.

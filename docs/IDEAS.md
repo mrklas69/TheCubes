@@ -97,9 +97,11 @@ Jak se pohyblivá entita dostane z nižší kostky na vyšší? Voxelový svět 
 
 Poznámka: rampy / schody řeší jen *geometrii*, splines / graf oddělí **pohyb od prezentace** — to je hlubší. V TheCubes nejspíš mix: **rampy/schody pro vizuální terén (DONE)** + **graf pro logiku pohybu** (co z kam lze, pravidla jízdy). Post-close arc: FindPath multi-modal nad současný terrain (heightmap + ramps + water) — viz brain-dump níž.
 
-## Post-close arc: FindPath + supply chain *(sez. 48 user signal Q3, brain-dump pro Fáze 5 ceremonie)*
+## Post-v1.1 brain-dump: FindPath + supply chain + recepty *(sez. 48 + 50 brain-dump)*
 
-User vize pro post-close: **multi-modal pathfinding + factory/anno-style supply chain** nad terrain základem. Resonating s factory-observer toy DD-30/DD-31 (sez. 21, dropnutý DD-32 sez. 24) — vrácení v novém kabátu nad procedurálním světem.
+> **Sez. 50 update:** Po `%THINK` voxel iteraci (sez. 50 A1-A16) byl DD-56 přiřazen **voxel-native surovinový model (v1.1-voxel-mvp arc)**. Supply chain + FindPath teď spadají do **post-v1.1 arcs jako DD-57+ kandidáti**. v1.1 bude mít vzducholoď s AIR pathfind = direct vector (no A*), čímž jednodušší cesta supersedes původní FindPath plán. Multi-modal A* zůstává relevantní až pro Stickman ground transport (post-v1.1).
+
+User vize pro post-v1.1: **multi-modal pathfinding + factory/anno-style supply chain** nad terrain + voxel základem. Resonating s factory-observer toy DD-30/DD-31 (sez. 21, dropnutý DD-32 sez. 24) — vrácení v novém kabátu nad procedurálním světem + voxel surovinami.
 
 ### `FindPath(from, to, mode)` — multi-modal traversal
 
@@ -125,7 +127,23 @@ Anno 1404 / Factorio / Voidspan inspirace, ale OOP entity pattern (ne grid-cell 
 - Revert PATH (Catmull-Rom + POINTS) — pro vizuální transportní spojení (volitelné)
 - LIQUID BFS clustering (DD-54 sub-prah) — pre-requisite pro water-mode FindPath
 
-**Strategie:** post-close DD-56 *(supply chain scope locked)* + DD-57 *(FindPath multi-modal)*. Pravděpodobně několik sezení (1 sezení FindPath, 1 GENERATOR + biome spawn rules, 1 TRANSFORMER + recipes, 1 CONSUMER + demand).
+**Strategie:** post-v1.1 DD-57+ *(supply chain + FindPath multi-modal)*. Pravděpodobně několik sezení (1 sezení FindPath, 1 GENERATOR + biome spawn rules, 1 TRANSFORMER + recipes, 1 CONSUMER + demand). **GENERATOR/CONSUMER nad voxel modelem** = entity konzumují/produkují `VOXELS` Map<resource, count> přímo, ne přes generic „resource" abstrakci. TRANSFORMER recipe = N voxelů typu A → M voxelů typu B.
+
+## Post-v1.1 voxel arc kandidáti *(sez. 50, DD-56 out-of-scope)*
+
+Položky vyřazené z v1.1-voxel-mvp scope, ale pre-spec kotvy pro budoucí arcs:
+
+- **TRANSFORMER recipes (crafting)** — DD-57 kandidát. Recipe registry per resource transformation. Vstup N voxelů typu A → výstup M voxelů typu B. UI: select workbench → vybrat recipe → vzducholoď přiváží ingredience → output spawn v cellu.
+- **CONSUMER sinks** — DD-57 souběh. Sink entity dráénuje voxely v rate. Spawn drive: ekonomický cyklus (population → food consumer drain → starvation event).
+- **Dopravník (Factorio belt)** — post-vzducholoď arc. Revert PATH třídy z gitu (sez. 4-8 commits) + KIND="belt" + DIRECTION/SPEED atributy. Voxely teku přes belt mesh. Continuous flow vs. vzducholoď batch transport. Resonance s TRACK třída.
+- **Stickman ground transport** — post-glTF pipeline. Worker entity s INVENTORY, A* ground pathfind (DD-58 kandidát = FindPath multi-modal), pick/drop podobně jako vzducholoď, ale terénní.
+- **Mission-driven chop** (A12 (ii) ze sez. 50) — alternativa instant break. Hráč klikne strom → mission spawne, entity (vzducholoď nebo Stickman) doletí, dropne strom, voxely spawn. Vyžaduje recipe-style UI „přiřaď work order".
+- **Water LEVEL drain při těžbě** (A9 ze sez. 50) — vzducholoď load water voxels z jezera → LIQUID `LEVEL` -= 1/V³ per voxel. Reverzně: déšť cyklus LEVEL +=. Hydrologický cyklus emergent. Pre-req: LIQUID LEVEL atribut extension (DD-54 sub-prah promote).
+- **Fáze D — Terrain mutable (mining + building symetrie)** — největší post-v1.1 pivot. Těžba 1 sand cube → V³ sand voxely (cube zmizí z terénu). Stavba: 64 stone voxelů v cellu → conversion na stone cube. Brutálně láme `regenerateScene()` paradigma — terrain = persistent state, ne re-generated output. Save/load celé scény nutný. Vlastní velký arc, **min. 5-10 sezení**, vlastní DD kandidát.
+- **Multi-balon fleet management** — N vzducholodí paralel, queue mission per balon, optimalizace přiřazení. Post-MVP scaling.
+- **Density gravity & pile shape** — sypké voxely tečou (angle of repose, pyramida). Realistický pile místo box stack. RESOURCE.density-driven. Sub-prah polish.
+- **Per-cube destructible terrain** = Fáze D pre-req. Click cube → break event → voxel yield per surface type.
+- **Voxel save/load JSON** — sandbox export/import scén s voxely. Voxel records = tisíce per scéna, JSON size exploze problem.
 
 ## Režimy světa
 - Minecraft-like voxel terén

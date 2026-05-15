@@ -1627,3 +1627,74 @@ OBJECTS (ID, NAME, DESCRIPTION)
 - Memory: [[feedback-test-nic-overthinked-nelze-odebrat]], [[feedback-end-implies-push]].
 - Sez. 48 user verdikt na cleanup decision: *„PLNÝ K1 cut (K1a-K1e)" + „Teď hned"* + *„Slunce vždy ON"*.
 
+## DD-56 — Voxel-native surovinový model (v1.1-voxel-mvp arc start, sez. 50)
+
+**Schválené rozhodnutí (sez. 50, 2026-05-15):**
+
+Post-`v1.0-terrain` close (sez. 49) zahajujeme nový arc **v1.1-voxel-mvp** s cílem *„prezentace surovin a test manipulace s nimi"* (user A12 scope statement). Suroviny ve scéně jsou viditelné, sbíratelné, přenositelné — žádné recepty, žádný consumer, žádný permanent terrain mutation.
+
+### Klíčové koncepty (immutable)
+
+1. **VOXEL = atomární sub-cube.** 1/64 cube. Má `RESOURCE` typ + leží v sub-grid jedné cell. `V = 4` (hard-coded const), V³ = 64 voxelů/cube.
+2. **RESOURCE_REGISTRY** = nový namespace (`src/resources.js`), paralel `BIOME_NAMES` pattern. MVP 4 typy: `wood` / `stone` / `sand` / `water`. Žádný `grass` (= surface reakce s podnebím, paralel snow). Per-type metadata `{ color, state: solid|liquid|granular, density }`.
+3. **Žádná `STORAGE` třída.** Voxely sedí v atributu `VOXELS` (`Map<resource, count>`) **na kterémkoli tile** (CCUBES + air cells). Tile-jako-storage = izomorfismus s ostatními cell state slots (surface, snowed, ramps).
+4. **Layer-by-layer autosort.** Voxely v cellu se renderují po vrstvách V²=16, ordered dle insertion (= first 16 voxelů = bottom layer). Max 4 typy per tile (V vrstev).
+5. **Dvě reprezentace voxel renderingu:**
+   - **Stack mode** (cell.VOXELS) — fixed orientation, layer-by-layer, autosort barvou.
+   - **Scatter mode** (decor placement v terrain Krok 8) — **random rotation** per instance (A13 user spec, vizuální decor).
+6. **InstancedMesh per resource_type batch.** 4 batches MVP (jeden per resource), per-instance matrix určuje sub-grid pozici + rotaci.
+7. **BALLOON revert** (z M4 sez. 4 commit) = první „živá" transport entita. Rozšířen o `INVENTORY` (Map, hard cap 4 voxely) + `MISSION` state machine (`idle` / `goingToPickup` / `picking` / `goingToDropoff` / `dropping`). Visual: koš = **plošina 4×1×1**, 4 voxel slots viditelné vedle sebe (A16 user spec).
+8. **AIR pathfind = direct vector** (no A*). Lerp k target XZ + adjust Y. Speed ~3 cells/sec.
+9. **LIFO pick prioritization** — vzducholoď bere voxely z top-layer (= last-in-first-out). Izomorfní s real-world stack, emergent produkuje „inverted rainbow" v acceptance scénář.
+10. **Overflow handling — dual policy:**
+    - **Cílený přesun** (vzducholoď drop target plný) → **zamítnout drop**, MISSION → idle, inventář zůstává (A11 user spec).
+    - **Náhodná emise** (chop tree → voxely spawn, cell už full) → **hledat volné okolní místo**, BFS max 3 hops (A11 user spec).
+11. **Chop interakce = instant break** (MVP per A12 (i)). Left-click decor mesh → decor mizí, `RESOURCE_YIELD` voxely se přidají do decor cellu `VOXELS`. Mission-driven chop = post-MVP IDEAS.
+12. **Decor → resource yield** = rozšíření DD-49 DECOR_SPEC o `RESOURCE_YIELD` per KIND. Spruce/oak/palm yield wood, rock yield stone, stump/log/cactus yield wood (small). Bush/flower/grass_tuft yield 0.
+13. **OnLoad scatter** = `terrain.js` Krok 8 (post-decorate), per-biome density tabulka (`temperate.wet → wood`, `polar → stone`, `tropical.dry → sand`). Scatter mode (random rotation), není nutný pro mechaniku (A13).
+14. **Voxely v jezerech & sypké** = voxelizovány stejně (A7 user spec). Čirá nádoba (= transparent containment intuice). Liquid voxel state metadata pre-`density gravity` future polish.
+
+### Out of scope — post-v1.1 IDEAS kotvy
+
+Velmi explicitně NEPATŘÍ do v1.1-voxel-mvp:
+
+- **TRANSFORMER recipes** (crafting) — vlastní DD-57 kandidát.
+- **CONSUMER sinks** — bez consumeru MVP udržitelný.
+- **Dopravník/Factorio belt** — post-vzducholoď arc, PATH revert + flow simulace.
+- **Stickman ground transport** — glTF pipeline dep.
+- **Mission-driven chop** (A12 (ii)) — vyžaduje recipe UI.
+- **Mining 1 cube → V³ voxels** + **building V³ voxels → 1 cube** — Fáze D, terrain mutable pivot, vlastní velký arc.
+- **Water LEVEL drain při těžbě** (A9) — LIQUID extension, DD-54 sub-prah promote.
+- **Multi-balon fleet management** — post-MVP scaling.
+- **Density gravity / pile shape** — RESOURCE.density polish, sub-prah.
+
+### Implementační fáze (odhad 4 sezení 51-54)
+
+| Sezení | Scope | Odhad |
+|---|---|---|
+| 51 | RESOURCE_REGISTRY + `VOXELS` atribut + InstancedMesh per resource render (stack mode) + **rainbow rubik init** (A15: náhodná volná cell, 16+16+16+16 mix) | ~250 ř. |
+| 52 | OnLoad scatter Krok 8 (scatter mode, random rotation) + decor `RESOURCE_YIELD` + chop interakce (instant break) + overflow random emise (BFS 3 hops) | ~150 ř. |
+| 53 | BALLOON revert + INVENTORY/MISSION + AIR lerp + click UI target select + koš plošina 4 slots | ~250 ř. |
+| 54 | Rubik test acceptance + perf bash (A14 60 FPS @ 20×20) + docs sync + close ceremonie + annotated tag `v1.1-voxel-mvp` | docs |
+
+Total ~650 ř. produkčního JS + docs/diary.
+
+### Acceptance criteria — rainbow rubik test
+
+1. Sez. 51 spawne rainbow rubik (16 wood + 16 stone + 16 sand + 16 water) v náhodné volné cell A.
+2. Left-click A → vzducholoď doletí, pick 4 voxely (LIFO = top water vrstva).
+3. Koš ukáže 4 mini water voxely vedle sebe.
+4. Left-click cell B (prázdná) → vzducholoď doletí, dropne 4 water voxely (vrstva 1 v B).
+5. Opakovat 15× → A se vyprázdní layer-by-layer (water → sand → stone → wood), B se naplní opačně (inverted rainbow).
+6. **Pass:** 60 FPS @ 20×20, žádný F12 error, per-instance rotation funguje na scatter voxelech v krajině.
+
+### Reference
+
+- User Q&A sez. 50 (chat log) — A1 voxel směr, A5 V=4, A6 tile-as-storage, A7 voxelize liquid/granular, A8 vzducholoď, A9 water drain → IDEAS, A10 4 resources bez grass, A11 dual overflow, A12 instant break, A13 scatter rotation, A14 perf, A15 rainbow rubik init, A16 koš plošina + LIFO.
+- `docs/TODO.md` `## v1.1-voxel-mvp arc` — implementační rozpis.
+- `docs/IDEAS.md` — post-v1.1 brain-dump (TRANSFORMER recipes, dopravník, mining/building, multi-balon).
+- DD-49 (DECOR builders) — RESOURCE_YIELD je rozšíření existující tabulky, ne nový pattern.
+- DD-54 (LIQUID class) — voda v jezerech zůstává LIQUID; voda v storage je voxel (dvě paradigmaty per kontext).
+- M4 BALLOON DONE.md ř. 41-47 + sez. 4 commit — revert šablona.
+- Memory kotva `project_m_genesis_close.md` (sez. 49) — předchozí arc close pattern pro v1.1 budoucí close.
+
