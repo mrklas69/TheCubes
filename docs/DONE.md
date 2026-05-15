@@ -1395,3 +1395,93 @@ OBJECTS (ID, NAME, DESCRIPTION)
 - [x] **TODO DROP: Biome populate** *(M8+, TODO ř. 21)* — obsoletní, plně překryto `BIOME_NAMES` × `BIOME_SURFACES` v `generateTerrain` (DD-44 sez. 36) + biome-aware DECOR_DENSITY (DD-49 sez. 40).
 - [x] **TODO TRACK třída anotace update** — doplnit „revert PATH z gitu sez. 4-8 pokud potřeba" (po sez. 48 PATH drop).
 
+## Sezení 49 (2026-05-15) — M-Genesis arc CLOSE ceremonie + post-close K1 (face material dispatch drop)
+
+**Kontext:** Po sez. 48 M-Genesis arc Fáze 1–4 (cleanup + audit + pruning + `%CALIBRATE`) zbyla Fáze 5: close ceremonie. User volby na úvod sez. 49: A1 = krátký Status v README + odkazy, A2 = víceřádkový annotated tag, A3 = nový memory kotva. Po ceremonii user nudge *„Tak co teď? Ještě úklid? Mrtvý kód?"* → lehký audit src/ + K1 cleanup.
+
+### Fáze 5: Close ceremonie (commits `b82a2b9` + `c46ca19`)
+
+- [x] **README `## Status` trim** — z monolitické sekce (~80 ř.) na krátký status (~30 ř.) + tabulku-odkazů. README = entry point, ne truth source. Detail v specializovaných docs (GLOSSARY hierarchie, DD historie, DIARY chronologie, TODO plán).
+- [x] **Diary final summary** — `docs/diary/2026-05-15.md` Sezení 49 záznam (Diskuse + Rozhodnutí + Final summary tabulka sez. 41–49 + Kudos/Censure + Příště).
+- [x] **DIARY.md index** — řádek sez. 49.
+- [x] **Memory kotva** `project_m_genesis_close.md` — projekt-level memory: milestone datum 2026-05-15, arc summary sez. 41–48, scope locked items, post-close kandidáti (FindPath DD-57 + supply chain DD-56), tag reference.
+- [x] **Annotated tag `v1.0-terrain`** — víceřádkový tag s arc summary, pushed na origin. Konvence: žádný SemVer (TheCubes není versioned product), tag = arc-close kotva. Budoucí: `v1.1-findpath`, `v1.2-supply-chain` per close události.
+- [x] **Hero GIF** `docs/assets/sunrise.gif` (~1.5 MB) — východ slunce nad krajinou, embed v README jako v1.0 release asset.
+- [x] **Cadence reset** — `%AUDIT:CODE` 0/8, `%AUDIT:DOCS` 1/10, IDEAS/TODO/DONE pruning 1/12.
+
+### Post-close lehký audit (K1) — face material dispatch + named texture pipeline drop (commit `67a8cbf`)
+
+Lehký audit src/ (user-driven trigger, ne formální `%AUDIT:CODE` ceremonie). Pre-edit grep symbol verification per `[[feedback_sed_caution]]`.
+
+**Nález K1 (~250 ř.):** Mrtvá texture pipeline po DD-41 (sez. 34) + sez. 48 PATH drop. M6 milestone (DD-14 face material dispatch) + M5 (DD-16 SPRITES emoji texture) infrastruktura bez konzumenta. 6 dropnutých vrstev:
+
+| Vrstva | Symboly | Důvod |
+|--------|---------|-------|
+| A | `makeDirtTexture` + `makeGrassTopTexture` + `makeStoneTexture` + `makeSandTexture` + `DIRT_*`/`GRASS_*`/`STONE_*`/`SAND_*` palety | Žádný literal `:dirt`/`:grass-top`/`:stone`/`:sand` v src/. Terrain TCUBES jdou přes `getTcubesKindGeom` lowpoly (DD-41). |
+| B | `makePathDirtTexture` + `makeRailTopTexture` + `PATH_BASE` + `PATH_ACCENTS` + `:rail-top`/`:path-dirt` entries | PATH dropnut sez. 48 + TTUNELS dropnut sez. 38 — jediní konzumenti. |
+| C | `makeEmojiTexture` (~30 ř.) | SPRITES dropnut sez. 48. Žádný TCUBES nemá emoji string atribut. |
+| D | `TEX_SIZE`/`PATCH_MIN`/`PATCH_MAX` consts + `drawPatches` + `canvasToPixelTexture` + `makePatchTexture` helpers | Patch infrastruktura jen pro vrstvy A+B. |
+| E | `NAMED_TEXTURE_FACTORIES` mapa + `_namedTextureCache` + `getNamedTexture()` | Pouze A+B konzumovaly. |
+| F | `faceMaterialFor()` 4 z 5 větví + `_faceMaterialCache` | Jediný caller `createTCubeFor` ř. 822 předával `null` (= checkerboard fallback). |
+
+**Po cleanup:** redukce `faceMaterialFor(null)` → sdílený `_checkerboardMat` const inline (`new THREE.MeshStandardMaterial({ map: checkerboardTexture })`). `createTCubeFor` fallback path zjednodušená.
+
+**K2 comment drift fix** spolu: drop „=== 3 paralelní material cache (F6 doc komentář) ===" sekce (DD-36 atlas + DD-41 lowpoly + slow path = po sez. 49 už jen lowpoly + `_checkerboardMat`) + drop perfhud `mat` field komentář v `animate()` (pre-DD-41 reference). Cleanup docstring v `model.js` BLOCKS + TCUBES.
+
+### Velikosti (sez. 49 K1)
+
+| Soubor | Před | Po | Δ |
+|---|---|---|---|
+| `src/main.js` | 2092 ř. | **1841 ř.** | **−251 ř. (−12 %)** |
+| `src/model.js` | 404 ř. | **406 ř.** | komentář refresh |
+| Diff stat | — | — | **−270 / +21 = net −249 ř.** aktivního JS kódu |
+
+0 residual symbolů v src/ (grep ověření). `node --check` syntax OK. Browser smoke test OK (F12 console clean).
+
+### Docs sync (sez. 49 K1)
+
+- `docs/GLOSSARY.md` — Slow path sekce → Fallback path (`_checkerboardMat`), Engine-internal maps update, Procedurální canvas textury → historie sekce, Pojmy Texture + Pixel-art update.
+- `docs/IDEAS.md` ř. 51 — TCUBES popis: K1 sez. 49 drop slow path.
+- `docs/TODO.md` — Audit cadence reset `%AUDIT:CODE` 1/8 → 0/8.
+
+### Rozhodnutí (sez. 49)
+
+- **Žádný nový DD** — Fáze 5 ceremonie + K1 cleanup = aplikace existujícího DD-55 cleanup principu na 7. vrstvu. DD log immutable, žádný DD-56 zatím.
+- **Memory NOVÁ ne** pro K1 — princip identický s sez. 48 K1, žádné nové insight.
+
+### Kudos / Censure (sez. 49)
+
+- **Kudos! (AI → user):** Po Fáze 4 user *„Uzpůsob CALIBRATE našemu projektu. PocketStory byl složitější."* — proaktivní oponování naivnímu portu. Pattern *„necpat větší framework na menší projekt"*.
+- **Kudos! (AI → AI plán+Q → Go):** A1/A2/A3 otázky před Fáze 5, user volba → ihned implementace, žádná druhá diskusní fáze. `[[feedback_plan_then_go]]` bilaterálně.
+- **Kudos! (arc retro):** 9 sezení / 2 dny **bez regrese v prod kódu** (jediná regrese: sez. 48 TAU, fix stejný den).
+- **Censure! (AI → AI Edit kódování fail):** První velký Edit (244 ř. drop) selhal — pravděpodobně Windows UTF-8 / em-dash kódování mismatch. Recovery: rozdělit na 6 menších Edit operations (po funkci/sekci). Lesson: pro czech-heavy block velký Edit ne, malý Edit ano (anchor s minimum special chars).
+
+### Reference
+
+- `docs/diary/2026-05-15.md` — sezení 49 detailní průběh + Final summary M-Genesis arc.
+- Memory `project_m_genesis_close.md` — milestone kotva.
+- Commits: `b82a2b9` ceremonie, `c46ca19` README hero, `67a8cbf` K1 cleanup.
+- Tag `v1.0-terrain` (annotated) — arc-close kotva na origin/main.
+
+## M-Genesis arc — CLOSE (sez. 41–49, tag `v1.0-terrain`, 2026-05-14/15)
+
+> **Meta-záznam.** Arc téma: *„Polish → cleanup → close."* 9 sezení / 2 dny, end-to-end bez regrese v prod kódu (jedna regrese sez. 48 TAU, fix stejný den).
+
+| Sezení | Datum | Fokus | Hlavní výstup |
+|--------|-------|-------|---------------|
+| 41 | 2026-05-14 | Perf HUD + tropical.wet regrese diagnostika | User verdikt *„Generátor scény považuji za dokončený."* |
+| 42 | 2026-05-14 | Target use case pivot 100→20 | DD `[!]` → `[ ]` downgrade. Memory `[[project_target_use_case]]`. |
+| 43 | 2026-05-14 | Fáze 6 DECOR Skupina A+B+C | palm/cactus/flower/stump/log + `_dead` + Density UI. |
+| 44 | 2026-05-14 | Fáze 6 close 9/9 | LEAF_AUTUMN 4-color + sezonní density modifier. |
+| 45 | 2026-05-14 | DD-54 LIQUID class skeleton | `class LIQUID extends CUBES` paralel PATH pattern. |
+| 46 | 2026-05-14 | `%AUDIT:CODE` (user-driven) | 10 fixů LIQUID/DD-54 drift. |
+| 47 | 2026-05-14 | SEASON 6-pack (DD-50 plný scope) | sky/sun HSL tint + polar season variace + ice texture. |
+| 48 | 2026-05-14 | M-Genesis cleanup arc start | K1+D1+D2 + Sun toggle drop (DD-55). Model 13 → 8 tříd. |
+| **49** | **2026-05-15** | **Close ceremonie + K1 face material drop** | **README v1.0 + tag `v1.0-terrain` + ~250 ř. cleanup.** |
+
+**Klíčová DD vzniklá v arcu:** DD-49 (procedural DECOR) + DD-50 (SEASON) + DD-51 (LEAF_AUTUMN + defoliation) + DD-52 (slope-aware Y) + DD-53 (LIQUID bbox attempt + revert) + DD-54 (LIQUID class) + DD-55 (cleanup scope).
+
+**Klíčová memory:** `project_target_use_case` + `feedback_shadow_tighten_paradox` + `feedback_target_use_case_check` + `feedback_ramp_surface_coverage` + `feedback_sed_caution` + `feedback_browser_smoke_test_after_cleanup` + `project_m_genesis_close`.
+
+**M-Genesis arc CLOSED.** Post-close kandidáti pro další milník: FindPath multi-modal (DD-57?), supply chain GENERATOR/TRANSFORMER/CONSUMER (DD-56?), Stickman integrace + asset pipeline (DD-58?). Detail v `docs/IDEAS.md` post-close arc brain-dump.
+
