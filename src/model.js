@@ -2,6 +2,10 @@
 // Definice základních tříd modelu TheCubes.
 // Viz docs/GLOSSARY.md a docs/DESIGN_DECISIONS.md (DD-01, DD-02, DD-12, DD-13).
 
+// VOXELS infrastruktura (DD-56, sez. 51) — model-layer helper z resources.js.
+// Pure data import (žádná Three.js dependency, paralel terrain.js / resources.js).
+import { expandVoxelLayers, voxelTotal as _voxelTotal, VOXEL_PER_CELL, RESOURCE_REGISTRY } from "./resources.js";
+
 /**
  * OBJECTS = kořenová třída všeho v modelu TheCubes.
  *
@@ -48,6 +52,110 @@ export class CUBES extends OBJECTS {
     this.X = x;
     this.Y = y;
     this.Z = z;
+    // VOXELS (DD-56, sez. 51) — `Map<resource, count> | null` voxel inventář cellu.
+    // Lazy-init při prvním `addVoxel` (= memory-efficient, většina CUBES voxely
+    // nemá — terrain bloky, decor, lampy, vzducholoď). `null` = sémanticky „nemá voxely".
+    //
+    // Max součet hodnot = `VOXEL_PER_CELL` (64 pro V=4). Insertion order Map
+    // určí Y-pořadí vrstev v rendereru (`voxelLayers()` → `expandVoxelLayers`,
+    // viz `resources.js`).
+    //
+    // Per DD-56 koncept 3 „tile-jako-storage": jakákoli CUBES může mít voxely
+    // — terrain blok (chop yield drop), abstract cell (rainbow rubik demo),
+    // vzducholoď koš (sez. 53 BALLOON.INVENTORY = stejný Map).
+    this.VOXELS = null;
+  }
+
+  /**
+   * addVoxel — přidá `count` voxelů typu `resource` do VOXELS Map.
+   *
+   * Lazy-init Map při prvním volání. Insertion order Map = pořadí prvního
+   * `addVoxel` per resource (= Y-vrstva při renderu). Existing key += count
+   * (= insertion order resource zůstává původní, nepřesouvá se).
+   *
+   * Guard: `voxelTotal + count > VOXEL_PER_CELL` → vrátí 0 (nepřidá nic, caller
+   * řeší overflow per DD-56 koncept 10: cílený přesun zamítnout / náhodná
+   * emise BFS okolí).
+   *
+   * @returns {number} skutečně přidaných voxelů (0 při overflow, jinak `count`).
+   */
+  addVoxel(resource, count) {
+    if (count <= 0) return 0;
+    if (!RESOURCE_REGISTRY[resource]) return 0;  // neznámý resource type
+    if (!this.VOXELS) this.VOXELS = new Map();
+    if (_voxelTotal(this.VOXELS) + count > VOXEL_PER_CELL) return 0;
+    this.VOXELS.set(resource, (this.VOXELS.get(resource) ?? 0) + count);
+    return count;
+  }
+
+  /**
+   * removeVoxel — odebere `count` voxelů typu `resource` z VOXELS Map.
+   *
+   * `lifo = true` (default, DD-56 koncept 9): bere se z **poslední** vrstvy
+   * = poslední insertion resource. Per acceptance scénář vzducholoď LIFO pick
+   * vrátí top water vrstvu před sand/stone/wood (= inverted rainbow emergent).
+   *
+   * `lifo = false`: bere se podle `resource` argument (FIFO/by-name semantics,
+   * sub-prah pro mission-driven extraction).
+   *
+   * Když Map zůstane prázdná, resetuje VOXELS na `null` (memory hygiene,
+   * tile-as-storage idle stav).
+   *
+   * @returns {number} skutečně odebraných voxelů (0 pokud žádné nejsou).
+   */
+  removeVoxel(resource, count, lifo = true) {
+    if (!this.VOXELS || count <= 0) return 0;
+    let target = resource;
+    if (lifo) {
+      // Poslední key v insertion order = `Array.from(keys()).at(-1)` (JS pole
+      // metoda od ES2022). KISS forma `[...keys()].pop()`.
+      const lastKey = [...this.VOXELS.keys()].pop();
+      if (!lastKey) return 0;
+      target = lastKey;
+    }
+    const available = this.VOXELS.get(target) ?? 0;
+    if (available === 0) return 0;
+    const taken = Math.min(available, count);
+    const remaining = available - taken;
+    if (remaining === 0) this.VOXELS.delete(target);
+    else this.VOXELS.set(target, remaining);
+    if (this.VOXELS.size === 0) this.VOXELS = null;
+    return taken;
+  }
+
+  /**
+   * voxelTotal — součet všech voxelů v cell. `0` pokud VOXELS null.
+   * Konzument: overflow check, full-cell predicate, infotip display.
+   */
+  voxelTotal() {
+    return _voxelTotal(this.VOXELS);
+  }
+
+  /**
+   * voxelLayers — rozloží VOXELS Map na pole sub-grid pozic per voxel.
+   *
+   * Vrací `[{ resource, sx, sy, sz }, ...]` (deleguje na `expandVoxelLayers`
+   * z resources.js). Per DD-57 (sez. 51 patch) výsledek je **shuffled**
+   * (seeded Fisher-Yates) — drop DD-56 koncept 4 autosort render-side.
+   *
+   * **Seed default** = deterministicky z (X, Y, Z) pozice cubu (= reload scény
+   * dá stejný shuffle pattern per cube). Caller může override (sub-prah
+   * mission-driven seed pro animace).
+   *
+   * Hash: 3-prime multiplikace + XOR (klasická 3D spatial hash). Floor pro
+   * float coords (CUBES.X může být float dle DD-12). `|| 1` fallback ochrana
+   * mulberry32 RNG (= seed=0 by ho zachovala v identity stavu).
+   *
+   * Per DD-11 model/engine separation: vrací **plain data** (žádný Three.js
+   * objekt), engine si nad tím postaví matice. Model zůstává čistě datový.
+   */
+  voxelLayers(seed = null) {
+    const s = seed ?? (Math.abs(
+      (Math.floor(this.X) * 73856093) ^
+      (Math.floor(this.Y) * 19349663) ^
+      (Math.floor(this.Z) * 83492791)
+    ) || 1);
+    return expandVoxelLayers(this.VOXELS, s);
   }
 }
 

@@ -10,7 +10,7 @@
 
 > **DD-56 (sez. 50, 2026-05-15):** Voxel-native surovinový model. Cíl: prezentace surovin a test manipulace. VOXEL = atomární sub-cube (V=4, 64/cube), 4 resources (wood/stone/sand/water), `VOXELS` atribut na tile (žádná STORAGE třída), InstancedMesh per resource batch, BALLOON revert + INVENTORY/MISSION + AIR pathfind. Plný kontext v `docs/DESIGN_DECISIONS.md` DD-56.
 
-- [ ] **Sezení 51 — render core + rainbow rubik init** *(~250 ř.)* — `src/resources.js` RESOURCE_REGISTRY (4 typy: wood/stone/sand/water, per-type { color, state, density }). `model.js` `VOXELS` atribut na CUBES (lazy-init Map). `main.js` InstancedMesh per resource_type batch, stack mode layer-by-layer dispatch. Init test: náhodná volná cell, `cell.VOXELS = Map([['wood',16],['stone',16],['sand',16],['water',16]])`. Acceptance: rainbow rubik vidět, vrstvy správně ordered.
+- [x] **Sezení 51 — render core + DD-57 shuffle pivot + scatter** *(~510 ř., 5 patchi v jednom sezení)* — `src/resources.js` (NEW 142 ř., RESOURCE_REGISTRY 5 typů + Fisher-Yates shuffle), `model.js` (+95 ř., VOXELS atribut + 4 helpery na CUBES), `main.js` (+~270 ř., _voxelBatches + 4 dispatch helpery + slope normály + rubik init + scatter). **DD-57 pivot** (sez. 51 patch #2 user *„voxely namíchat"*): drop DD-56 koncept 4 autosort render-side, insertion order Map drží data-side LIFO. Plus 5. surovina `dirt`, corner posazení (nejbližší volná TCUBES k rohu 0,0), color kalibrace (Lambert + canonical hex), scatter `floor(X*Z/10)` s ramp tilt (TRRAMPS 45° / TTRAMPS corner peak / TDRAMP fallback). Acceptance pass — rubik shuffled, scatter na svazích nakloněný, žlutá voxel sand matchuje TCUBES sand TOP, F12 clean, deterministic per seed.
 - [ ] **Sezení 52 — scatter + chop interakce** *(~150 ř.)* — `terrain.js` Krok 8 OnLoad scatter (per biome density tabulka, scatter mode = random rotation per instance). DECOR_SPEC rozšířen o `RESOURCE_YIELD` (spruce/oak/palm → wood, rock → stone, stump/log/cactus → wood). Click handler: left-click decor → instant break (decor mizí, voxely spawn na cell). Overflow: BFS max 3 hops hledat volné okolní místo (A11 emise varianta).
 - [ ] **Sezení 53 — BALLOON transport** *(~250 ř.)* — revert M4 BALLOON z gitu (sez. 4 commit šablona) + rozšíření `INVENTORY` (Map, cap 4) + `MISSION` state machine. Per-frame AIR lerp (direct vector, no A*, speed ~3 cells/sec). Click UI: 1. click resource node = `goingToPickup`, 2. click target tile = `goingToDropoff`. Right-click cancel. Koš = plošina 4×1×1, 4 mini voxel slots viditelné vedle sebe (A16). LIFO pick prioritization. Cílený drop full → zamítnout (A11 cílený varianta).
 - [ ] **Sezení 54 — close ceremonie v1.1** — Rubik acceptance test (perf 60 FPS @ 20×20 + inverted rainbow emergent), bug bash, docs sync (GLOSSARY voxel pojmy, README v1.1 status, DIARY index), `%CALIBRATE` lite (= post-arc reflection), annotated tag `v1.1-voxel-mvp`, memory kotva `project_v1_1_voxel_mvp_close.md` per M-Genesis arc pattern.
@@ -75,6 +75,6 @@ Kandidáti bez explicit user signal. Drží se jako kotvy s historickým kontext
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — **0/8** *(sez. 49 user-driven trigger + reset)*. Next: ~sez. 57.
-- **`%AUDIT:DOCS`** — **2/10** *(sez. 48 reset; sez. 49 close + K1 follow-up = 2 tiky)*. Next: ~sez. 58.
-- **IDEAS/TODO/DONE pruning** — **2/12** *(sez. 48 reset; sez. 49 close + sez. 50 post-close triage = 2 tiky)*. Next: ~sez. 60.
+- **`%AUDIT:CODE`** — **2/8** *(sez. 49 reset + sez. 50 docs-tick + sez. 51 implementační tick)*. Next: ~sez. 57.
+- **`%AUDIT:DOCS`** — **4/10** *(sez. 48 reset + sez. 49 K1 + sez. 50 docs-heavy + sez. 51 DD-57 + diary)*. Next: ~sez. 58.
+- **IDEAS/TODO/DONE pruning** — **3/12** *(sez. 48 reset + sez. 49 close + sez. 50 T1-T8 + sez. 51 docs sync)*. Next: ~sez. 60.

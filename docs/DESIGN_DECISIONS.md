@@ -1698,3 +1698,63 @@ Total ~650 ř. produkčního JS + docs/diary.
 - M4 BALLOON DONE.md ř. 41-47 + sez. 4 commit — revert šablona.
 - Memory kotva `project_m_genesis_close.md` (sez. 49) — předchozí arc close pattern pro v1.1 budoucí close.
 
+## DD-57 — Voxel shuffle render mode + 5. surovina dirt (sez. 51, drop DD-56 koncept 4 autosort render-side)
+
+**Schválené rozhodnutí (sez. 51, 2026-05-15):**
+
+DD-56 koncept 4 (layer-by-layer autosort) na render-side **dropnutý**. User feedback po prvním rubik dispatchi *„voxely namíchat, rubik je ze čtyř jednobarevných vrstev"* — vrstvený display vnímán jako „dort", ne „rubik". DD-56 immutable koncept 4 wording („Layer-by-layer autosort. Voxely v cellu se renderují po vrstvách V²=16, ordered dle insertion") **superseded** tímto DD pro render-side.
+
+### Co se mění
+
+1. **Render-side shuffle.** `expandVoxelLayers(voxels, seed)` v `src/resources.js` aplikuje **Fisher-Yates seeded shuffle** sub-grid pozic. Resource-to-position mapping je deterministická permutace per `seed`. Reload scény dá stejný shuffle pattern.
+
+2. **Seed default = 3D spatial hash z cube pozice.** `CUBES.voxelLayers(seed = null)` v `model.js` computuje `|⌊X⌋·73856093 ^ ⌊Y⌋·19349663 ^ ⌊Z⌋·83492791| || 1` pokud caller nedá explicit seed. Cube na pozici (0, 3, 0) má jiný shuffle než (5, 3, 0). Mulberry32 RNG (sdílený z terrain.js).
+
+3. **Insertion order Map zůstává zachován data-side.** `Map<resource, count>` drží original insertion order — DD-56 koncept 9 LIFO mechanika (sez. 53 vzducholoď pick) je **datově nezasažena**, bere `[...VOXELS.keys()].at(-1)` = last inserted resource. Pouze **vizuální** layer separation zmizí.
+
+4. **Pátá surovina `dirt` (hlína).** RESOURCE_REGISTRY rozšířen ze 4 na **5 typů**. Pořadí dle user-spec: `water → sand → dirt → stone → wood`. Insertion order Object.keys určí UI display sekvenci + LIFO pop order (data-side).
+
+5. **Barvy sjednoceny s prod terrain/decor paletou.** Voxel material `MeshLambertMaterial` (= match `_lowpolyMat` shading path; Standard PBR má cca 12 % tmavší diffuse response). Hex kopírují canonical zdroje:
+   - water = `0x3a7090` (`_waterMat.color`)
+   - sand  = `0xe8d97a` (`BLOCK_COLORS.sand.TOP`)
+   - dirt  = `0x8a5e36` (`BLOCK_COLORS.dirt.TOP`)
+   - stone = `0x9a9a9a` (`BLOCK_COLORS.stone.TOP`)
+   - wood  = `0x5a3e22` (`BARK_BROWN` z `composites/toolkit.js`)
+
+6. **Scatter mode prototype (sez. 51 patch #4).** `scatterRandomVoxels(terrain, sizeX, sizeZ, seed)` v `main.js` rozhází `floor(sizeX * sizeZ / 10)` voxelů na náhodné surface cells (TCUBES top + rampy). Per voxel: random resource z `RESOURCE_NAMES`, tilt quaternion z slope normály:
+   - **TCUBES** → identity + random Y rotation (A13 scatter spec)
+   - **TRRAMPS** (edge) → slope normála `(0, 1, -1)/√2` rotated by ORIENTATION (45° tilt podél svahu)
+   - **TTRAMPS** (corner) → slope normála `(1, 1, 1)/√3` rotated by ORIENTATION
+   - **TDRAMP** (diagonal) → fallback identity + random Y (geometricky komplexní lomená rampa, sub-prah)
+   - Voxel center = surface midpoint + `VOXEL_EDGE/2` podél slope normály
+   
+   Per-biome density tabulka (DD-56 koncept 13) je sez. 52 scope — sez. 51 patch je uniform random na valid surface cells.
+
+7. **Rubik posazení** = nejbližší volná TCUBES (= y+1 cell free of TCUBES i ramp) k rohu `(0, 0)` v Euclidean distance. Distribuce 13+13+13+13+12 = 64 voxelů (= V³).
+
+### Acceptance criteria sez. 51 (post-DD-57)
+
+1. Rubik vidět usazený v rohu, žádný z-fight s rampami.
+2. 5 barev **zamíchaných** v sub-gridu (žádné horizontální vrstvy).
+3. Scatter voxely (~10 @ 10×10) viditelně rozhozené po krajině, ty na rampách viditelně nakloněné podél svahu.
+4. Žlutá sand voxel matchuje žlutou sand TCUBES TOP face (= material + hex sjednoceny).
+5. F12 console clean, 60 FPS @ 10×10 a 20×20.
+6. Reload scény dá identický shuffle pattern (= deterministic per seed).
+
+DD-56 acceptance bod 5 sez. 53 (= „A se vyprázdní layer-by-layer water → sand → stone → wood") **přepíšeme** v sez. 53 — vizuální „vrstvy odhalují" zmizí, místo toho cube se proředí (LIFO data-side správný = postupně mizí wood → stone → dirt → sand → water).
+
+### Sub-prahy z patche
+
+- **Wood/dirt vizuálně blízké hnědé** — `0x5a3e22` vs. `0x8a5e36` rozdíl ~20 % luminance. User akceptováno *„můžeme to nechat být"*, ale pokud signal *„k nepoznání"* přijde, wood za tmavší/červenější tón.
+- **TDRAMP slope tilt** — diagonal ramp slope normála vyžaduje per-orientation geometric computation; voxel na cell.Y+0.5 placement (no tilt) pro MVP.
+- **Per-voxel hover infotip** — voxel batches jsou shared per resource (žádný 1:1 mesh-instance map), per-voxel raycast přes `hit.instanceId` patří do sez. 52+ (chop interakce).
+- **Inline hex duplikace** — 5 voxel barev duplikovaných ze 3 zdrojů (main.js × 2, toolkit.js). Extract `src/palette.js` (pure data) je sub-prah refactor mimo voxel arc scope.
+
+### Reference
+
+- User feedback sez. 51 (chat log) — *„voxely namíchat, rubik je ze čtyř jednobarevných vrstev"* (drop autosort), *„B přidej pátou surovinu"* (5. surovina dirt), *„posaď na nejbližší TCUBES z nejbližšího rohu"* (corner posazení), *„Zkontroluj tu písečnou žlutou"* (material + hex calibration), *„při pozicování na rampy bude třeba voxel sklonit na úhel rampy"* (scatter slope tilt).
+- DD-56 koncept 4 (= **superseded** render-side, **drží** data-side jako LIFO mechanika).
+- DD-56 koncept 9 (= LIFO data-side správný i pro shuffled render).
+- Memory `[[feedback_browser_smoke_test_after_cleanup]]` — F12 console scan po smoke test odhalil `sizeX is not defined` regrese po patch #2 (paralel sez. 48 TAU lesson).
+- `src/resources.js` (nový, 142 ř.), `src/model.js` (+95 ř.), `src/main.js` (+~270 ř.).
+

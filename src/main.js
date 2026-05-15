@@ -12,7 +12,10 @@ import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { CUBES, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, LAMP, DECOR, LIQUID, WORLD } from "./model.js";
 import { DECOR_BUILDERS } from "./composites/builders.js";
-import { generateTerrain, maxReliefForSize, BIOME_NAMES, BIOME_SURFACES, surfacesForBiome, snowSpecForLatitude, waterSpecForClimate, decorSpecForClimate, DECOR_DENSITY, SEASONS } from "./terrain.js";
+import { generateTerrain, maxReliefForSize, BIOME_NAMES, BIOME_SURFACES, surfacesForBiome, snowSpecForLatitude, waterSpecForClimate, decorSpecForClimate, DECOR_DENSITY, SEASONS, mulberry32 } from "./terrain.js";
+// Voxel surovinový model (DD-56, sez. 51) — RESOURCE_REGISTRY + V grid konstanty.
+// `mulberry32` se importuje výš pro sdílený seeded RNG (scatter voxely).
+import { RESOURCE_REGISTRY, RESOURCE_NAMES, VOXEL_GRID, VOXEL_EDGE } from "./resources.js";
 
 // === Renderer ===
 // WebGLRenderer = Three.js komponenta, která překládá scénu na GPU volání.
@@ -1259,6 +1262,235 @@ function pushInstanceToBatch(batch, instance, x, y, z, rotY) {
   batch.count = idx + 1;
 }
 
+// === Voxel InstancedMesh batches (sez. 51, DD-56) ===========================
+// Paralel `_terrainBatches` pattern (DD-37): 4 InstancedMesh batches, jeden
+// per resource type (`wood`/`stone`/`sand`/`water`). Per-instance se liší jen
+// matrix (sub-grid pozice + scale=VOXEL_EDGE), barva je per-batch (flat material
+// `MeshStandardMaterial({color: RESOURCE.color})`, žádné per-instance tint).
+//
+// Capacity sez. 51 = 1024 instances/batch (= dost pro rainbow rubik 16 + scatter
+// reserve sez. 52; pro plný 20×20 voxelizovaný grid by bylo 20×20×64=25.6k =
+// extreme stress, max 4 batches × 1024 = 4096 voxelů celkem). Pro sez. 52/53
+// scaling se kapacita zvedne na 10k per DD-56 odhad.
+//
+// Sdílená geometrie: jeden `BoxGeometry(VOXEL_EDGE)` napříč všemi batchi.
+// Per-batch materiál: jeden `MeshStandardMaterial` per resource s flat color.
+// **Žádný `flatShading: true`** — memory `[[feedback_flat_shading_instanced]]`
+// (Three.js InstancedMesh + flatShading = cross-instance derivative seam artifact).
+const VOXEL_BATCH_CAPACITY = 1024;
+const _voxelGeom = new THREE.BoxGeometry(VOXEL_EDGE, VOXEL_EDGE, VOXEL_EDGE);
+const _voxelMats = {};       // resource → MeshStandardMaterial
+const _voxelBatches = new Map();  // resource → InstancedMesh (lazy alloc per resource)
+
+// Materiály alokujeme jednou (per RESOURCE_REGISTRY entry). Sdílené napříč
+// regenerateScene calls (dispose by zničil i další spawny — paralel `_lowpolyMat`).
+//
+// **MeshLambertMaterial** (ne Standard) — sez. 51 patch #4 fix shader match.
+// `_lowpolyMat` (TCUBES + rampy) je Lambert s `vertexColors: true`. Standard
+// (PBR microfacet model) by stejné albedo renderoval znatelně tmavší než
+// Lambert (user kapátko měření: TCUBES sand TOP 0x7F7743 vs. voxel sand
+// 0x705F18 = Standard má cca 12 % tmavší diffuse response). Sjednocení na
+// Lambert + plain `color` (žádné vertexColors, voxel je 1 barva napříč
+// faces) = stejný shading path → identická lit barva pro stejný source hex.
+//
+// Caveat: voxely uvnitř rubika budou ve stínu sousedních voxelů (shadow
+// casting drží), takže lokálně tmavší než fully-lit TCUBES top. To je
+// intencionální Lambert behavior, ne mismatch.
+for (const r of RESOURCE_NAMES) {
+  _voxelMats[r] = new THREE.MeshLambertMaterial({
+    color: RESOURCE_REGISTRY[r].color,
+  });
+}
+
+// Vytvoří fresh InstancedMesh per resource, registruje do scene a `_voxelBatches`.
+// `batch.count = 0` (zaplníme inkrementálně přes `pushVoxelToBatch`).
+function createVoxelBatch(resource) {
+  const batch = new THREE.InstancedMesh(_voxelGeom, _voxelMats[resource], VOXEL_BATCH_CAPACITY);
+  batch.userData.terrain   = true;   // regen filter — voxely lze re-buildovat se scénou
+  batch.userData.voxel     = true;   // diskriminátor (debug, future per-voxel raycast)
+  batch.userData.resource  = resource;
+  batch.castShadow         = true;
+  batch.receiveShadow      = true;
+  batch.count              = 0;
+  _voxelBatches.set(resource, batch);
+  scene.add(batch);
+  return batch;
+}
+
+// Scratch objekty pro voxel matrix compose (žádné per-voxel alokace — paralel
+// `_batchPos`/`_batchMatrix` z terrain batches sekce).
+const _voxelPos    = new THREE.Vector3();
+const _voxelQuat   = new THREE.Quaternion();  // identity (žádná rotace pro stack mode)
+const _voxelScale  = new THREE.Vector3(1, 1, 1);  // geom už má VOXEL_EDGE
+const _voxelMatrix = new THREE.Matrix4();
+
+/**
+ * pushVoxelInstance — low-level: pushne 1 voxel matrix do per-resource batch.
+ * Sdílený mezi stack mode dispatch (`dispatchVoxelsToBatches`) a scatter mode
+ * (`scatterRandomVoxels`). `quat = null` → identity rotace.
+ */
+function pushVoxelInstance(resource, x, y, z, quat) {
+  let batch = _voxelBatches.get(resource);
+  if (!batch) batch = createVoxelBatch(resource);
+  if (batch.count >= VOXEL_BATCH_CAPACITY) {
+    // Sez. 51 hard cap. Sez. 52+ zvedneme capacity na 10k.
+    console.warn(`voxel batch ${resource} cap ${VOXEL_BATCH_CAPACITY} reached, skipping voxel`);
+    return;
+  }
+  _voxelPos.set(x, y, z);
+  if (quat) _voxelQuat.copy(quat);
+  else _voxelQuat.identity();
+  _voxelMatrix.compose(_voxelPos, _voxelQuat, _voxelScale);
+  batch.setMatrixAt(batch.count, _voxelMatrix);
+  batch.count++;
+}
+
+/**
+ * flushVoxelBatches — flag všechny `instanceMatrix.needsUpdate = true`. Idempotent;
+ * volat na konci dispatch + scatter (multiple flush = no-op před render frame).
+ */
+function flushVoxelBatches() {
+  for (const batch of _voxelBatches.values()) {
+    batch.instanceMatrix.needsUpdate = true;
+  }
+}
+
+/**
+ * dispatchVoxelsToBatches — projde `cube.voxelLayers()` a pushne voxel instance
+ * do per-resource InstancedMesh batchí (stack mode, DD-56 koncept 5).
+ *
+ * Per-voxel pozice: voxel center v cube-local sub-gridu (`sx, sy, sz ∈ [0, V)`):
+ *   localCenter = (-0.5 + (s + 0.5)/V)  pro každou osu
+ *   worldCenter = cube.{X,Y,Z} + localCenter  (cube position = center, DD-12)
+ */
+function dispatchVoxelsToBatches(cube) {
+  const V = VOXEL_GRID;
+  for (const v of cube.voxelLayers()) {
+    // Sub-grid center → world center.
+    const cx = cube.X - 0.5 + (v.sx + 0.5) / V;
+    const cy = cube.Y - 0.5 + (v.sy + 0.5) / V;
+    const cz = cube.Z - 0.5 + (v.sz + 0.5) / V;
+    pushVoxelInstance(v.resource, cx, cy, cz, null);
+  }
+  flushVoxelBatches();
+}
+
+// === Scatter mode (sez. 51 patch #4, DD-56 koncept 5) =======================
+// Single voxely rozhozené po krajině: random (x, z) cell, surface = top TCUBES
+// nebo top ramp; voxel posazen "na surface" s tilt quaternionem dle slope
+// normály (TRRAMPS 45° kolmo na ORIENTATION, TTRAMPS corner (1,1,1)/√3 rotated
+// by ORIENTATION, TDRAMP fallback identity = no tilt pro MVP).
+//
+// User spec sez. 51 patch #4: počet voxelů = `floor(sizeX * sizeZ / 10)`.
+// Pro 10×10 grid = 10 voxelů, 20×20 = 40, 100×100 = 1000. Cap při dosažení
+// VOXEL_BATCH_CAPACITY = 1024 per resource (= ~5120 voxelů celkem nad rubik).
+
+// Slope normály per ramp type (default ORIENTATION 0°). Rotují se kolem osy Y
+// per instance.orientation. Scratch Vector3 alokovány jednorázově (žádné
+// per-voxel alocs v scatter loopu).
+const _slopeNormalTRRAMPS = new THREE.Vector3(0, 1, -1).normalize();  // svah klesá k +Z (default 0°)
+const _slopeNormalTTRAMPS = new THREE.Vector3(1, 1, 1).normalize();   // corner peak SE-top-SOUTH
+
+// Scratch objekty pro scatter loop (žádné per-voxel alokace v hot path).
+const _scatterNormal = new THREE.Vector3();
+const _scatterYAxis = new THREE.Vector3(0, 1, 0);
+const _scatterYRotQuat = new THREE.Quaternion();
+const _scatterTiltQuat = new THREE.Quaternion();
+
+/**
+ * scatterRandomVoxels — rozhází `floor(sizeX * sizeZ / 10)` voxelů na náhodné
+ * surface cells (TCUBES + rampy). Per voxel: random resource z RESOURCE_NAMES,
+ * tilt podle ramp slope (TCUBES = no tilt + random Y rotation).
+ *
+ * Surface lookup: scan `terrain.blocks` (TCUBES top Y per kolona) + `terrain.
+ * ramps` (ramp y má prioritu, leží **nad** top TCUBES). Pokud kolona má jen
+ * water/air = chybí v surfaceByXZ → voxel tam nepadne.
+ *
+ * `seed` = deterministic per regen (`params.seed` ?? 42).
+ */
+function scatterRandomVoxels(terrain, sizeX, sizeZ, seed) {
+  // 1) Surface lookup: max Y per (x, z), preferovat ramp nad TCUBES top.
+  const surfaceByXZ = new Map();  // "x,z" → { kind: "tcubes"|"trramps"|"ttramps"|"tdramp", y, orientation }
+  for (const [, bx, by, bz] of terrain.blocks) {
+    const key = `${bx},${bz}`;
+    const prev = surfaceByXZ.get(key);
+    if (!prev || by > prev.y) {
+      surfaceByXZ.set(key, { kind: "tcubes", y: by, orientation: 0 });
+    }
+  }
+  for (const r of terrain.ramps ?? []) {
+    const key = `${r.x},${r.z}`;
+    const prev = surfaceByXZ.get(key);
+    // Ramp je vždy nad TCUBES top (= jeho y = top_tcubes_y + 1). Override.
+    if (!prev || r.y >= prev.y) {
+      let kind = "tdramp";
+      if      (r.kind === "edge")     kind = "trramps";
+      else if (r.kind === "corner")   kind = "ttramps";
+      else if (r.kind === "diagonal") kind = "tdramp";
+      surfaceByXZ.set(key, { kind, y: r.y, orientation: r.orientation ?? 0 });
+    }
+  }
+
+  const keys = [...surfaceByXZ.keys()];
+  if (keys.length === 0) return;
+
+  const count = Math.floor(sizeX * sizeZ / 10);
+  const rng = mulberry32(seed || 1);
+  const half = VOXEL_EDGE / 2;  // 0.125 — half voxel size pro surface offset
+
+  for (let i = 0; i < count; i++) {
+    const key = keys[Math.floor(rng() * keys.length)];
+    const surface = surfaceByXZ.get(key);
+    const [cellX, cellZ] = key.split(",").map(Number);
+    const resource = RESOURCE_NAMES[Math.floor(rng() * RESOURCE_NAMES.length)];
+
+    if (surface.kind === "tcubes") {
+      // TCUBES top face — voxel center 1 half nad cell.Y + 0.5 (= na top face).
+      // Random Y rotation pro vizuální variabilitu (A13 scatter mode spec).
+      _scatterYRotQuat.setFromAxisAngle(_scatterYAxis, rng() * Math.PI * 2);
+      pushVoxelInstance(
+        resource,
+        cellX,
+        surface.y + 0.5 + half,
+        cellZ,
+        _scatterYRotQuat,
+      );
+    } else if (surface.kind === "trramps" || surface.kind === "ttramps") {
+      // Ramp slope — voxel sedí na slope, tilt quat rotuje voxel "up" na slope
+      // normálu, posun pozice o `half` podél normály (= voxel center 1 half
+      // nad SLOPE midpoint).
+      const baseN = surface.kind === "trramps" ? _slopeNormalTRRAMPS : _slopeNormalTTRAMPS;
+      _scatterNormal.copy(baseN);
+      // Rotate normála kolem Y by ORIENTATION (degrees → radians).
+      _scatterYRotQuat.setFromAxisAngle(_scatterYAxis, surface.orientation * Math.PI / 180);
+      _scatterNormal.applyQuaternion(_scatterYRotQuat);
+      // Tilt = setFromUnitVectors(up, slopeNormal). Voxel local Y axis bude pointovat podél slope normály.
+      _scatterTiltQuat.setFromUnitVectors(_scatterYAxis, _scatterNormal);
+      pushVoxelInstance(
+        resource,
+        cellX + _scatterNormal.x * half,
+        surface.y + _scatterNormal.y * half,
+        cellZ + _scatterNormal.z * half,
+        _scatterTiltQuat,
+      );
+    } else {
+      // TDRAMP fallback — slope normála geometrically composite (= 3-vertex
+      // diagonal slope), proper tilt vyžaduje per-orientation computation
+      // mimo MVP scope. Pro sez. 51 patch: voxel na cell.Y + 0.5 + half (= "
+      // shora" nad lomenou rampou), random Y rotation. Sub-prah pro post-MVP.
+      _scatterYRotQuat.setFromAxisAngle(_scatterYAxis, rng() * Math.PI * 2);
+      pushVoxelInstance(
+        resource,
+        cellX,
+        surface.y + 0.5 + half,
+        cellZ,
+        _scatterYRotQuat,
+      );
+    }
+  }
+  flushVoxelBatches();
+}
+
 function createRampEdge(r) {
   return new TRRAMPS(
     `ramp_edge_${r.surface}_${r.x}_${r.y}_${r.z}`,
@@ -1414,6 +1646,88 @@ function spawnTerrain(params) {
     scene.add(mesh);
   }
 
+  // Rainbow rubik demo (sez. 51, DD-56 acceptance bod 1 + DD-57 sez. 51 patch).
+  // Voxel-native MVP proof-of-life: 5 surovin (voda/písek/hlína/kámen/dřevo)
+  // = 64 voxelů ve 4×4×4 sub-gridu, **render shuffled** (seeded Fisher-Yates,
+  // DD-57). Distribuce 13+13+13+13+12 = 64 (4 typy po 13 + 5. typ 12 = V³).
+  //
+  // **Posazení (sez. 51 patch #2)**: najdi TCUBES, jehož (x, y+1, z) cell je
+  // **volný** (žádný TCUBES ani ramp), pak vyber kandidáta nejbližšího k rohu
+  // (0, 0) v Euclidean distance. Pre-patch verze ignorovala `terrain.ramps`
+  // → rubik někdy přistál do TTRAMP cellu = z-fight (user feedback). Fix
+  // = obsazený-set z **obou** terrain.blocks + terrain.ramps.
+  //
+  // Insertion order Map (= user-spec pořadí: water → sand → dirt → stone →
+  // wood) drží LIFO mechaniku data-side (sez. 53 vzducholoď pick `[...keys].
+  // at(-1)` = wood last inserted = first picked). Vizuální „inverted rainbow
+  // emergent" zmizel (DD-57 trade-off) — sez. 53 acceptance bod 5 přepíšeme.
+
+  const sizeX = params.size[0];
+  const sizeZ = params.size[1];
+
+  // 1) Postav set obsazených cell pozic (TCUBES + rampy). Klíč `"x,y,z"`.
+  const occupied = new Set();
+  for (const [, bx, by, bz] of terrain.blocks) occupied.add(`${bx},${by},${bz}`);
+  for (const r of terrain.ramps ?? []) occupied.add(`${r.x},${r.y},${r.z}`);
+
+  // 2) Pro každou (x, z) kolonu najdi top Y (jen TCUBES, ne rampy).
+  const topByColumn = new Map();  // "x,z" → topY
+  for (const [, bx, by, bz] of terrain.blocks) {
+    const key = `${bx},${bz}`;
+    const prev = topByColumn.get(key);
+    if (prev === undefined || by > prev) topByColumn.set(key, by);
+  }
+
+  // 3) Filter: kandidát = TCUBES top, jehož cell o 1 výš je volný (žádný
+  //    TCUBES / ramp / TTRAMP corner). Pro 4-cell occupancy check budoucí
+  //    voxel collision pattern.
+  const candidates = [];
+  for (const [key, topY] of topByColumn) {
+    const [x, z] = key.split(",").map(Number);
+    if (!occupied.has(`${x},${topY + 1},${z}`)) {
+      candidates.push({ x, z, topY });
+    }
+  }
+
+  // 4) Sort dle Euclidean distance k rohu (0, 0) = `x² + z²` (= `dist²`,
+  //    sqrt skip = monotone). Tie-break: nižší X (= levá strana preferred).
+  candidates.sort((a, b) => {
+    const da = a.x * a.x + a.z * a.z;
+    const db = b.x * b.x + b.z * b.z;
+    if (da !== db) return da - db;
+    return a.x - b.x;
+  });
+
+  // 5) Pokud žádný kandidát (= prakticky se nestane, terrain je plný), fallback
+  //    na (0, 0, 0) ground-level (rubik bude vidět, ale možná překrytý).
+  const winner = candidates[0] ?? { x: 0, z: 0, topY: -1 };
+  const cornerX = winner.x;
+  const cornerZ = winner.z;
+  const rubikY  = winner.topY + 1;  // 1 cell nad nalezenou volnou top TCUBES
+
+  // Abstract CUBES instance — jen kontejner pro VOXELS, žádný single mesh
+  // (= dispatch jde výhradně přes voxel batches). Per DD-56 koncept 3
+  // „tile-jako-storage": VOXELS sedí na čemkoliv v CUBES rodině.
+  const rubik = new CUBES("rubik_demo_001", "Rainbow rubik", cornerX, rubikY, cornerZ);
+  // 5 surovin, distribuce 13+13+13+13+12 = 64 voxelů celkem (= V³ = plný cube).
+  // Pořadí addVoxel = user-spec pořadí (Map insertion order pro LIFO).
+  rubik.addVoxel("water", 13);
+  rubik.addVoxel("sand",  13);
+  rubik.addVoxel("dirt",  13);
+  rubik.addVoxel("stone", 13);
+  rubik.addVoxel("wood",  12);
+  dispatchVoxelsToBatches(rubik);
+
+  // Scatter random voxely po krajině (sez. 51 patch #4) — `floor(sizeX * sizeZ
+  // / 10)` voxelů na random surface (TCUBES top + rampy s tilt). Seed
+  // deterministic per regen.
+  scatterRandomVoxels(terrain, sizeX, sizeZ, params.seed ?? 42);
+  // Registruj instance pro infotip lookup (sub-prah pro per-voxel raycast,
+  // sez. 51 ale alespoň hover nad rubik cubem celkově). meshByInstance value
+  // = single-mesh entry by potřebovala mesh; voxel batches jsou shared per
+  // resource, takže žádný 1:1 mesh-instance. Skip pro MVP — hover na voxel
+  // je sub-prah pro sez. 52+ (chop interakce klikem).
+
   // F12: shadow frustum dle aktuální size — bez updatu by stíny ostříhly
   // na ±8 (aktuální i 30×30 už mimo, 100×100 by drželo stíny v centrální 1/6).
   updateShadowFrustum(Math.max(params.size[0], params.size[1]));
@@ -1446,11 +1760,23 @@ function regenerateScene(params) {
   }
   _terrainBatches.clear();
 
+  // 1b) Voxel batchy (sez. 51, DD-56) — paralel terrain cleanup pattern.
+  //     Voxel batches nedrží `instancesByIdx` (sez. 51 prototype: žádný
+  //     per-voxel raycast/hover, infotip je sub-prah). `batch.dispose()` uvolní
+  //     instanceMatrix GPU buffer. `_voxelGeom` + `_voxelMats[*]` jsou sdílené
+  //     singletony (paralel `_lowpolyMat`), NEdisposovat.
+  for (const batch of _voxelBatches.values()) {
+    scene.remove(batch);
+    batch.dispose();
+  }
+  _voxelBatches.clear();
+
   // 2) Single-mesh entries s `userData.terrain === true` (water + DECOR
   //    od sez. 40 DD-49). Water plane nemá `userData.instance` (nešel přes
   //    `createMeshFor`), DECOR Group ho má — pokud existuje, `meshByInstance`
-  //    cleanup uvolní zombie reference.
-  const staleEntries = scene.children.filter((c) => c.userData.terrain === true);
+  //    cleanup uvolní zombie reference. Voxel batches mají taky `userData.terrain
+  //    = true`, ale už jsme je dropli v kroku 1b → filter `!c.userData.voxel`.
+  const staleEntries = scene.children.filter((c) => c.userData.terrain === true && !c.userData.voxel);
   for (const mesh of staleEntries) {
     scene.remove(mesh);
     disposeHoverClones(mesh);
