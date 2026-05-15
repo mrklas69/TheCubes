@@ -465,250 +465,11 @@ function makeCheckerboardTexture(cellsPerSide = 8) {
 // Texturu vytvoříme jednou — sdílená instance pro všechny mateřské CUBES.
 const checkerboardTexture = makeCheckerboardTexture();
 
-// === Canvas-generovaná textura pro TCUBES stranu s textem/emoji ===
-// Vykreslí jediný znak (typicky emoji) na bílý čtverec. Použití: TCUBES s
-// `TEXTURE_TOP = "🌳"` atp. Plátno je čtvercové (128×128), aby textura
-// nezkreslila jednotku voxelu.
-//
-// Fonty pro emoji závisí na OS — `Apple Color Emoji` (macOS/iOS), `Segoe UI
-// Emoji` (Windows), `Noto Color Emoji` (Linux). Browser si vybere první
-// dostupný z fallbacku. Běžný text (např. `"N"`) vykreslí systémový sans.
-function makeEmojiTexture(char) {
-  const canvas = document.createElement("canvas");
-  const size = 128;
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext("2d");
-
-  // Bílé pozadí — kontrastní základ pro tmavé emoji/text
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, size, size);
-
-  // Emoji vycentrované; velikost 88 px na 128 px plátně = vzduch okolo
-  ctx.font = "88px 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', system-ui, sans-serif";
-  ctx.fillStyle = "#111111";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(char, size / 2, size / 2);
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
-// === Pojmenované procedurální textury (`:dirt`, `:grass-top`, …) ===
-// Jednotná base barva + 2–4 náhodné obdélníkové záplaty v kontrastních
-// odstínech. Per-cube fresh (žádný singleton) → každá kostka v 10×10 dioramě
-// má lehce jiný vzor → žádné mřížkové opakování v ploše.
-//
-// Idiom inspirovaný Minecraftem zjednodušený do KISS: minimum noisy detailu,
-// dominantní jednolitá plocha s drobnou variací. Rozšiřitelné — přidání
-// `":sand"` = nová `make*Texture()` + řádek v NAMED_TEXTURE_FACTORIES.
-// Konstanty texturového gridu — 16×16 px (Minecraft klasika), záplaty 1–2 px
-// (na polovinu z původních 2–5 px). Grass strip = 2 px ≈ 12.5 % výšky kostky
-// (cíl 10 % = 1.6 px, zaokrouhleno na celý pixel pro pixel-art look).
-const TEX_SIZE = 16;
-const PATCH_MIN = 1;
-const PATCH_MAX = 2;
-// Helper — náhodné obdélníkové záplaty v zadaném vertikálním pásu canvasu.
-// Záplaty mohou přesáhnout okraj canvasu nebo pásu (fillRect ořízne) — drobné
-// „roztrhané" hrany dávají organický vzhled.
-function drawPatches(ctx, palette, count, yMin, yMax) {
-  const yRange = yMax - yMin;
-  for (let i = 0; i < count; i++) {
-    const w = PATCH_MIN + Math.floor(Math.random() * (PATCH_MAX - PATCH_MIN + 1));
-    const h = PATCH_MIN + Math.floor(Math.random() * (PATCH_MAX - PATCH_MIN + 1));
-    const x = Math.floor(Math.random() * TEX_SIZE);
-    const y = yMin + Math.floor(Math.random() * yRange);
-    ctx.fillStyle = palette[Math.floor(Math.random() * palette.length)];
-    ctx.fillRect(x, y, w, h);
-  }
-}
-
-// Wrap canvas → THREE.Texture s pixel-art nastavením (NearestFilter) a
-// správným barvovým prostorem.
-function canvasToPixelTexture(canvas) {
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-
-// Jednolitý base + 2–4 záplaty (přes celou plochu).
-function makePatchTexture(baseColor, accentPalette) {
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = TEX_SIZE;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = baseColor;
-  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
-  const patchCount = 2 + Math.floor(Math.random() * 3);   // 2..4
-  drawPatches(ctx, accentPalette, patchCount, 0, TEX_SIZE);
-  return canvasToPixelTexture(canvas);
-}
-
-const DIRT_BASE = "#6b4a2a";
-const DIRT_ACCENTS = ["#5a3a22", "#7a5630", "#48301d"];
-const GRASS_BASE = "#5d9446";
-const GRASS_ACCENTS = ["#4e823c", "#3e6a32", "#6ea054"];
-const STONE_BASE = "#8a8278";
-const STONE_ACCENTS = ["#6f6860", "#a09890", "#5a5450"];
-const SAND_BASE = "#d4b97c";
-const SAND_ACCENTS = ["#c5a86b", "#e3c98a", "#b89858", "#dec595"];
-
-function makeDirtTexture() {
-  return makePatchTexture(DIRT_BASE, DIRT_ACCENTS);
-}
-
-function makeGrassTopTexture() {
-  return makePatchTexture(GRASS_BASE, GRASS_ACCENTS);
-}
-
-function makeStoneTexture() {
-  return makePatchTexture(STONE_BASE, STONE_ACCENTS);
-}
-
-function makeSandTexture() {
-  return makePatchTexture(SAND_BASE, SAND_ACCENTS);
-}
-
-// Štěrková cesta — šedé kameny různých odstínů, kropenatý šum (žádné stopy).
-// Hustá rozsypaná zrnka 1×1 px různých odstínů → blízko vidět texturu kamínků,
-// z dálky splyne v jednolitou šeď.
-const PATH_BASE    = "#7a7a78";
-const PATH_ACCENTS = ["#9a9a98", "#b0b0ae", "#6a6a68", "#5a5a58", "#3a3a38", "#8a8478"];
-function makePathDirtTexture() {
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = TEX_SIZE;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = PATH_BASE;
-  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
-  // Kropenatý šum — ~240 drobných záplat 1-2 px po celé ploše. Patche se
-  // překrývají (canvas má 256 px²), což dává ještě bohatší variaci.
-  drawPatches(ctx, PATH_ACCENTS, 210 + Math.floor(Math.random() * 60), 0, TEX_SIZE);
-  return canvasToPixelTexture(canvas);
-}
-
-// Kolej (vrch voxelu): tmavě hnědý štěrkový základ + pražce (sleepers) +
-// kovové kolejnice. Pražce vertikální v canvasu (= napříč směrem jízdy
-// ve světě X), kolejnice horizontální v canvasu (= podél X osy ve světě).
-// Pokud orientace v prohlížeči vyjde špatně, swap canvas X/Y.
-function makeRailTopTexture() {
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = TEX_SIZE;
-  const ctx = canvas.getContext("2d");
-  // Tmavě hnědý štěrk pod tratí
-  ctx.fillStyle = "#3a2818";
-  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
-  // Pražce — 4 vertikální dřevěné pruhy (canvas X)
-  ctx.fillStyle = "#6b4a2a";
-  for (const sx of [1, 5, 9, 13]) {
-    ctx.fillRect(sx, 0, 2, TEX_SIZE);
-  }
-  // Kolejnice — 2 horizontální kovové pruhy (canvas Y)
-  ctx.fillStyle = "#9c948c";
-  ctx.fillRect(0, 4, TEX_SIZE, 2);
-  ctx.fillRect(0, 10, TEX_SIZE, 2);
-  return canvasToPixelTexture(canvas);
-}
-
-// Pojmenované sdílené textury — factory vyrobí canvas s random patches, ale
-// výsledek je memoizovaný v `_namedTextureCache`. Konzumenti (slow path
-// `faceMaterialFor`) sdílí stejnou `THREE.Texture` instanci → jednotný vizuál
-// napříč cestami.
-const NAMED_TEXTURE_FACTORIES = {
-  ":dirt":       () => makeDirtTexture(),
-  ":grass-top":  () => makeGrassTopTexture(),
-  ":stone":      () => makeStoneTexture(),
-  ":sand":       () => makeSandTexture(),
-  ":rail-top":   () => makeRailTopTexture(),
-  ":path-dirt":  () => makePathDirtTexture(),
-};
-
-// Lazy cache pojmenovaných textur — první volání spustí factory, další vrátí
-// cached `THREE.Texture`. `null` cached miss značí neznámý název (`console.warn`
-// už proběhl) — zabrání spamování warnů.
-const _namedTextureCache = new Map();
-function getNamedTexture(name) {
-  const cached = _namedTextureCache.get(name);
-  if (cached !== undefined) return cached;
-  const factory = NAMED_TEXTURE_FACTORIES[name];
-  if (!factory) {
-    console.warn(`Neznámá pojmenovaná textura: "${name}"`);
-    _namedTextureCache.set(name, null);
-    return null;
-  }
-  const tex = factory();
-  _namedTextureCache.set(name, tex);
-  return tex;
-}
-
-// === Dispatch: atribut strany TCUBES → Three.js materiál ===
-// Rozhodne podle **typu** hodnoty, jaký materiál pro jednu stranu voxelu
-// vyrobit. Pattern „model drží data, engine interpretuje" (DD-11/DD-14).
-//
-//  - `null`/`undefined` → fallback šachovnice (DD-07). Stejná sdílená
-//    textura jako u mateřské CUBES — vizuální idiom „strana nevyplněná".
-//  - `number` (0xRRGGBB) → plocha barva celé strany.
-//  - `string` `:<name>` → pojmenovaná sdílená procedurální textura
-//    (`:dirt`, `:grass-top`, …). Lookup v `NAMED_TEXTURE_FACTORIES` —
-//    všechny voxely sdílejí stejný `THREE.Texture` instance.
-//  - `string` `#rrggbb` / CSS barva → plocha barva.
-//  - jiný `string` (emoji/text) → canvas s textem.
-// Memoizační cache materiálů (sez. 28 — `feat/terrain-perf`). Před cache
-// vytvářel každý TCUBES/ramp 6× nový `MeshStandardMaterial` — při 30×30 terénu
-// to znamenalo ~16000 alokací per regen (drahé GC + GPU state spam mezi
-// stejně-vypadajícími objekty). Po cache cca ~30 unikátů (4 surfaces × ~6 faces).
-//
-// Klíč: stringifikace `val`. Stejná `val` = stejný materiál = renderer batches
-// dle reference rovnosti = výrazně méně state changes. Hover (sez. 16) klonuje
-// per-mesh (`mat.clone()`), takže sdílený materiál se neporuší — klony jsou
-// nezávislé kopie.
-//
-// `null` má vlastní bucket (`"__null__"`), aby šel rozlišit od stringu `"null"`.
-//
-// === 3 paralelní material cache (F6 doc komentář) ===========================
-// V projektu žije **`_faceMaterialCache`** — slow path, klíč = stringifikace
-// `val` (per-face atribut: barva / `:name` / emoji). 1 materiál = 1 strana
-// voxelu, mesh dostane `material[6]` array. Fallback pro non-terrain TCUBES,
-// water plane, COMPOSITES boxy, CCUBES default šachovnice (DD-07).
-//
-// Historicky paralelně existovaly i `_tcubesAtlasMatCache` (DD-36 TCUBES atlas)
-// a `_rampsAtlasMatCache` (DD-36 ramp atlas) — obě smazány v DD-41 (sez. 34,
-// lowpoly vertex-color refactor). Lowpoly pipeline drží 1 sdílený `_lowpolyMat`
-// napříč všemi terrain batchi, žádná per-kind cache potřeba.
-const _faceMaterialCache = new Map();
-
-function faceMaterialFor(val) {
-  const key = val == null ? "__null__" : (typeof val === "number" ? `0x${val.toString(16)}` : val);
-  const cached = _faceMaterialCache.get(key);
-  if (cached) return cached;
-
-  let mat;
-  if (val == null) {
-    mat = new THREE.MeshStandardMaterial({ map: checkerboardTexture });
-  } else if (typeof val === "number") {
-    mat = new THREE.MeshStandardMaterial({ color: val });
-  } else if (typeof val === "string") {
-    // Prefix `:` značí pojmenovanou sdílenou texturu (Minecraft-style).
-    if (val.startsWith(":")) {
-      const tex = getNamedTexture(val);
-      mat = new THREE.MeshStandardMaterial({ map: tex ?? checkerboardTexture });
-    } else if (/^#[0-9a-f]{3,8}$/i.test(val)) {
-      // `#rrggbb` → Three.js Color parse (stejné jako number). Test přes regex,
-      // aby např. `"red"` prošlo stejnou cestou (pojmenované CSS barvy).
-      mat = new THREE.MeshStandardMaterial({ color: val });
-    } else {
-      // Jinak canvas s textem / emoji
-      mat = new THREE.MeshStandardMaterial({ map: makeEmojiTexture(val) });
-    }
-  } else {
-    // Neznámý typ → fallback (defensive; model by neměl dodat nic jiného)
-    mat = new THREE.MeshStandardMaterial({ map: checkerboardTexture });
-  }
-
-  _faceMaterialCache.set(key, mat);
-  return mat;
-}
+// Sdílený fallback materiál pro neznámý TCUBES kind (= `NAME` mimo
+// `BLOCK_COLORS` mapu). DD-07 šachovnice signalizuje „strana nevyplněná"
+// vizuálně. Po sez. 49 K1 cleanup je toto jediná konzumace `checkerboardTexture`
+// — atomic singleton (žádná dispatch flexibility, žádná cache).
+const _checkerboardMat = new THREE.MeshStandardMaterial({ map: checkerboardTexture });
 
 // Mapa instance.ID → Three.js Object3D. Plníme v `createMeshFor`; non-terrain
 // entity (LAMP, DECOR, LIQUID, slow-path TCUBES) jdou single-mesh path, terrain
@@ -798,28 +559,18 @@ function snapToGrid(mesh, instance) {
   );
 }
 
-// Sestaví voxel s per-face texturami pro TCUBES instanci. BoxGeometry v
-// Three.js přijímá **pole 6 materiálů** (místo jednoho) — pořadí strnule
-// definované engine: [+X, -X, +Y, -Y, +Z, -Z]. Mapujeme ho na projektové
-// světové strany podle DD-13 a Q5 ze sezení 4:
-//  index 0 (+X) = EAST, 1 (-X) = WEST, 2 (+Y) = TOP, 3 (-Y) = BOTTOM,
-//  4 (+Z) = SOUTH (+Z je v Three.js směr „k divákovi"), 5 (-Z) = NORTH.
-//
-// Každá strana prochází dispatchem `faceMaterialFor`, který podle **typu**
-// atributu vrátí barvený nebo textúrovaný materiál, případně fallback
-// šachovnici (DD-07).
+// Sestaví voxel pro TCUBES instanci. DD-41 (sez. 34): lowpoly vertex-color
+// pipeline. Pokud `instance.NAME` je známý terrain kind (`BLOCK_COLORS[kind]`),
+// použij sdílený per-kind lowpoly geom + `_lowpolyMat`. Jinak fallback
+// šachovnice (DD-07, „neznámý kind") přes sdílený `_checkerboardMat`.
 function createTCubeFor(instance) {
-  // G0 (sez. 34, DD-41): lowpoly vertex-color pipeline. Pokud `instance.NAME`
-  // je známý terrain kind (`BLOCK_COLORS[kind]`), použij sdílený per-kind
-  // lowpoly geom + `_lowpolyMat`. Jinak fallback šachovnice (DD-07, „neznámý kind").
   const lowpolyGeom = getTcubesKindGeom(instance.NAME);
   if (lowpolyGeom) {
     const mesh = new THREE.Mesh(lowpolyGeom, _lowpolyMat);
     snapToGrid(mesh, instance);
     return mesh;
   }
-  // Fallback — sdílený šachovnicový materiál z `_faceMaterialCache` (null key).
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), faceMaterialFor(null));
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), _checkerboardMat);
   snapToGrid(mesh, instance);
   return mesh;
 }
@@ -2072,9 +1823,7 @@ function animate() {
 
   // Perf HUD report 1×/s — `renderer.info.render.*` akumulované přes všechny
   // frames + composer passes mezi reporty (sez. 42 Krok 3 — `autoReset=false`).
-  // Reportujeme **average per-frame** (= total / frameCount). `mat` field
-  // smazán — `_faceMaterialCache` byl pre-DD-41 slow-path cache; po DD-41
-  // lowpoly pipeline drží 1 sdílený `_lowpolyMat`, cache permanentně prázdná.
+  // Reportujeme **average per-frame** (= total / frameCount).
   _perfHud.frameCount++;
   if (now - _perfHud.lastReport >= 1.0) {
     const fps = _perfHud.frameCount / (now - _perfHud.lastReport);

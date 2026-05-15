@@ -67,10 +67,11 @@ export class CUBES extends OBJECTS {
  */
 /**
  * BLOCKS = abstract parent všech 1C grid-aligned bloků geologie/terénu (DD-25:
- * 4-vrstvá taxonomie scény, vrstva 1). Sdílí mezi sebou: snap-to-int v rendereru
- * (DD-12), procedurální geometrie v engine, sdílená paleta `:named-textures`
- * přes `faceMaterialFor` (DD-14). Potomci se liší tvarem: krychle (TCUBES,
- * 6 faces), klín (TRRAMPS, 5 faces), jehlan (TTRAMPS, 4 faces), 7-vrcholový blok (TDRAMP).
+ * 5-vrstvá taxonomie scény, vrstva 1). Sdílí mezi sebou: snap-to-int v rendereru
+ * (DD-12), procedurální geometrie v engine, lowpoly vertex-color paleta
+ * (DD-41 nahradila DD-14 face material dispatch). Potomci se liší tvarem:
+ * krychle (TCUBES, 6 faces), klín (TRRAMPS, 5 faces), jehlan (TTRAMPS, 4 faces),
+ * 7-vrcholový blok (TDRAMP).
  *
  * `ORIENTATION` (DD-26 sez. 17) — float ∈ [0, 360) ve **stupních**, rotace
  * kolem Y osy. Default 0. Engine převádí `mesh.rotation.y = ORIENTATION * π/180`.
@@ -107,10 +108,11 @@ export class CCUBES extends BLOCKS {
  * fallback šachovnice (DD-07).
  *
  * Historicky (do DD-36 sez. 28) měl TCUBES per-face textury (`TEXTURE_TOP`,
- * `TEXTURE_BOTTOM`, …) přes `faceMaterialFor` dispatch — pole `material[6]`.
- * DD-36 atlas pipeline sloučila 6 facelet do 1 CanvasTexture per kind. DD-41
- * (sez. 34) atlas nahradila vertex colors v geometrii → drop `textures` arg
- * + TEXTURE_* atribut z modelu (čistě data, žádné textury).
+ * `TEXTURE_BOTTOM`, …) přes face material dispatch. DD-36 atlas pipeline
+ * sloučila 6 facelet do 1 CanvasTexture per kind. DD-41 (sez. 34) atlas
+ * nahradila vertex colors v geometrii → drop `textures` arg + TEXTURE_*
+ * atribut z modelu (čistě data, žádné textury). Sez. 49 K1 dropla i poslední
+ * residual face material dispatch infrastrukturu (M6 milestone bez konzumenta).
  */
 export class TCUBES extends BLOCKS {
   // DD-41 (sez. 34): drop `textures` arg + TEXTURE_* fields. Barvy řídí

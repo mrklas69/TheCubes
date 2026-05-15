@@ -126,12 +126,12 @@ Po sez. 48 cleanup TheCubes scéna se buduje ze dvou vizuálních zdrojů:
 
 **flatShading: false (důležitý fix).** BoxGeometry + ramp BufferGeometries už mají per-face normály v `geometry.attributes.normal` (vertices nesdílené přes faces) → flat look vzniká z geometrie. `flatShading: true` na materiálu by nutilo shader spočítat normálu z `dFdx/dFdy` derivatives → u **InstancedMesh** cross-instance precision drift = tenké šedé/černé seam linky mezi sousedy (DD-41 known fix sez. 34).
 
-**Slow path** (`_faceMaterialCache` Map v `faceMaterialFor`): non-terrain TCUBES (CCUBES default šachovnice DD-07, water plane, COMPOSITES). Jediná zachovaná cache po DD-41 — terrain TCUBES/rampy jdou batch path (DD-37) s jedním sdíleným `_lowpolyMat`, žádná per-kind cache potřeba.
+**Fallback path** (`_checkerboardMat` const v `main.js`): jediný non-batch případ — neznámý TCUBES kind (`instance.NAME` mimo `BLOCK_COLORS` mapu). Šachovnice signalizuje „strana nevyplněná" (DD-07). Po sez. 49 K1 cleanup je toto **jediná** konzumace `checkerboardTexture` (slow-path face material dispatch + named texture factories + emoji texture dropnuté jako YAGNI, M6/SPRITES residue po DD-41 + sez. 48 PATH drop).
 
 **Engine-internal maps** (sez. 38 audit dodatek, [[D4]]): kritická infrastruktura, kterou onboard-čtenář potřebuje znát.
 - `_terrainBatches` (`main.js`) — `Map<string, InstancedMesh>` klíčované `"tcubes:<kind>"` / `"<typ>:<surface>"` → batch dispatched z `pushInstanceToBatch`. Sez. 31 DD-37 pipeline backbone.
 - `meshByInstance` (`main.js`) — `Map<instance.ID, THREE.Object3D | { batch, idx }>`. Single-mesh case mapuje na Object3D, batch case na `{ batch, idx }` tuple. Spotřebovává hover + tooltip + cleanup v `regenerateScene`.
-- `_faceMaterialCache` (`main.js`) — slow-path material cache (popsaná výš). Perf HUD `mat` čítač.
+- `_checkerboardMat` (`main.js`) — sdílený `MeshStandardMaterial` s šachovnicovou texturou pro neznámý TCUBES kind (`getTcubesKindGeom` falsy). Atomic singleton po sez. 49 K1 cleanup.
 - `_lowpolyMat` (`main.js`) — jeden sdílený `MeshLambertMaterial({vertexColors:true})` napříč všemi terrain batchi. Lifecycle = aplikace.
 - `_waterMat` / `_iceMat` (`main.js`, DD-47/DD-48 sez. 38) — sdílené `MeshStandardMaterial` pro LIQUID prototype. Water: 0x3a7090, opacity 0.55, metalness 0.20, roughness 0.25. Ice: 0xd9e8ec, opacity 0.85, metalness 0.05, roughness 0.55 (větší zákal + menší reflexe per user spec).
 - `_waterMeshes` (`main.js`, DD-48 sez. 38) — `Set<THREE.Mesh>` pro water wave anim. Jen non-frozen water cells. Ice meshes vynechány (rigid surface). Cleared v `regenerateScene`. Per-frame `position.y = baseY + sin(t × ω) × 0.04` (period 9 s).
@@ -139,15 +139,9 @@ Po sez. 48 cleanup TheCubes scéna se buduje ze dvou vizuálních zdrojů:
 
 **Historické (DD-36 atlas, supersededDD-41):** Sez. 28 zavedla TCUBES atlas (`_tcubesAtlasMatCache`, 4 atlas materials = 6 facelets × 16 px do CanvasTexture 96×16 per kind), sez. 30 ramp atlas (`_rampsAtlasMatCache`, 9 atlas materials). DD-41 smazala obě cache + atlas builders + texture tabulky (`BLOCK_TEXTURES`, `RAMP_*_TEXTURES`, `RAMP_ATLAS_SPECS`, `RAMP_SURFACE_FROM_KIND`, `ATLAS_*` konstanty, `createTRRampFor`/`createTTRampFor`/`createTDRampFor` slow-path funkce). Důvod: atlas vyřešil draw call count (DD-37 InstancedMesh batche pak srazila na ~13 calls), ale tile pattern uvnitř kindu zůstal jako vizuální dluh. DD-41 lowpoly = solid color flat look, eliminuje dluh + simplifikuje pipeline (~−250 ř.) + připravuje G3 (climate-driven barvy = data, ne textury).
 
-### Procedurální canvas textury (`:named-texture`)
+### Procedurální canvas textury (historie)
 
-JS-generované pixel-art textury 16×16 px. Sdílené přes `NAMED_TEXTURE_FACTORIES` lookup v `faceMaterialFor` dispatchu (DD-14 prefix `:`). Aktuální:
-
-- `:dirt` — hliněná textura (paleta `DIRT_*`, base + 2–4 patches 1–2 px).
-- `:grass-top` — travnatý povrch (paleta `GRASS_*`, patches).
-- `:stone` — kamenná textura (paleta `STONE_*`).
-- `:sand` — písčitá textura (paleta `SAND_*`).
-Pravidlo BLOCKS rodiny: **vrch `:grass-top`, jinak `:dirt`** napříč grass blok / TRRAMPS / TTRAMPS / TDRAMP (severská konvence sez. 17). Pozn.: po DD-41 (sez. 34) terrain BLOCKS textury nepoužívají — `:named-texture` paleta žije už jen ve slow path (CCUBES default šachovnice DD-07). Po sez. 48 cleanup `:path-dirt` a `:rail-top` bez konzumenta (PATH dropla); zachovány v factory tabulce pro budoucí re-use.
+Sez. 4 (M6) DD-14 face material dispatch zavedl 6× JS-generované pixel-art textury 16×16 px sdílené přes `NAMED_TEXTURE_FACTORIES` lookup (`:dirt`, `:grass-top`, `:stone`, `:sand`, `:rail-top`, `:path-dirt`) + `makeEmojiTexture` pro arbitrary string fallback. **Po DD-41 (sez. 34) terrain BLOCKS textury nepoužívají** — vertex-color pipeline nahradila atlas + slow-path face material dispatch. **Po sez. 48 cleanup** PATH dropnut → `:rail-top` + `:path-dirt` bez konzumenta. **Po sez. 49 K1 cleanup** celá `:named-texture` paleta + `makeEmojiTexture` + `faceMaterialFor` dispatch dropnuté jako YAGNI residue. Revert z git historie (pre-sez. 49 commits) pokud TCUBES strana = decorative emoji/text label někdy přijde (= Stickman post-close integrace, ID labels).
 
 ## Měřítko a Y konvence (DD-22 + DD-28)
 
@@ -164,10 +158,10 @@ Pravidlo BLOCKS rodiny: **vrch `:grass-top`, jinak `:dirt`** napříč grass blo
 
 ## Pojmy
 
-- **Texture** — 2D obraz aplikovaný na **plochu** meshe. Použití: šachovnice na mateřské CUBES (DD-07 placeholder pro neznámý kind), procedurální `:named-texture` slow path (CCUBES/COMPOSITES), ice canvas texture (`_iceTexture`, sez. 47). Terrain TCUBES + rampy textury **nepoužívají** od DD-41 (sez. 34, lowpoly vertex-color pipeline).
+- **Texture** — 2D obraz aplikovaný na **plochu** meshe. Aktuální použití po sez. 49 K1 cleanup: šachovnice (`_checkerboardMat`) na neznámý TCUBES kind (DD-07 placeholder), ice canvas texture (`_iceTexture`, sez. 47). Terrain TCUBES + rampy textury **nepoužívají** od DD-41 (sez. 34, lowpoly vertex-color pipeline); `:named-texture` paleta dropnutá sez. 49 K1.
 - **Sprite** — 2D obraz vždy otočený **ke kameře** (billboard). Po sez. 48 cleanup SPRITES třída + canvas bubbles dropnuté (bez konzumenta v terrain scope).
 - **Voxel** — krychlová jednotka. 1 TC voxel = 1 m (= 1 instance CCUBES/TCUBES).
-- **Pixel-art** — vizuální styl s viditelnými „pixely". Dosahujeme přes `NearestFilter` na `CanvasTexture` (nezablurovaná interpolace) + nízké rozlišení (16×16 typicky). Sdílí se mezi procedurálními texturami (`:dirt`/`:grass-top`/…) a atlas pipeline (DD-36).
+- **Pixel-art** — vizuální styl s viditelnými „pixely". Dosahujeme přes `NearestFilter` na `CanvasTexture` (nezablurovaná interpolace) + nízké rozlišení (16×16 typicky). Aktuálně přítomné v: `checkerboardTexture` (DD-07 fallback) a `_iceTexture` (sez. 47 ice surface). Procedurální `:named-texture` paleta + atlas pipeline (DD-36) historické, dropnuté sez. 49 K1 / DD-41.
 - **Biome** — kind terénního povrchu (`grass`/`dirt`/`stone`/`sand` + DD-47 `_snow` postfix varianty per kind) — klastr v biome map noise. Klastruje se nízkofrekvenčním šumem do souvislých oblastí, ne per-cell randomly. *Water dropped po DD-47* — voda nyní entity LIQUID prototype přes priority flood, ne surface kind.
 - **Heightmap** — 2D mřížka Y hodnot per (x, z) cell. Value-noise (mulberry32 + bilineární smoothstep + wrap-around) z parametrů `relief` × `seed`.
 - **Step** — výškový rozdíl ±1 mezi sousedními cells heightmap → kandidát pro ramp smoothing layer (DD-33).

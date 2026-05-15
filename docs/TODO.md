@@ -78,6 +78,6 @@ Kandidáti bez explicit user signal — drží se jako kotvy, neaktivní:
 
 ## Audit cadence
 
-- **`%AUDIT:CODE`** — **1/8** *(sez. 48 user-driven trigger + reset; sez. 49 close ceremonie tick)*. Next: ~sez. 56.
-- **`%AUDIT:DOCS`** — **1/10** *(sez. 48 trigger + reset; sez. 49 close ceremonie tick)*. Next: ~sez. 58.
+- **`%AUDIT:CODE`** — **0/8** *(sez. 49 user-driven trigger po close — K1 dropla face material dispatch + named texture pipeline + emoji texture, ~250 ř. M6/DD-14 residue po DD-41+sez. 48 PATH drop, +reset)*. Next: ~sez. 57.
+- **`%AUDIT:DOCS`** — **2/10** *(sez. 48 reset; sez. 49 close ceremonie + K1 cleanup follow-up = 2 tiky)*. Next: ~sez. 58.
 - **IDEAS/TODO/DONE pruning** — **1/12** *(sez. 48 Fáze 3 reset; sez. 49 close ceremonie tick)*. Next: ~sez. 60.
