@@ -1095,6 +1095,57 @@ export function surfacesForBiome(latitude, humidity) {
   return BIOME_SURFACES[latitude]?.[humidity] ?? BIOME_SURFACES.temperate.mid;
 }
 
+// === Sez. 52 (DD-56 fáze 2 Krok 8) — per-biome scatter resource váhy. =======
+// `world.LATITUDE × HUMIDITY` → váhy 5 surovin (sum=1.0) pro `scatterRandomVoxels`
+// v main.js. Paralel `BIOME_SURFACES` pattern (= scene-level lookup, ne per-cell):
+// scatter rozhází `floor(sx*sz/10)` voxelů per regen, biome řídí composition,
+// total count zachován.
+//
+// Design os (paralel BIOME_SURFACES):
+//   LATITUDE → stone vs. sand vs. wood baseline (polar = stone-heavy,
+//              tropical = vegetace/sand, temperate = wood-heavy).
+//   HUMIDITY → wood share (wet = víc wood, dry = málo wood, sand pickup
+//              residual). `dirt` = mid-tier filler universally (10-30 %).
+//   `water`  = nízká váha (0.05) ve wet/mid biomech, 0.00 v dry (= scatter
+//              kapky rosy / mokrá místa, ne dominantní prvek; LIQUID 1. třída
+//              entita DD-54 dělá jezera, scatter water je vizuální detail).
+//
+// User vzor sez. 51 Příště:
+//   temperate.wet → wood priorita (0.50 highest ★),
+//   polar.mid → stone (0.55 highest ★),
+//   tropical.dry → sand (0.85 highest ★).
+//
+// **Calibration caveat:** První iterace váh, expect user tweak po F12 review.
+// Číslice = content design, ne mechanika — adjust per biome bez kódové změny.
+export const BIOME_SCATTER_WEIGHTS = {
+  tropical: {
+    wet: { wood: 0.45, stone: 0.05, sand: 0.20, dirt: 0.25, water: 0.05 },  // džungle
+    mid: { wood: 0.20, stone: 0.05, sand: 0.45, dirt: 0.25, water: 0.05 },  // savana
+    dry: { wood: 0.02, stone: 0.05, sand: 0.85, dirt: 0.08, water: 0.00 },  // horká poušť
+  },
+  subtropical: {
+    wet: { wood: 0.40, stone: 0.10, sand: 0.20, dirt: 0.25, water: 0.05 },
+    mid: { wood: 0.25, stone: 0.10, sand: 0.35, dirt: 0.25, water: 0.05 },
+    dry: { wood: 0.05, stone: 0.10, sand: 0.70, dirt: 0.15, water: 0.00 },
+  },
+  temperate: {
+    wet: { wood: 0.50, stone: 0.10, sand: 0.10, dirt: 0.25, water: 0.05 },  // listnatý les ★
+    mid: { wood: 0.30, stone: 0.15, sand: 0.20, dirt: 0.30, water: 0.05 },  // step
+    dry: { wood: 0.10, stone: 0.15, sand: 0.55, dirt: 0.20, water: 0.00 },  // chladná poušť
+  },
+  polar: {
+    wet: { wood: 0.10, stone: 0.45, sand: 0.20, dirt: 0.20, water: 0.05 },
+    mid: { wood: 0.05, stone: 0.55, sand: 0.20, dirt: 0.15, water: 0.05 },  // polar → stone ★
+    dry: { wood: 0.00, stone: 0.50, sand: 0.40, dirt: 0.10, water: 0.00 },  // ledová poušť
+  },
+};
+
+// Helper: scatter váhy pro daný climate. Fallback `temperate.mid` per
+// `surfacesForBiome` pattern (= defensive, controlled enum).
+export function scatterWeightsForBiome(latitude, humidity) {
+  return BIOME_SCATTER_WEIGHTS[latitude]?.[humidity] ?? BIOME_SCATTER_WEIGHTS.temperate.mid;
+}
+
 // === SEASON driver (DD-50, sez. 40) =========================================
 // 4-enum WORLD atribut. Modifikuje temperate biom (jeho snow patches +
 // water ice). Polar perpetually-winter (invariant), tropical/subtropical

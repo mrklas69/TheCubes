@@ -12,7 +12,7 @@ import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { CUBES, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, LAMP, DECOR, LIQUID, WORLD } from "./model.js";
 import { DECOR_BUILDERS } from "./composites/builders.js";
-import { generateTerrain, maxReliefForSize, BIOME_NAMES, BIOME_SURFACES, surfacesForBiome, snowSpecForLatitude, waterSpecForClimate, decorSpecForClimate, DECOR_DENSITY, SEASONS, mulberry32 } from "./terrain.js";
+import { generateTerrain, maxReliefForSize, BIOME_NAMES, BIOME_SURFACES, surfacesForBiome, snowSpecForLatitude, waterSpecForClimate, decorSpecForClimate, scatterWeightsForBiome, DECOR_DENSITY, SEASONS, mulberry32 } from "./terrain.js";
 // Voxel surovinový model (DD-56, sez. 51) — RESOURCE_REGISTRY + V grid konstanty.
 // `mulberry32` se importuje výš pro sdílený seeded RNG (scatter voxely).
 import { RESOURCE_REGISTRY, RESOURCE_NAMES, VOXEL_GRID, VOXEL_EDGE } from "./resources.js";
@@ -1399,16 +1399,24 @@ const _scatterTiltQuat = new THREE.Quaternion();
 
 /**
  * scatterRandomVoxels — rozhází `floor(sizeX * sizeZ / 10)` voxelů na náhodné
- * surface cells (TCUBES + rampy). Per voxel: random resource z RESOURCE_NAMES,
+ * surface cells (TCUBES + rampy). Per voxel: **weighted** resource pick dle
+ * `weights` (sez. 52 Krok 8, DD-56 fáze 2 — nahrazuje sez. 51 uniform random),
  * tilt podle ramp slope (TCUBES = no tilt + random Y rotation).
  *
  * Surface lookup: scan `terrain.blocks` (TCUBES top Y per kolona) + `terrain.
  * ramps` (ramp y má prioritu, leží **nad** top TCUBES). Pokud kolona má jen
  * water/air = chybí v surfaceByXZ → voxel tam nepadne.
  *
- * `seed` = deterministic per regen (`params.seed` ?? 42).
+ * @param {object} terrain  — `generateTerrain` output (blocks + ramps).
+ * @param {number} sizeX    — terrain X dimension (= `params.size[0]`).
+ * @param {number} sizeZ    — terrain Z dimension (= `params.size[1]`).
+ * @param {number} seed     — deterministic per regen (`params.seed` ?? 42).
+ * @param {object} weights  — `{ resourceName: weight, ... }` sum ≈ 1.0. Per-biome
+ *                            váhy z `scatterWeightsForBiome(latitude, humidity)`
+ *                            v terrain.js. Per voxel = weighted sample přes
+ *                            cumulative sum.
  */
-function scatterRandomVoxels(terrain, sizeX, sizeZ, seed) {
+function scatterRandomVoxels(terrain, sizeX, sizeZ, seed, weights) {
   // 1) Surface lookup: max Y per (x, z), preferovat ramp nad TCUBES top.
   const surfaceByXZ = new Map();  // "x,z" → { kind: "tcubes"|"trramps"|"ttramps"|"tdramp", y, orientation }
   for (const [, bx, by, bz] of terrain.blocks) {
@@ -1438,11 +1446,31 @@ function scatterRandomVoxels(terrain, sizeX, sizeZ, seed) {
   const rng = mulberry32(seed || 1);
   const half = VOXEL_EDGE / 2;  // 0.125 — half voxel size pro surface offset
 
+  // 2) Pre-build cumulative weights (once per scatter, ne per voxel).
+  //    `cumulative[k]` = součet vah resourceList[0..k]. Weighted pick = najdi
+  //    nejmenší k takové, že `roll < cumulative[k]` (binary search by byl
+  //    overkill pro 5 položek, lineární scan stačí).
+  const resourceList = Object.keys(weights);
+  const cumulative = [];
+  let acc = 0;
+  for (const r of resourceList) {
+    acc += weights[r];
+    cumulative.push(acc);
+  }
+  // `acc` ≈ 1.0 (sum vah), ale defensive — pokud sum < 1 numericky, roll
+  // dosáhne max acc (ne hardcoded 1.0).
+
   for (let i = 0; i < count; i++) {
     const key = keys[Math.floor(rng() * keys.length)];
     const surface = surfaceByXZ.get(key);
     const [cellX, cellZ] = key.split(",").map(Number);
-    const resource = RESOURCE_NAMES[Math.floor(rng() * RESOURCE_NAMES.length)];
+    // Weighted pick — roll v [0, acc), find first cumulative > roll. Fallback
+    // na last resource (defensive pro floating-point edge case `roll === acc`).
+    const roll = rng() * acc;
+    let resource = resourceList[resourceList.length - 1];
+    for (let k = 0; k < cumulative.length; k++) {
+      if (roll < cumulative[k]) { resource = resourceList[k]; break; }
+    }
 
     if (surface.kind === "tcubes") {
       // TCUBES top face — voxel center 1 half nad cell.Y + 0.5 (= na top face).
@@ -1718,10 +1746,12 @@ function spawnTerrain(params) {
   rubik.addVoxel("wood",  12);
   dispatchVoxelsToBatches(rubik);
 
-  // Scatter random voxely po krajině (sez. 51 patch #4) — `floor(sizeX * sizeZ
-  // / 10)` voxelů na random surface (TCUBES top + rampy s tilt). Seed
+  // Scatter random voxely po krajině (sez. 51 patch #4 + sez. 52 Krok 8) —
+  // `floor(sizeX * sizeZ / 10)` voxelů na random surface (TCUBES top + rampy
+  // s tilt). Sez. 52: resource pick = weighted dle `params.scatterWeights`
+  // (per-biome váhy z `scatterWeightsForBiome` v terrain.js). Seed
   // deterministic per regen.
-  scatterRandomVoxels(terrain, sizeX, sizeZ, params.seed ?? 42);
+  scatterRandomVoxels(terrain, sizeX, sizeZ, params.seed ?? 42, params.scatterWeights);
   // Registruj instance pro infotip lookup (sub-prah pro per-voxel raycast,
   // sez. 51 ale alespoň hover nad rubik cubem celkově). meshByInstance value
   // = single-mesh entry by potřebovala mesh; voxel batches jsou shared per
@@ -1821,6 +1851,8 @@ window.waterSpecForClimate = waterSpecForClimate;
 // Sez. 40 DD-49 — decorSpec helper + DECOR_DENSITY tabulka pro UI/dev.
 window.decorSpecForClimate = decorSpecForClimate;
 window.DECOR_DENSITY = DECOR_DENSITY;
+// Sez. 52 (DD-56 fáze 2 Krok 8) — scatterWeights helper pro UI `readParams()`.
+window.scatterWeightsForBiome = scatterWeightsForBiome;
 // Sez. 40 DD-50 — SEASONS enum array pro UI (4 hodnoty pro slider lookup).
 window.SEASONS = SEASONS;
 
@@ -1835,10 +1867,11 @@ function buildScene(scene) {
   // waterSpec.freezeRatio v temperate biomu.
   spawnTerrain({
     ...TERRAIN_DEFAULTS,
-    surfaces:  surfacesForBiome(world.LATITUDE, world.HUMIDITY),
-    snowSpec:  snowSpecForLatitude(world.LATITUDE, world.SEASON),
-    waterSpec: waterSpecForClimate(world.LATITUDE, world.HUMIDITY, world.SEASON),
-    decorSpec: decorSpecForClimate(world.LATITUDE, world.HUMIDITY, world.SEASON, world.DECOR_DENSITY_MULT),
+    surfaces:        surfacesForBiome(world.LATITUDE, world.HUMIDITY),
+    snowSpec:        snowSpecForLatitude(world.LATITUDE, world.SEASON),
+    waterSpec:       waterSpecForClimate(world.LATITUDE, world.HUMIDITY, world.SEASON),
+    decorSpec:       decorSpecForClimate(world.LATITUDE, world.HUMIDITY, world.SEASON, world.DECOR_DENSITY_MULT),
+    scatterWeights:  scatterWeightsForBiome(world.LATITUDE, world.HUMIDITY),
   });
 }
 

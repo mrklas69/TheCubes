@@ -358,6 +358,11 @@
         // Sez. 43 Fáze 6 — `densityMult` jako 4. arg (UI slider 0..2). 1.0 = baseline.
         const densityMult = parseFloat(decorDen.value);
         const decorSpec = window.decorSpecForClimate?.(latKey, humKey, seasonKey, densityMult) ?? { mode: "none" };
+        // Sez. 52 (DD-56 fáze 2 Krok 8) — per-biome scatter resource váhy.
+        // Fallback = equal weights 5 surovin (sez. 51 uniform behavior backup,
+        // pokud `window.scatterWeightsForBiome` chybí — defensive pro dev split).
+        const scatterWeights = window.scatterWeightsForBiome?.(latKey, humKey)
+                            ?? { wood: 0.2, stone: 0.2, sand: 0.2, dirt: 0.2, water: 0.2 };
         return {
           size:     [parseInt(sizeX.value, 10), parseInt(sizeZ.value, 10)],
           relief:   parseInt(relief.value, 10),
@@ -366,6 +371,7 @@
           snowSpec,
           waterSpec,
           decorSpec,
+          scatterWeights,
         };
       }
 
