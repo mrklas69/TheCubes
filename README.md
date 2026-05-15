@@ -1,5 +1,11 @@
 # TheCubes
 
+<p align="center">
+  <img src="https://github.com/mrklas69/TheCubes/releases/download/v1.0-terrain/the_cubes.gif" alt="Východ slunce nad krajinou TheCubes" width="720" />
+</p>
+
+<p align="center"><em>Východ slunce nad krajinou TheCubes</em></p>
+
 Model-first **procedurální terrain sandbox** s OOP modelem jako runtime *(DD-32 pivot sez. 24)*. User nastavuje parametry krajiny (size, relief 0..10, surface mix grass/stone/sand/water, seed) přes UI panel; generátor produkuje 3D scénu z hierarchie BLOCKS.
 
 **Historie identitních pivotů:** sez. 1–13 ad-hoc sandbox COMPOSITES → sez. 15 (DD-23) all-voxel → sez. 16–17 pixel-voxel severská dioráma → sez. 21 (DD-30) factory-observer toy → **sez. 24 (DD-32) terrain generator**.
