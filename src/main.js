@@ -11,7 +11,7 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { CUBES, CCUBES, TCUBES, TRRAMPS, TTRAMPS, TDRAMP, LAMP, DECOR, LIQUID, WORLD } from "./model.js";
-import { DECOR_BUILDERS } from "./composites/builders.js";
+import { DECOR_BUILDERS, RESOURCE_YIELD, hasChopYield } from "./composites/builders.js";
 import { generateTerrain, maxReliefForSize, BIOME_NAMES, BIOME_SURFACES, surfacesForBiome, snowSpecForLatitude, waterSpecForClimate, decorSpecForClimate, scatterWeightsForBiome, DECOR_DENSITY, SEASONS, mulberry32 } from "./terrain.js";
 // Voxel surovinový model (DD-56, sez. 51) — RESOURCE_REGISTRY + V grid konstanty.
 // `mulberry32` se importuje výš pro sdílený seeded RNG (scatter voxely).
@@ -1282,6 +1282,36 @@ const _voxelGeom = new THREE.BoxGeometry(VOXEL_EDGE, VOXEL_EDGE, VOXEL_EDGE);
 const _voxelMats = {};       // resource → MeshStandardMaterial
 const _voxelBatches = new Map();  // resource → InstancedMesh (lazy alloc per resource)
 
+// Registr CUBES s VOXELS pro full re-dispatch při runtime mutaci (sez. 53
+// chop interakce). Sez. 51-52 měly jen rubik (1 owner) + scatter (no owner =
+// floating voxely bez source CUBES). Chop přidá lazy-create „chop bucket"
+// abstract CUBES per column (1 cell nad top TCUBES — voxely vyrůstají NAD
+// terrain top, ne uvnitř solid TCUBES = no z-fight). Per chop: `addVoxel` na
+// bucket → `_voxelOwners.add(bucket)` → `rebuildAllVoxels()` clear+replay
+// (KISS, per-voxel batch tracking je sub-prah).
+const _voxelOwners = new Set();
+
+// Top TCUBES per (x, z) column — registr pro chop yield target lookup
+// (sez. 53). Populate v `spawnTerrain` při dispatch terrain batches. Clear
+// v `regenerateScene`. Klíč `"x,z"` (string), hodnota = TCUBES instance.
+const _topTcubesByColumn = new Map();
+
+// Sez. 53 — occupied cell set (= TCUBES + rampy) cachovaný v spawnTerrain pro
+// chop bucket placement check (cell o 1 výš nad top TCUBES musí být volný).
+// Klíč `"x,y,z"`. Clear v regenerateScene.
+const _occupiedCells = new Set();
+
+// Sez. 53 — lazy chop bucket per column. Abstract CUBES instance vytvořená
+// při prvním chop na column. Pozice = (topTCUBES.X, topTCUBES.Y + 1, topTCUBES.Z)
+// = empty cell nad terrain top. Akumuluje yieldy z opakovaných chopů na
+// sousední decor v té stejné column (max 64 voxelů = V³). Clear v regenerateScene.
+const _chopBucketByColumn = new Map();  // "x,z" → CUBES
+
+// Cache spawn args pro `rebuildAllVoxels` scatter replay (sez. 53).
+// Scatter voxely jsou floating (žádný owner), ale deterministic per seed —
+// re-run `scatterRandomVoxels` se stejnými args dá stejný pattern.
+let _lastSpawnArgs = null;  // { terrain, sizeX, sizeZ, seed, weights }
+
 // Materiály alokujeme jednou (per RESOURCE_REGISTRY entry). Sdílené napříč
 // regenerateScene calls (dispose by zničil i další spawny — paralel `_lowpolyMat`).
 //
@@ -1353,6 +1383,48 @@ function flushVoxelBatches() {
   for (const batch of _voxelBatches.values()) {
     batch.instanceMatrix.needsUpdate = true;
   }
+}
+
+/**
+ * rebuildAllVoxels — sez. 53 chop interakce. Clear current voxel batches
+ * (batch.count = 0, ne dispose — GPU buffery zachovány) + replay všech
+ * `_voxelOwners` přes `dispatchVoxelsToBatches` + scatter replay z cache.
+ *
+ * Stack vs. scatter separace: ownery (rubik, chop yield targets) drží
+ * source-of-truth ve VOXELS Map; scatter voxely jsou floating bez owner.
+ * Deterministic per (terrain, seed) → re-run dá stejný pattern.
+ *
+ * Per-voxel batch tracking pro inkrementální update by byl optimální (chop
+ * = O(yield_count) místo O(all voxels)), ale 20×20 target use case má
+ * max ~40 scatter + few owners = full rebuild je <1 ms (zanedbatelné).
+ * Sub-prah pro 100×100 stress mimo MVP scope.
+ */
+function rebuildAllVoxels() {
+  // Clear matrix count per batch (žádné dispose — GPU buffer zachovaný).
+  for (const batch of _voxelBatches.values()) batch.count = 0;
+  // Replay owners — re-dispatch každé CUBES s VOXELS.
+  for (const cube of _voxelOwners) {
+    if (!cube.VOXELS || cube.VOXELS.size === 0) continue;
+    const V = VOXEL_GRID;
+    for (const v of cube.voxelLayers()) {
+      const cx = cube.X - 0.5 + (v.sx + 0.5) / V;
+      const cy = cube.Y - 0.5 + (v.sy + 0.5) / V;
+      const cz = cube.Z - 0.5 + (v.sz + 0.5) / V;
+      pushVoxelInstance(v.resource, cx, cy, cz, null);
+    }
+  }
+  // Replay scatter (deterministic per seed). Pokud cache prázdná (= před
+  // prvním spawnTerrain), skip.
+  if (_lastSpawnArgs) {
+    scatterRandomVoxels(
+      _lastSpawnArgs.terrain,
+      _lastSpawnArgs.sizeX,
+      _lastSpawnArgs.sizeZ,
+      _lastSpawnArgs.seed,
+      _lastSpawnArgs.weights,
+    );
+  }
+  flushVoxelBatches();
 }
 
 /**
@@ -1611,6 +1683,11 @@ function spawnTerrain(params) {
     if (!batch) continue;
     const inst = createBlock(kind, x, y, z);
     pushInstanceToBatch(batch, inst, x, y, z, 0);  // TCUBES bez rotace
+    // Sez. 53 — cache top TCUBES per (x, z) column pro chop yield target lookup.
+    // terrain.blocks není sorted by Y → bezpečnější track max Y per column.
+    const colKey = `${x},${z}`;
+    const topPrev = _topTcubesByColumn.get(colKey);
+    if (!topPrev || y > topPrev.Y) _topTcubesByColumn.set(colKey, inst);
   }
   for (const r of terrain.ramps ?? []) {
     let inst, type;
@@ -1694,9 +1771,13 @@ function spawnTerrain(params) {
   const sizeZ = params.size[1];
 
   // 1) Postav set obsazených cell pozic (TCUBES + rampy). Klíč `"x,y,z"`.
+  //    Sez. 53 — cache do `_occupiedCells` pro chop bucket placement check
+  //    (cell o 1 výš nad top TCUBES musí být volný, jinak chop no-op).
   const occupied = new Set();
   for (const [, bx, by, bz] of terrain.blocks) occupied.add(`${bx},${by},${bz}`);
   for (const r of terrain.ramps ?? []) occupied.add(`${r.x},${r.y},${r.z}`);
+  _occupiedCells.clear();
+  for (const k of occupied) _occupiedCells.add(k);
 
   // 2) Pro každou (x, z) kolonu najdi top Y (jen TCUBES, ne rampy).
   const topByColumn = new Map();  // "x,z" → topY
@@ -1744,6 +1825,7 @@ function spawnTerrain(params) {
   rubik.addVoxel("dirt",  13);
   rubik.addVoxel("stone", 13);
   rubik.addVoxel("wood",  12);
+  _voxelOwners.add(rubik);  // sez. 53 — registrace pro rebuildAllVoxels replay
   dispatchVoxelsToBatches(rubik);
 
   // Scatter random voxely po krajině (sez. 51 patch #4 + sez. 52 Krok 8) —
@@ -1751,7 +1833,11 @@ function spawnTerrain(params) {
   // s tilt). Sez. 52: resource pick = weighted dle `params.scatterWeights`
   // (per-biome váhy z `scatterWeightsForBiome` v terrain.js). Seed
   // deterministic per regen.
-  scatterRandomVoxels(terrain, sizeX, sizeZ, params.seed ?? 42, params.scatterWeights);
+  const _seedArg = params.seed ?? 42;
+  scatterRandomVoxels(terrain, sizeX, sizeZ, _seedArg, params.scatterWeights);
+  // Cache spawn args pro chop rebuild replay (sez. 53 — scatter je deterministic
+  // per seed, ale potřebuje terrain ref + size + weights re-runu).
+  _lastSpawnArgs = { terrain, sizeX, sizeZ, seed: _seedArg, weights: params.scatterWeights };
   // Registruj instance pro infotip lookup (sub-prah pro per-voxel raycast,
   // sez. 51 ale alespoň hover nad rubik cubem celkově). meshByInstance value
   // = single-mesh entry by potřebovala mesh; voxel batches jsou shared per
@@ -1800,6 +1886,15 @@ function regenerateScene(params) {
     batch.dispose();
   }
   _voxelBatches.clear();
+  // Sez. 53 chop infra — reset registr ownerů + top TCUBES column cache +
+  // chop bucket lazy map + occupied cells set. Owner CUBES instance (rubik,
+  // chop buckets) jsou re-created v spawnTerrain → držet ref po dispose by
+  // drželo stale data.
+  _voxelOwners.clear();
+  _topTcubesByColumn.clear();
+  _chopBucketByColumn.clear();
+  _occupiedCells.clear();
+  _lastSpawnArgs = null;
 
   // 2) Single-mesh entries s `userData.terrain === true` (water + DECOR
   //    od sez. 40 DD-49). Water plane nemá `userData.instance` (nešel přes
@@ -1894,7 +1989,11 @@ buildScene(scene);
 //       (mutate emissive na klonovaném materiálu, sourozenci se sdíleným
 //       originálem zůstanou nedotknuti).
 
-const HOVER_EMISSIVE_HEX = 0x404020;  // single-mesh path: žluté světélkování (R=0x40, G=0x40, B=0x20)
+const HOVER_EMISSIVE_HEX  = 0x404020;  // single-mesh path: žluté světélkování (R=0x40, G=0x40, B=0x20)
+// Sez. 53 — chopable DECOR rozlišený červeným tintem (= „action available" cue,
+// izomorfismus s běžnými game UI affordance). Yield > 0 = červenavý, yield = 0
+// (bush/flower/grass_tuft) = default žlutý (jen hover infotip, bez akce).
+const HOVER_EMISSIVE_CHOP = 0x802020;  // R=0x80, G=0x20, B=0x20 — warm red
 
 function setHoverHighlight(instance, on) {
   if (!instance) return;
@@ -1921,13 +2020,19 @@ function setHoverHighlight(instance, on) {
     root.userData.hoverInit = true;
   }
 
+  // Sez. 53 — DECOR + yield > 0 = chopable = červený tint místo žluté.
+  // `instanceof DECOR` check defensive (LAMP / future single-mesh COMPOSITES
+  // dostanou žlutou default).
+  const isChopable = instance instanceof DECOR && hasChopYield(instance.KIND);
+  const emissiveHex = isChopable ? HOVER_EMISSIVE_CHOP : HOVER_EMISSIVE_HEX;
+
   root.traverse((child) => {
     if (!child.isMesh) return;
     if (on) {
       child.material = child.userData.hoverHotMat;
       const matsArr = Array.isArray(child.material) ? child.material : [child.material];
       for (const mat of matsArr) {
-        if (mat.emissive) mat.emissive.setHex(HOVER_EMISSIVE_HEX);
+        if (mat.emissive) mat.emissive.setHex(emissiveHex);
       }
     } else {
       child.material = child.userData.hoverOrigMat;
@@ -2036,10 +2141,16 @@ canvas.addEventListener("pointermove", (event) => {
       setHoverHighlight(firstInstance, true);
       lastHoveredInstance = firstInstance;
     }
+    // Sez. 53 — cursor cue: pointer ikona nad chopable DECOR (yield > 0),
+    // default nad ostatní. CSS-level cue komplementární k red emissive
+    // (= „action available" affordance).
+    const chopable = firstInstance instanceof DECOR && hasChopYield(firstInstance.KIND);
+    canvas.style.cursor = chopable ? "pointer" : "default";
   } else {
     hideTooltip();
     setHoverHighlight(lastHoveredInstance, false);
     lastHoveredInstance = null;
+    canvas.style.cursor = "default";
   }
 });
 // Skryj tooltip + edge highlight, když kurzor opustí canvas úplně
@@ -2047,10 +2158,133 @@ canvas.addEventListener("pointerleave", () => {
   hideTooltip();
   setHoverHighlight(lastHoveredInstance, false);
   lastHoveredInstance = null;
+  canvas.style.cursor = "default";
 });
 
-// Sez. 15 cleanup: click handler smazán s BALLOON.LIT (DD-23). Až bude nová
-// interaktivní entita, refaktor na `INTERACTIONS = { ClassName: fn }` dispatch.
+// === Chop interakce (sez. 53, DD-49 spec extension) =========================
+// Left-click na DECOR mesh s yield > 0 → instance se odebere ze scény + yield
+// voxely se přidají do nejbližší volné top TCUBES (přes BFS overflow, max 3
+// hops). Per A11 (sez. 50): emise zahodit přebytek po BFS exhaustu (= silent
+// drop, žádný UI feedback). Per Q2 (sez. 53 default): fixed yield per KIND.
+//
+// Cursor cue: pointermove handler nastaví `canvas.style.cursor = "pointer"`
+// pokud hovered instance je chopable DECOR (= hasChopYield), jinak default.
+
+// `getOrCreateChopBucket(topTcubes)` — lazy-create abstract CUBES instance
+// 1 cell nad top TCUBES, registrace do `_voxelOwners` pro rebuildAllVoxels
+// replay. Bucket akumuluje yieldy z opakovaných chopů na téže (x, z) column.
+//
+// Vrátí `null` pokud cell o 1 výš je obsazený (TCUBES / ramp nad top top
+// TCUBES) → chop bucket by clashoval. V praxi vzácné (decor sedí na top
+// terrain, který už nemá nic nad sebou), ale defensive.
+function getOrCreateChopBucket(topTcubes) {
+  const colKey = `${topTcubes.X},${topTcubes.Z}`;
+  let bucket = _chopBucketByColumn.get(colKey);
+  if (bucket) return bucket;
+  const bucketY = topTcubes.Y + 1;
+  // Defensive: cell o 1 výš obsazený → bucket placement by overlap. Skip.
+  if (_occupiedCells.has(`${topTcubes.X},${bucketY},${topTcubes.Z}`)) return null;
+  bucket = new CUBES(
+    `chop_bucket_${topTcubes.X}_${topTcubes.Z}`,
+    "Chop bucket",
+    topTcubes.X, bucketY, topTcubes.Z,
+  );
+  _chopBucketByColumn.set(colKey, bucket);
+  _voxelOwners.add(bucket);
+  return bucket;
+}
+
+// `addYieldWithBFSOverflow(startTcubes, resource, count)` — pokus naplnit
+// bucket pro startTcubes column. Pokud full (bucket.voxelTotal + count > 64),
+// BFS expand 4-neighbor (N/S/E/W max 3 hops) hledat volnou bucket kapacitu
+// v sousedních columns. Po exhaust BFS = silent drop remaining (A11 emise
+// zahodit varianta).
+function addYieldWithBFSOverflow(startTcubes, resource, count) {
+  let remaining = count;
+  const visited = new Set([`${startTcubes.X},${startTcubes.Z}`]);
+  const queue = [{ tcubes: startTcubes, hops: 0 }];
+  while (queue.length > 0 && remaining > 0) {
+    const { tcubes, hops } = queue.shift();
+    const bucket = getOrCreateChopBucket(tcubes);
+    if (bucket) {
+      const free = 64 - bucket.voxelTotal();  // VOXEL_PER_CELL = 64 (V³)
+      if (free > 0) {
+        const take = Math.min(free, remaining);
+        bucket.addVoxel(resource, take);
+        remaining -= take;
+      }
+    }
+    // BFS expand: max 3 hops, 4-neighbor. Pre-condition: remaining > 0.
+    if (remaining > 0 && hops < 3) {
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = tcubes.X + dx;
+        const nz = tcubes.Z + dz;
+        const key = `${nx},${nz}`;
+        if (visited.has(key)) continue;
+        visited.add(key);
+        const neighbor = _topTcubesByColumn.get(key);
+        if (neighbor) queue.push({ tcubes: neighbor, hops: hops + 1 });
+      }
+    }
+  }
+  // Silent drop = remaining > 0 po loopu → ignored (A11 emise varianta).
+}
+
+// `chopDecor(decorMesh, decorInstance)` — main dispatch. KIND yield lookup,
+// per resource BFS overflow, scene cleanup, voxel batch rebuild.
+function chopDecor(decorMesh, decorInstance) {
+  const yieldSpec = RESOURCE_YIELD[decorInstance.KIND];
+  if (!yieldSpec) return;  // unknown KIND — defensive, hasChopYield už filtruje
+
+  // Decor pozice je float (DD-12 COMPOSITES). Snap na column int (Math.round)
+  // a najdi top TCUBES tam. Decor sedí "na" TCUBES top face, ne uvnitř.
+  const tx = Math.round(decorInstance.X);
+  const tz = Math.round(decorInstance.Z);
+  const targetTcubes = _topTcubesByColumn.get(`${tx},${tz}`);
+  if (!targetTcubes) return;  // bez TCUBES pod decor (edge case) — no-op
+
+  // Per resource v yield spec → BFS overflow placement do chop bucketů.
+  for (const [resource, count] of Object.entries(yieldSpec)) {
+    if (count > 0) addYieldWithBFSOverflow(targetTcubes, resource, count);
+  }
+
+  // Decor mesh ze scény — paralel `regenerateScene` single-mesh cleanup pattern.
+  scene.remove(decorMesh);
+  disposeHoverClones(decorMesh);
+  meshByInstance.delete(decorInstance.ID);
+  // Reset hover state (chopped decor byl právě highlightnutý, lastHoveredInstance
+  // by drželo stale ref — pointermove ho přepíše příští frame, ale defensive).
+  if (lastHoveredInstance === decorInstance) lastHoveredInstance = null;
+  // Cursor cue: chopped decor zmizí pod kurzorem, default cursor okamžitě
+  // (pointermove ho stejně přenastaví příští frame, ale ne flickr).
+  canvas.style.cursor = "default";
+
+  // Re-dispatch voxel batches — owner se rozšířil o nový/další chop bucket,
+  // scatter zachován z cache (deterministic per seed).
+  rebuildAllVoxels();
+}
+
+// Pointerdown handler — left-button click na chopable DECOR. Raycast přes
+// scenes, resolveInstanceFromHit (= paralel pointermove), pak chopDecor
+// dispatch pokud yield > 0.
+canvas.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0) return;  // jen left-click; right/middle reserved (cancel?)
+  pointer.x =  (event.clientX / window.innerWidth)  * 2 - 1;
+  pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(scene.children, true);
+  for (const h of hits) {
+    const inst = resolveInstanceFromHit(h);
+    if (!inst) continue;
+    // Jen DECOR s yield > 0 = chopable; rock/strom mizí, bush/flower no-op
+    // (= hover infotip stačí pro identifikaci).
+    if (inst instanceof DECOR && hasChopYield(inst.KIND)) {
+      const mesh = meshByInstance.get(inst.ID);
+      if (mesh) chopDecor(mesh, inst);
+    }
+    return;  // first hit s instance = handled (chop nebo no-op pro non-chopable)
+  }
+});
 
 // === Klávesové ovládání kamery ===
 // WASD = horizontální pan (W/S podél kamerového „forward" promítnutého na XZ

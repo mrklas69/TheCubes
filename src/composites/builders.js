@@ -664,3 +664,43 @@ export const DECOR_BUILDERS = {
   stump: buildStump,
   log: buildLog,
 };
+
+// === RESOURCE_YIELD lookup (sez. 53, DD-49 spec extension) ==================
+// Per-KIND fixed yield při chop interakci (left-click decor → decor mizí, yieldy
+// se přidají do nejbližší volné cell přes BFS overflow, sez. 53).
+//
+// `{ resource: count }` objekt — deterministic per KIND (= žádný RNG roll per
+// chop, KISS). Random yield per chop je sub-prah (mission-driven extraction
+// IDEAS). Hodnoty kalibrovány na trade-off „velikost mesh × user-spec sez. 50":
+//   - spruce/oak/palm  — velké stromy, dominantní wood source
+//   - rock             — kamen single primary stone source
+//   - stump/log        — small dead wood (clean-up clutter)
+//   - cactus           — malý wood proxy (botanicky kaktus dřevo nemá, ale per
+//                        sez. 50 A10 jen 4 surovin + dirt přidaný sez. 51, žádný
+//                        "plant fiber" resource — wood je nejbližší abstrakce)
+//   - bush/flower/grass_tuft  — bez yieldu (vegetace, nezdroje materiálu)
+//
+// Empty object `{}` = explicit no-yield (= chop akce je no-op + decor zůstává).
+// Konzument: `chopDecor()` v main.js dispatch + `hasChopYield()` predicate
+// pro hover highlight diferenciaci (yield > 0 = chopable = červený hover tint).
+export const RESOURCE_YIELD = {
+  spruce:     { wood: 8 },
+  oak:        { wood: 12 },
+  palm:       { wood: 6 },
+  rock:       { stone: 4 },
+  stump:      { wood: 3 },
+  log:        { wood: 5 },
+  cactus:     { wood: 2 },
+  bush:       {},
+  flower:     {},
+  grass_tuft: {},
+};
+
+// `hasChopYield(kind)` — predicate pro UI/hover highlight rozlišení (vegetace
+// bez yieldu vs. chopable strom/kámen). KISS: sum > 0 = chopable.
+export function hasChopYield(kind) {
+  const y = RESOURCE_YIELD[kind];
+  if (!y) return false;
+  for (const c of Object.values(y)) if (c > 0) return true;
+  return false;
+}
