@@ -671,26 +671,25 @@ export const DECOR_BUILDERS = {
 //
 // `{ resource: count }` objekt — deterministic per KIND (= žádný RNG roll per
 // chop, KISS). Random yield per chop je sub-prah (mission-driven extraction
-// IDEAS). Hodnoty kalibrovány na trade-off „velikost mesh × user-spec sez. 50":
-//   - spruce/oak/palm  — velké stromy, dominantní wood source
-//   - rock             — kamen single primary stone source
-//   - stump/log        — small dead wood (clean-up clutter)
-//   - cactus           — malý wood proxy (botanicky kaktus dřevo nemá, ale per
-//                        sez. 50 A10 jen 4 surovin + dirt přidaný sez. 51, žádný
-//                        "plant fiber" resource — wood je nejbližší abstrakce)
-//   - bush/flower/grass_tuft  — bez yieldu (vegetace, nezdroje materiálu)
+// IDEAS). Per user kalibrace sez. 53 follow-up: **jediný voxel per chop**
+// napříč všemi chopable KIND-y. Realistická „heavy yield" verze (8 wood ze
+// stromu, 4 stone z kamene) působila nadhodnocená pro mini-dioráma scope —
+// 1 voxel per chop = sběrný gameplay rhythm, akumulace přes multi-chop.
+//   - spruce/oak/palm/stump/log/cactus  → 1 wood
+//   - rock                              → 1 stone
+//   - bush/flower/grass_tuft            → bez yieldu (vegetace)
 //
 // Empty object `{}` = explicit no-yield (= chop akce je no-op + decor zůstává).
 // Konzument: `chopDecor()` v main.js dispatch + `hasChopYield()` predicate
 // pro hover highlight diferenciaci (yield > 0 = chopable = červený hover tint).
 export const RESOURCE_YIELD = {
-  spruce:     { wood: 8 },
-  oak:        { wood: 12 },
-  palm:       { wood: 6 },
-  rock:       { stone: 4 },
-  stump:      { wood: 3 },
-  log:        { wood: 5 },
-  cactus:     { wood: 2 },
+  spruce:     { wood: 1 },
+  oak:        { wood: 1 },
+  palm:       { wood: 1 },
+  rock:       { stone: 1 },
+  stump:      { wood: 1 },
+  log:        { wood: 1 },
+  cactus:     { wood: 1 },
   bush:       {},
   flower:     {},
   grass_tuft: {},
